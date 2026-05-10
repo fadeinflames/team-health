@@ -1,0 +1,29 @@
+{
+  "name": "team-health-121",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Team health platform for collaborative one-to-one meetings.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "start": "node server.js",
+    "check": "vite build",
+    "test:smoke": "playwright test tests/smoke.spec.js --browser=chromium --reporter=line --workers=1"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^5.1.1",
+    "lucide-react": "^0.552.0",
+    "pg": "^8.20.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "vite": "^8.0.10"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1"
+  }
+}
