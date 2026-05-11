@@ -17,7 +17,6 @@ import {
   LockKeyhole,
   LogOut,
   MessageSquarePlus,
-  PlayCircle,
   Plus,
   RotateCcw,
   Search,
@@ -2943,41 +2942,6 @@ export default function App() {
                   </div>
                 </section>
 
-                <section className="dashboard-panel quick-panel">
-                  <div className="section-heading compact">
-                    <div>
-                      <p className="eyebrow">Куда пойти</p>
-                      <h3>Быстрая навигация</h3>
-                    </div>
-                  </div>
-                  <div className="quick-actions">
-                    {upcomingMeetings[0]?.person ? (
-                      <button
-                        className="primary-button"
-                        type="button"
-                        onClick={() => selectPerson(upcomingMeetings[0].person.id)}
-                      >
-                        <PlayCircle size={16} />
-                        Ближайший 1:1
-                      </button>
-                    ) : (
-                      <button className="primary-button" type="button" onClick={() => openSection("team")}>
-                        <UserPlus size={16} />
-                        Добавить участника
-                      </button>
-                    )}
-                    <button className="soft-button" type="button" onClick={() => openSection("meetings")}>
-                      <MessageSquarePlus size={15} />
-                      Все 1:1
-                    </button>
-                    {isAdmin && (
-                      <button className="soft-button" type="button" onClick={() => openSection("team")}>
-                        <UsersRound size={15} />
-                        Команда
-                      </button>
-                    )}
-                  </div>
-                </section>
               </aside>
             </div>
           </section>

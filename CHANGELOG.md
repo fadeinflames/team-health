@@ -1,5 +1,15 @@
 # Changelog
 
+## rc0.2.2 - 2026-05-11
+
+Patch release for dashboard focus and test alignment.
+
+### Changed
+
+- Removed the dashboard quick-navigation card so the first screen stays focused on team state, urgent topics, and upcoming 1:1s.
+- Updated smoke coverage to match the simplified dashboard.
+- Removed unused quick-navigation styling and icon imports after the panel cleanup.
+
 ## rc0.2.1 - 2026-05-11
 
 Patch release for production stability and interface cleanup after rc0.2.
