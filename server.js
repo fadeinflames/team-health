@@ -476,13 +476,15 @@ function makeId(prefix) {
   return `${prefix}-${randomBytes(16).toString("hex")}`;
 }
 
-function seedUser({ username, password, name, role, personId = null }) {
+function seedUser({ username, password, name, role, personId = null, leadUserId = null, teamLabel = "" }) {
   return {
     id: makeId("user"),
     username,
     name,
     role,
     personId,
+    leadUserId,
+    teamLabel,
     createdAt: new Date().toISOString(),
     ...hashPassword(password)
   };
@@ -502,21 +504,24 @@ function createSeedDb() {
     pulseHistory: buildSeedPulseHistory(),
     oncallLoad: buildSeedOncallLoad(),
     notes: initialNotes,
-    users: [
-      seedUser({
+    users: (() => {
+      const admin = seedUser({
         username: adminUsername,
         password: adminPassword,
         name: "Максим Гусев",
-        role: "admin"
-      }),
-      seedUser({
+        role: "platform_admin",
+        teamLabel: "Reliability"
+      });
+      const demo = seedUser({
         username: demoUsername,
         password: demoPassword,
         name: "Демо SRE-инженер",
         role: "employee",
-        personId: "demo-sre"
-      })
-    ],
+        personId: "demo-sre",
+        leadUserId: admin.id
+      });
+      return [admin, demo];
+    })(),
     sessions: []
   });
 }
@@ -564,7 +569,7 @@ function normalizeDb(rawDb = {}) {
   ];
   const personIds = new Set(allPeople.map((person) => person.id));
   const removedUserIds = new Set();
-  const users = Array.isArray(rawDb.users)
+  const rawUsers = Array.isArray(rawDb.users)
     ? rawDb.users.filter((user) => {
         if (!user.username) return false;
         if (isStaleDemoLinkedAccess(user)) {
@@ -574,6 +579,28 @@ function normalizeDb(rawDb = {}) {
         return true;
       })
     : [];
+
+  // Normalise role + new hierarchy fields. Legacy 'admin' becomes
+  // 'platform_admin'. Existing employees without a lead get attached to the
+  // first platform admin so the lead-chain is never broken.
+  const firstPlatformAdmin = rawUsers.find(
+    (u) => u.role === "admin" || u.role === "platform_admin"
+  );
+  const users = rawUsers.map((user) => {
+    const role = user.role === "admin" ? "platform_admin" : user.role;
+    const leadUserId =
+      user.leadUserId != null
+        ? String(user.leadUserId)
+        : role === "employee" && firstPlatformAdmin
+          ? firstPlatformAdmin.id
+          : null;
+    return {
+      ...user,
+      role,
+      leadUserId,
+      teamLabel: String(user.teamLabel || "").slice(0, 120)
+    };
+  });
   const cards = Array.isArray(rawDb.cards) ? rawDb.cards.filter((card) => personIds.has(card.personId)) : [];
   const actions = Array.isArray(rawDb.actions) ? rawDb.actions.filter((action) => personIds.has(action.personId)) : [];
   const goals = Array.isArray(rawDb.goals)
@@ -653,7 +680,7 @@ function normalizeDb(rawDb = {}) {
     username: adminUsername,
     password: adminPassword,
     name: "Максим Гусев",
-    role: "admin",
+    role: "platform_admin",
     personId: null
   });
 
@@ -753,6 +780,8 @@ function mergeNotes(rawNotes) {
 function ensureSeedLogin(db, config) {
   const index = db.users.findIndex((user) => user.username.toLowerCase() === config.username.toLowerCase());
   const passwordFields = hashPassword(config.password);
+  const leadUserId = config.leadUserId || null;
+  const teamLabel = String(config.teamLabel || "").slice(0, 120);
 
   if (index === -1) {
     db.users.push({
@@ -761,6 +790,8 @@ function ensureSeedLogin(db, config) {
       name: config.name,
       role: config.role,
       personId: config.personId,
+      leadUserId,
+      teamLabel,
       createdAt: new Date().toISOString(),
       ...passwordFields
     });
@@ -773,6 +804,8 @@ function ensureSeedLogin(db, config) {
     name: String(db.users[index].name || config.name),
     role: config.role,
     personId: config.personId,
+    leadUserId,
+    teamLabel,
     ...passwordFields
   };
 }
@@ -824,7 +857,7 @@ async function migratePostgres() {
       id text primary key,
       username text not null,
       name text not null,
-      role text not null check (role in ('admin', 'employee')),
+      role text not null check (role in ('admin', 'platform_admin', 'lead', 'employee')),
       person_id text references people(id) on delete restrict,
       salt text not null,
       password_hash text not null,
@@ -832,6 +865,48 @@ async function migratePostgres() {
     );
 
     create unique index if not exists users_username_lower_idx on users (lower(username));
+
+    -- Existing rc0.1 databases still have users_role_check limited to
+    -- ('admin', 'employee'). Recreate role checks before seedPostgres upgrades
+    -- the seed admin to platform_admin.
+    do $$
+    declare
+      role_check_name text;
+    begin
+      for role_check_name in
+        select conname
+        from pg_constraint
+        where conrelid = 'users'::regclass
+          and contype = 'c'
+          and pg_get_constraintdef(oid) like '%role%'
+      loop
+        execute format('alter table users drop constraint %I', role_check_name);
+      end loop;
+
+      alter table users
+        add constraint users_role_check
+        check (role in ('admin', 'platform_admin', 'lead', 'employee'));
+    end$$;
+
+    -- Lead chain: each user can have a parent user (their manager / lead).
+    -- platform_admin has lead_user_id = NULL. Employees and leads point upward.
+    alter table users add column if not exists lead_user_id text;
+    do $$
+    begin
+      if not exists (
+        select 1 from information_schema.table_constraints
+        where constraint_name = 'users_lead_user_id_fkey'
+      ) then
+        alter table users
+          add constraint users_lead_user_id_fkey
+          foreign key (lead_user_id) references users(id) on delete set null;
+      end if;
+    end$$;
+    create index if not exists users_lead_user_id_idx on users(lead_user_id);
+
+    -- Friendly label of the team a lead owns. Only set for users with role=lead
+    -- or platform_admin. Allows the team to be named without a separate table.
+    alter table users add column if not exists team_label text not null default '';
 
     create table if not exists sessions (
       id text primary key,
@@ -936,10 +1011,12 @@ async function migratePostgres() {
       status text not null check (status in ('active', 'closed')),
       questions_json jsonb not null,
       is_demo_seed boolean not null default false,
+      is_template boolean not null default false,
       created_at timestamptz not null default now()
     );
 
     alter table surveys add column if not exists is_demo_seed boolean not null default false;
+    alter table surveys add column if not exists is_template boolean not null default false;
 
     create table if not exists survey_responses (
       id text primary key,
@@ -1006,12 +1083,13 @@ async function seedPostgres() {
     await insertSeedGoals(client);
     await insertSeedPulseHistory(client);
     await insertSeedSurveys(client);
-    await upsertSeedUser(client, {
+    const adminId = await upsertSeedUser(client, {
       username: adminUsername,
       password: adminPassword,
       name: "Максим Гусев",
-      role: "admin",
-      personId: null
+      role: "platform_admin",
+      personId: null,
+      teamLabel: "Reliability"
     });
     if (shouldSeedDemoLogin) {
       await upsertSeedUser(client, {
@@ -1019,7 +1097,8 @@ async function seedPostgres() {
         password: demoPassword,
         name: "Демо SRE-инженер",
         role: "employee",
-        personId: "demo-sre"
+        personId: "demo-sre",
+        leadUserId: adminId
       });
     }
     await client.query("delete from sessions where expires_at < now()");
@@ -1221,6 +1300,8 @@ async function insertSeedSurveys(client) {
 
 async function upsertSeedUser(client, config) {
   const passwordFields = hashPassword(config.password);
+  const leadUserId = config.leadUserId || null;
+  const teamLabel = String(config.teamLabel || "").slice(0, 120);
   const existing = await client.query("select id, name from users where lower(username) = lower($1)", [config.username]);
   if (existing.rows[0]) {
     await client.query(
@@ -1230,30 +1311,46 @@ async function upsertSeedUser(client, config) {
           name = $2,
           role = $3,
           person_id = $4,
-          salt = $5,
-          password_hash = $6
-        where id = $7
+          lead_user_id = $5,
+          team_label = $6,
+          salt = $7,
+          password_hash = $8
+        where id = $9
       `,
       [
         config.username,
         existing.rows[0].name || config.name,
         config.role,
         config.personId,
+        leadUserId,
+        teamLabel,
         passwordFields.salt,
         passwordFields.passwordHash,
         existing.rows[0].id
       ]
     );
-    return;
+    return existing.rows[0].id;
   }
 
-  await client.query(
+  const inserted = await client.query(
     `
-      insert into users (id, username, name, role, person_id, salt, password_hash, created_at)
-      values ($1, $2, $3, $4, $5, $6, $7, now())
+      insert into users (id, username, name, role, person_id, lead_user_id, team_label, salt, password_hash, created_at)
+      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+      returning id
     `,
-    [makeId("user"), config.username, config.name, config.role, config.personId, passwordFields.salt, passwordFields.passwordHash]
+    [
+      makeId("user"),
+      config.username,
+      config.name,
+      config.role,
+      config.personId,
+      leadUserId,
+      teamLabel,
+      passwordFields.salt,
+      passwordFields.passwordHash
+    ]
   );
+  return inserted.rows[0].id;
 }
 
 async function readDb() {
@@ -1358,6 +1455,7 @@ async function readDb() {
             status,
             questions_json as "questions",
             is_demo_seed as "isDemoSeed",
+            is_template as "isTemplate",
             created_at as "createdAt"
           from surveys
           order by created_at asc
@@ -1412,6 +1510,8 @@ async function readDb() {
             name,
             role,
             person_id as "personId",
+            lead_user_id as "leadUserId",
+            team_label as "teamLabel",
             salt,
             password_hash as "passwordHash",
             created_at as "createdAt"
@@ -1622,8 +1722,8 @@ async function replaceSurveys(client, surveys) {
   for (const survey of surveys || []) {
     await client.query(
       `
-        insert into surveys (id, title, description, anonymous, status, questions_json, is_demo_seed, created_at)
-        values ($1, $2, $3, $4, $5, $6::jsonb, $7, coalesce($8::timestamptz, now()))
+        insert into surveys (id, title, description, anonymous, status, questions_json, is_demo_seed, is_template, created_at)
+        values ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, coalesce($9::timestamptz, now()))
       `,
       [
         survey.id,
@@ -1633,6 +1733,7 @@ async function replaceSurveys(client, surveys) {
         survey.status,
         JSON.stringify(survey.questions || []),
         survey.isDemoSeed === true,
+        survey.isTemplate === true,
         survey.createdAt || null
       ]
     );
@@ -1737,21 +1838,45 @@ async function replaceNotes(client, notes) {
 
 async function replaceUsers(client, users) {
   await client.query("delete from users where id <> all($1::text[])", [users.map((user) => user.id)]);
+  // Insert in two passes so lead_user_id self-references can resolve regardless
+  // of the order rows appear in the input array.
   for (const user of users) {
     await client.query(
       `
-        insert into users (id, username, name, role, person_id, salt, password_hash, created_at)
-        values ($1, $2, $3, $4, $5, $6, $7, coalesce($8::timestamptz, now()))
+        insert into users (id, username, name, role, person_id, lead_user_id, team_label, salt, password_hash, created_at)
+        values ($1, $2, $3, $4, $5, NULL, $6, $7, $8, coalesce($9::timestamptz, now()))
         on conflict (id) do update set
           username = excluded.username,
           name = excluded.name,
           role = excluded.role,
           person_id = excluded.person_id,
+          team_label = excluded.team_label,
           salt = excluded.salt,
           password_hash = excluded.password_hash
       `,
-      [user.id, user.username, user.name, user.role, user.personId, user.salt, user.passwordHash, user.createdAt || null]
+      [
+        user.id,
+        user.username,
+        user.name,
+        user.role,
+        user.personId,
+        user.teamLabel || "",
+        user.salt,
+        user.passwordHash,
+        user.createdAt || null
+      ]
     );
+  }
+  // Second pass: set lead_user_id once all user rows exist.
+  for (const user of users) {
+    if (user.leadUserId) {
+      await client.query("update users set lead_user_id = $1 where id = $2", [
+        user.leadUserId,
+        user.id
+      ]);
+    } else {
+      await client.query("update users set lead_user_id = NULL where id = $1", [user.id]);
+    }
   }
 }
 
@@ -1811,12 +1936,17 @@ async function deletePersonById(personId) {
 }
 
 function publicUser(user) {
+  // Normalise role so the client always sees the new vocabulary, even for
+  // legacy users persisted with role='admin'.
+  const role = user.role === "admin" ? "platform_admin" : user.role;
   return {
     id: user.id,
     username: user.username,
     name: user.name,
-    role: user.role,
+    role,
     personId: user.personId || null,
+    leadUserId: user.leadUserId || null,
+    teamLabel: user.teamLabel || "",
     createdAt: user.createdAt
   };
 }
@@ -1974,8 +2104,24 @@ async function requireAuth(request, response) {
   return context;
 }
 
+function isPlatformAdmin(user) {
+  if (!user) return false;
+  return user.role === "platform_admin" || user.role === "admin";
+}
+
+function isLead(user) {
+  if (!user) return false;
+  return user.role === "lead" || isPlatformAdmin(user);
+}
+
+function isPlainLead(user) {
+  return user?.role === "lead";
+}
+
+// Legacy alias kept so all existing call-sites keep working. Treat "admin" as
+// platform_admin everywhere.
 function isAdmin(user) {
-  return user.role === "admin";
+  return isPlatformAdmin(user);
 }
 
 function isProtectedUser(user) {
@@ -2000,7 +2146,7 @@ function isStaleDemoLinkedAccess(user) {
 }
 
 function scopedPersonIds(db, user) {
-  if (isAdmin(user)) {
+  if (isPlatformAdmin(user)) {
     return new Set(
       db.people
         .filter((person) => !isDemoOnlyPersonId(person.id))
@@ -2009,6 +2155,26 @@ function scopedPersonIds(db, user) {
     );
   }
   if (isDemoUser(user)) return new Set(["demo-sre"]);
+
+  if (isPlainLead(user)) {
+    // A lead sees:
+    //   1) the people of users that directly report to them (lead_user_id == user.id)
+    //   2) their own 1:1 profile (they can be on someone else's agenda)
+    const ids = new Set();
+    if (user.personId) ids.add(user.personId);
+    for (const u of db.users) {
+      if (u.leadUserId === user.id && u.personId) ids.add(u.personId);
+    }
+    // Drop archived
+    return new Set(
+      Array.from(ids).filter((id) => {
+        const p = db.people.find((person) => person.id === id);
+        return p && !p.archivedAt;
+      })
+    );
+  }
+
+  // Plain employee — only their own person
   if (user.personId) {
     const p = db.people.find((person) => person.id === user.personId);
     if (p && p.archivedAt) return new Set();
@@ -2018,8 +2184,23 @@ function scopedPersonIds(db, user) {
 }
 
 function scopedUsers(db, user) {
-  if (!isAdmin(user)) return [];
-  return db.users.filter((item) => !isDemoOnlyAccess(item)).map(publicUser);
+  if (isPlatformAdmin(user)) {
+    return db.users.filter((item) => !isDemoOnlyAccess(item)).map(publicUser);
+  }
+  if (isPlainLead(user)) {
+    // Lead sees: themselves + direct reports + other leads (cross-team directory)
+    return db.users
+      .filter((item) => !isDemoOnlyAccess(item))
+      .filter(
+        (item) =>
+          item.id === user.id ||
+          item.leadUserId === user.id ||
+          isPlainLead(item) ||
+          isPlatformAdmin(item)
+      )
+      .map(publicUser);
+  }
+  return [];
 }
 
 function scopeWorkspace(db, user) {
@@ -2030,11 +2211,17 @@ function scopeWorkspace(db, user) {
   const allSurveys = db.surveys || [];
   // Demo seed surveys belong to the demo workspace; the admin's real team must
   // not see them so they do not look like a built-in fixed survey.
-  const visibleSurveys = isAdmin(user)
+  // Templates are NOT delivered as regular surveys — they go to a separate
+  // surveyTemplates collection for the composer's empty state.
+  const visibleSurveys = (isAdmin(user)
     ? allSurveys.filter((s) => !s.isDemoSeed)
     : isDemoUser(user)
       ? allSurveys
-      : allSurveys.filter((s) => !s.isDemoSeed);
+      : allSurveys.filter((s) => !s.isDemoSeed)
+  ).filter((s) => !s.isTemplate);
+  const userTemplates = isLead(user)
+    ? allSurveys.filter((s) => s.isTemplate && !s.isDemoSeed)
+    : [];
   const allResponses = db.surveyResponses || [];
   const scopedSurveys = visibleSurveys.map((survey) => {
     const responsesForSurvey = allResponses.filter((response) => response.surveyId === survey.id);
@@ -2073,6 +2260,13 @@ function scopeWorkspace(db, user) {
     pulse: pickObject(db.pulse),
     pulseHistory: (db.pulseHistory || []).filter((entry) => ids.has(entry.personId)),
     surveys: scopedSurveys,
+    surveyTemplates: userTemplates.map((s) => ({
+      id: s.id,
+      title: s.title,
+      description: s.description,
+      anonymous: s.anonymous,
+      questions: s.questions
+    })),
     notes: isAdmin(user) ? pickObject(db.notes) : {},
     managerNotes: isAdmin(user)
       ? (db.managerNotes || []).filter((note) => ids.has(note.personId))
@@ -2230,6 +2424,7 @@ function sanitizeSurvey(survey) {
     // Legacy data files may miss this flag — fall back to recognising the known
     // seed id so the demo survey is still hidden from the admin's real workspace.
     isDemoSeed: Boolean(survey?.isDemoSeed) || demoSeedSurveyIds.has(id),
+    isTemplate: Boolean(survey?.isTemplate),
     createdAt:
       typeof survey?.createdAt === "string" && survey.createdAt
         ? survey.createdAt
@@ -2559,6 +2754,36 @@ async function handleApi(request, response) {
     return;
   }
 
+  if (request.method === "POST" && url.pathname === "/api/me/password") {
+    const context = await requireAuth(request, response);
+    if (!context) return;
+    if (isDemoUser(context.user)) {
+      sendJson(response, 403, { error: "Демо-пароль управляется через переменные окружения" });
+      return;
+    }
+    if (isProtectedUser(context.user) && context.user.username.toLowerCase() === adminUsername.toLowerCase()) {
+      // Seed platform-admin password is governed by ADMIN_PASSWORD env var.
+      // Allow self-change only if it's NOT the seed username. (For now we keep
+      // the env-managed seed account immutable — change ADMIN_PASSWORD instead.)
+      sendJson(response, 400, { error: "Пароль системного админа управляется через переменные окружения" });
+      return;
+    }
+    const body = await readJson(request);
+    const password = String(body.password || "");
+    if (password.length < 8) {
+      sendJson(response, 400, { error: "Пароль должен быть не короче 8 символов" });
+      return;
+    }
+    Object.assign(context.user, hashPassword(password));
+    // Keep the current session, drop all other sessions of this user.
+    context.db.sessions = context.db.sessions.filter(
+      (s) => s.userId !== context.user.id || s.id === context.session.id
+    );
+    await writeDb(context.db);
+    sendJson(response, 200, { ok: true });
+    return;
+  }
+
   if (request.method === "GET" && url.pathname === "/api/workspace") {
     const context = await requireAuth(request, response);
     if (!context) return;
@@ -2579,8 +2804,8 @@ async function handleApi(request, response) {
   if (request.method === "POST" && url.pathname === "/api/users") {
     const context = await requireAuth(request, response);
     if (!context) return;
-    if (!isAdmin(context.user)) {
-      sendJson(response, 403, { error: "Только администратор может создавать логины" });
+    if (!isLead(context.user)) {
+      sendJson(response, 403, { error: "Только лид или администратор может создавать логины" });
       return;
     }
 
@@ -2588,6 +2813,28 @@ async function handleApi(request, response) {
     const username = String(body.username || "").trim();
     const password = String(body.password || "");
     const personId = String(body.personId || "");
+    // Requested role from the client; only platform admins can create leads.
+    const requestedRole = ["lead", "employee"].includes(body.role) ? body.role : "employee";
+    if (requestedRole === "lead" && !isPlatformAdmin(context.user)) {
+      sendJson(response, 403, { error: "Только администратор платформы может создавать лидов" });
+      return;
+    }
+    // Lead-chain: platform admins can re-parent to any user; a regular lead can
+    // only attach new employees to themselves.
+    let leadUserId = null;
+    if (requestedRole === "employee") {
+      if (isPlatformAdmin(context.user) && body.leadUserId) {
+        const proposed = context.db.users.find((u) => u.id === body.leadUserId);
+        if (proposed && isLead(proposed)) leadUserId = proposed.id;
+      }
+      if (!leadUserId) leadUserId = context.user.id;
+    } else if (requestedRole === "lead") {
+      if (body.leadUserId) {
+        const proposed = context.db.users.find((u) => u.id === body.leadUserId);
+        if (proposed && isPlatformAdmin(proposed)) leadUserId = proposed.id;
+      }
+      if (!leadUserId) leadUserId = context.user.id;
+    }
     let person = personId ? context.db.people.find((item) => item.id === personId) : null;
 
     if (!/^[a-zA-Z0-9._-]{3,32}$/.test(username)) {
@@ -2676,8 +2923,10 @@ async function handleApi(request, response) {
       id: makeId("user"),
       username,
       name: body.name ? String(body.name).slice(0, 120) : person.name,
-      role: "employee",
+      role: requestedRole,
       personId: person.id,
+      leadUserId,
+      teamLabel: requestedRole === "lead" ? String(body.teamLabel || person.team || "").slice(0, 120) : "",
       createdAt: new Date().toISOString(),
       ...hashPassword(password)
     };
@@ -2731,6 +2980,47 @@ async function handleApi(request, response) {
     context.db.sessions = context.db.sessions.filter((session) => session.userId !== targetUser.id);
     await writeDb(context.db);
     sendJson(response, 200, { user: publicUser(targetUser), users: scopedUsers(context.db, context.user) });
+    return;
+  }
+
+  const userPatchMatch = url.pathname.match(/^\/api\/users\/([^/]+)$/);
+  if (request.method === "PATCH" && userPatchMatch) {
+    const context = await requireAuth(request, response);
+    if (!context) return;
+    if (!isPlatformAdmin(context.user)) {
+      sendJson(response, 403, { error: "Только администратор платформы может менять иерархию" });
+      return;
+    }
+    const target = context.db.users.find((u) => u.id === decodeURIComponent(userPatchMatch[1]));
+    if (!target || isDemoOnlyAccess(target)) {
+      sendJson(response, 404, { error: "Пользователь не найден" });
+      return;
+    }
+    if (isProtectedUser(target)) {
+      sendJson(response, 400, { error: "Системный аккаунт нельзя изменять из интерфейса" });
+      return;
+    }
+    const body = await readJson(request);
+    if (["platform_admin", "lead", "employee"].includes(body.role)) {
+      target.role = body.role;
+    }
+    if (body.leadUserId === null) {
+      target.leadUserId = null;
+    } else if (typeof body.leadUserId === "string" && body.leadUserId) {
+      const proposed = context.db.users.find((u) => u.id === body.leadUserId);
+      if (proposed && isLead(proposed) && proposed.id !== target.id) {
+        target.leadUserId = proposed.id;
+      }
+    }
+    if (typeof body.teamLabel === "string") {
+      target.teamLabel = body.teamLabel.slice(0, 120);
+    }
+    await writeDb(context.db);
+    const refreshed = await readDb();
+    sendJson(response, 200, {
+      user: publicUser(refreshed.users.find((u) => u.id === target.id)),
+      workspace: scopeWorkspace(refreshed, context.user)
+    });
     return;
   }
 
@@ -3067,6 +3357,35 @@ async function handleApi(request, response) {
     await writeDb(context.db);
     const refreshed = await readDb();
     sendJson(response, 201, { workspace: scopeWorkspace(refreshed, context.user) });
+    return;
+  }
+
+  const surveyTemplateMatch = url.pathname.match(/^\/api\/surveys\/([^/]+)\/template$/);
+  if (request.method === "POST" && surveyTemplateMatch) {
+    const context = await requireAuth(request, response);
+    if (!context) return;
+    if (!isLead(context.user)) {
+      sendJson(response, 403, { error: "Только лид может сохранять шаблоны" });
+      return;
+    }
+    const sourceId = decodeURIComponent(surveyTemplateMatch[1]);
+    const source = (context.db.surveys || []).find((s) => s.id === sourceId);
+    if (!source) {
+      sendJson(response, 404, { error: "Опрос не найден" });
+      return;
+    }
+    const template = sanitizeSurvey({
+      title: source.title,
+      description: source.description,
+      anonymous: source.anonymous,
+      status: "active",
+      isTemplate: true,
+      questions: source.questions
+    });
+    context.db.surveys = [...(context.db.surveys || []), template];
+    await writeDb(context.db);
+    const refreshed = await readDb();
+    sendJson(response, 200, { workspace: scopeWorkspace(refreshed, context.user) });
     return;
   }
 

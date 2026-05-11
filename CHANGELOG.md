@@ -1,5 +1,28 @@
 # Changelog
 
+## rc0.2 - 2026-05-11
+
+Second release candidate focused on account hierarchy, admin workflows, and survey reuse.
+
+### Added
+
+- Platform-admin role vocabulary with lead-chain fields for users and Postgres persistence.
+- Separate platform admin area for creating logins, resetting passwords, and managing access.
+- Self-service password change in settings for non-env-managed accounts.
+- Personal survey templates saved from existing surveys and reused in the composer.
+
+### Changed
+
+- Moved profile editing and account security into settings.
+- Moved user access management out of the team directory into the admin section.
+- Improved quick navigation density and page scrolling so the main workspace keeps a single primary scrollbar.
+- Updated smoke coverage for the new admin and settings flows.
+
+### Fixed
+
+- Migrates existing Postgres `users.role` checks so Railway databases created on rc0.1 accept `platform_admin` and `lead`.
+- Preserves seed user hierarchy fields during Postgres seeding.
+
 ## rc0.1 - 2026-05-11
 
 Release candidate for the first Team Health 1:1 production cut.

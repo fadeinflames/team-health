@@ -44,31 +44,32 @@ test("auth, admin workflow, and employee data isolation work", async ({ page, re
   await expect(page.getByText("В рабочей команде пока нет участников 1:1")).toBeVisible();
   await expect(page.getByText("seed")).not.toBeVisible();
 
-  const leaderForm = page.locator(".admin-form").filter({ hasText: "Как вас видит команда" });
+  // Profile name editing moved to Настройки
+  await page.getByRole("button", { name: "Настройки", exact: true }).click();
+  const leaderForm = page.locator(".settings-card").filter({ hasText: "Как вас зовут" });
   await leaderForm.getByLabel("Имя").fill("Максим Гусев QA");
-  await leaderForm.getByRole("button", { name: "Сохранить имя" }).click();
-  await expect(page.getByText("Вы вошли как Максим Гусев QA · лид команды")).toBeVisible();
+  await leaderForm.getByRole("button", { name: "Сохранить" }).click();
+  await expect(page.getByText("Вы вошли как Максим Гусев QA · Админ платформы")).toBeVisible();
 
   const employeeName = "Игорь Сидоров";
   const employeeUsername = `igor_${Date.now()}`;
   const employeePassword = "TeamPass121";
   const updatedEmployeePassword = "TeamPass122";
-  await expect(page.getByRole("heading", { name: "Доступы команды" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Демо-логины" })).not.toBeVisible();
-  await expect(page.locator(".access-row", { hasText: "demo" })).not.toBeVisible();
 
-  const accessForm = page.locator(".admin-form").filter({ hasText: "Добавить участника" });
-  await expect(accessForm.getByLabel("Имя участника")).toBeVisible();
-  await expect(accessForm.getByText("Уже есть профиль")).not.toBeVisible();
-  await accessForm.getByLabel("Имя участника").fill(employeeName);
-  await accessForm.getByLabel("Роль", { exact: true }).fill("Platform SRE");
+  // User management moved to "Админка" section
+  await page.getByRole("button", { name: "Админка", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Создать логин" })).toBeVisible();
+
+  const accessForm = page.locator(".settings-card").filter({ hasText: "Создать логин" });
+  await accessForm.getByLabel("Имя", { exact: true }).fill(employeeName);
+  await accessForm.getByLabel(/Роль в команде/).fill("Platform SRE");
   await accessForm.getByLabel("Команда").fill("Core Infrastructure");
-  await accessForm.getByLabel("Логин", { exact: true }).fill(employeeUsername);
+  await accessForm.getByLabel("Логин").fill(employeeUsername);
   await accessForm.getByLabel("Пароль").fill(employeePassword);
   await accessForm.getByRole("button", { name: "Создать логин" }).click();
   await expect(page.getByText(`Логин ${employeeUsername} создан`)).toBeVisible();
+  await page.getByRole("button", { name: "Команда", exact: true }).click();
   await expect(page.locator(".team-member-card", { hasText: employeeName })).toBeVisible();
-  await expect(page.locator(".access-row", { hasText: employeeUsername })).toBeVisible();
   await expect(page.getByText("Демо SRE-инженер")).not.toBeVisible();
 
   await page.locator(".team-member-card", { hasText: employeeName }).locator(".team-member-main").click();
@@ -94,12 +95,17 @@ test("auth, admin workflow, and employee data isolation work", async ({ page, re
   await expect(page.getByRole("tab", { name: /Итоги/ })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByText(`Итоги 1:1 с ${employeeName}`)).toBeVisible();
 
-  await page.getByRole("button", { name: "Команда", exact: true }).click();
-
-  await page.locator(".access-row", { hasText: employeeUsername }).getByRole("button", { name: "Пароль" }).click();
-  const resetPasswordForm = page.locator(".admin-form").filter({ hasText: "Обновить пароль" });
-  await resetPasswordForm.locator("input").fill(updatedEmployeePassword);
-  await resetPasswordForm.getByRole("button", { name: "Обновить пароль" }).click();
+  // Password reset moved to Админка
+  await page.getByRole("button", { name: "Админка", exact: true }).click();
+  const resetPasswordForm = page.locator(".settings-card").filter({ hasText: "Сбросить пароль" });
+  const optionValue = await resetPasswordForm
+    .locator("select option")
+    .filter({ hasText: employeeUsername })
+    .first()
+    .getAttribute("value");
+  await resetPasswordForm.locator("select").selectOption(optionValue);
+  await resetPasswordForm.locator("input[type=password]").fill(updatedEmployeePassword);
+  await resetPasswordForm.getByRole("button", { name: "Сбросить пароль" }).click();
   await expect(page.getByText("Пароль обновлен, активные сессии пользователя закрыты")).toBeVisible();
 
   const employeeApi = await playwrightRequest.newContext({ baseURL });
@@ -159,13 +165,15 @@ test("auth, admin workflow, and employee data isolation work", async ({ page, re
   });
   await demoApi.dispose();
 
-  await expect(page.locator(".access-row", { hasText: "demo" })).not.toBeVisible();
-
-  const createdAccessRow = page.locator(".access-row", { hasText: employeeUsername });
+  // Delete the login from Админка
+  await page.getByRole("button", { name: "Админка", exact: true }).click();
+  const createdAccessRow = page.locator(".admin-view .access-row", { hasText: employeeUsername });
   await createdAccessRow.getByRole("button", { name: "Удалить" }).click();
   await expect(page.getByText(`Логин ${employeeUsername} удален`)).toBeVisible();
   await expect(createdAccessRow).not.toBeVisible();
 
+  // Now delete the person from Команда
+  await page.getByRole("button", { name: "Команда", exact: true }).click();
   await page.locator(".team-member-card", { hasText: employeeName }).getByRole("button", { name: "Удалить участника" }).click();
   await expect(page.getByText(`Подтвердите удаление ${employeeName}`)).toBeVisible();
   await page.locator(".team-member-card", { hasText: employeeName }).getByRole("button", { name: "Подтвердить удаление" }).click();

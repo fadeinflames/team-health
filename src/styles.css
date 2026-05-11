@@ -374,13 +374,20 @@ textarea:focus-visible,
   width: 100%;
 }
 
-.global-sidebar,
-.sidebar,
-.right-rail {
+/* Only the left global nav stays glued to the viewport — the other panels flow
+   with the main content so the page has ONE scrollbar, not three competing
+   ones. The right-rail and context-sidebar follow regular document flow. */
+.global-sidebar {
   position: sticky;
   top: 0;
-  height: 100dvh;
-  overflow: auto;
+  align-self: start;
+  max-height: 100dvh;
+  overflow-y: auto;
+}
+
+.sidebar,
+.right-rail {
+  align-self: start;
 }
 
 .global-sidebar {
@@ -1455,9 +1462,31 @@ h4 {
   padding: 11px;
 }
 
+.quick-actions {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
 .quick-actions .primary-button,
-.quick-actions .ghost-button {
+.quick-actions .ghost-button,
+.quick-actions .soft-button {
   width: 100%;
+  min-height: 38px;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+/* The "primary" button is the highlighted CTA — let it span both columns on
+   narrow rails so it stays prominent. The secondary actions sit side-by-side
+   underneath. */
+.quick-actions .primary-button {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 900px) {
+  .quick-actions {
+    grid-template-columns: 1fr;
+  }
 }
 
 .compact-empty {
@@ -3873,6 +3902,16 @@ input[type="range"] {
   font-variant-numeric: tabular-nums;
 }
 
+.survey-template-card.user-template {
+  border-color: var(--teal);
+  background: var(--teal-soft);
+}
+
+.survey-template-card.user-template:hover {
+  background: var(--teal-soft);
+  border-color: var(--teal-dark);
+}
+
 .composer-question-number {
   font-size: 12px;
   font-weight: 700;
@@ -3996,6 +4035,83 @@ input[type="range"] {
   margin: 0 0 4px;
   font-size: 18px;
   letter-spacing: -0.012em;
+}
+
+.admin-view {
+  display: grid;
+  gap: 16px;
+  max-width: 880px;
+}
+
+.admin-inline {
+  max-width: 600px;
+}
+
+.team-admin-hint {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--ink-soft);
+  font-size: 14px;
+}
+
+.team-admin-hint svg {
+  color: var(--teal);
+  flex-shrink: 0;
+}
+
+.text-link {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: var(--teal-dark);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.text-link:hover {
+  color: var(--teal);
+}
+
+.settings-inline-form {
+  display: grid;
+  gap: 12px;
+  max-width: 440px;
+}
+
+.settings-inline-form label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.settings-inline-form input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+
+.settings-card-head code {
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+  color: var(--ink);
 }
 
 .settings-card-head p {

@@ -3,7 +3,6 @@ import {
   Activity,
   AlertTriangle,
   BarChart3,
-  Bell,
   CalendarDays,
   Check,
   CheckCircle2,
@@ -51,7 +50,8 @@ const emptyWorkspace = {
   notes: {},
   managerNotes: [],
   archivedPeople: [],
-  users: []
+  users: [],
+  surveyTemplates: []
 };
 
 const goalStatusLabel = {
@@ -480,11 +480,19 @@ const sectionRegistry = {
   goals: { label: "Цели", eyebrow: "Развитие и фокус", title: "Цели", icon: Target },
   surveys: { label: "Опросы", eyebrow: "Регулярная обратная связь", title: "Опросы", icon: ClipboardList },
   reports: { label: "Отчёты", eyebrow: "Аналитика и тренды", title: "Отчёты", icon: BarChart3 },
-  team: { label: "Команда", eyebrow: "Участники 1:1", title: "Команда", icon: HeartPulse, adminOnly: true },
-  settings: { label: "Настройки", eyebrow: "Внешний вид и служебные действия", title: "Настройки", icon: Settings }
+  team: { label: "Команда", eyebrow: "Состав команды", title: "Команда", icon: HeartPulse },
+  admin: { label: "Админка", eyebrow: "Управление платформой", title: "Админка", icon: ShieldCheck, platformAdminOnly: true },
+  settings: { label: "Настройки", eyebrow: "Профиль, пароль, тема", title: "Настройки", icon: Settings }
 };
 
-const primarySections = ["home", "meetings", "goals", "surveys", "reports", "team", "settings"];
+const primarySections = ["home", "meetings", "goals", "surveys", "reports", "team", "admin", "settings"];
+
+const roleLabel = {
+  platform_admin: "Админ платформы",
+  admin: "Админ платформы",
+  lead: "Лид команды",
+  employee: "Участник 1:1"
+};
 
 const surveyQuestionTypeLabel = {
   scale: "Шкала 1–10",
@@ -844,8 +852,16 @@ function isDemoAccess(user) {
   return user?.username === "demo" || user?.personId === "demo-sre";
 }
 
+function isPlatformAdminRole(user) {
+  return user?.role === "platform_admin" || user?.role === "admin";
+}
+
+function isLeadRole(user) {
+  return user?.role === "lead" || isPlatformAdminRole(user);
+}
+
 function isProtectedAccess(user) {
-  return user?.role === "admin";
+  return isPlatformAdminRole(user);
 }
 
 async function apiFetch(path, options = {}) {
@@ -946,6 +962,7 @@ export default function App() {
   const [editingActionId, setEditingActionId] = useState("");
   const [actionEditDraft, setActionEditDraft] = useState({ title: "", due: "", dueDate: "" });
   const [expandedMeetingId, setExpandedMeetingId] = useState("");
+  const [myPassword, setMyPassword] = useState("");
   const [newManagerNote, setNewManagerNote] = useState({ body: "", tags: [] });
   const [editingPersonId, setEditingPersonId] = useState("");
   const [personEditDraft, setPersonEditDraft] = useState({
@@ -992,7 +1009,10 @@ export default function App() {
   const summaryPanelRef = useRef(null);
   const dirtyRef = useRef(false);
 
-  const isAdmin = user?.role === "admin";
+  // "isAdmin" is the legacy alias for platform_admin in the UI. Reuse the helper
+  // so the new role name from the server still drives the admin sections.
+  const isAdmin = isPlatformAdminRole(user);
+  const isLead = isLeadRole(user);
   const displayName = user?.name || user?.username || "";
 
   useEffect(() => {
@@ -1094,8 +1114,9 @@ export default function App() {
       });
       setUser(response.user);
       setActiveSection("home");
-      setNewCard((current) => ({ ...current, source: response.user.role === "admin" ? current.source : "employee" }));
-      setNewAction((current) => ({ ...current, owner: response.user.role === "admin" ? current.owner : "employee" }));
+      const responseIsAdmin = isPlatformAdminRole(response.user);
+      setNewCard((current) => ({ ...current, source: responseIsAdmin ? current.source : "employee" }));
+      setNewAction((current) => ({ ...current, owner: responseIsAdmin ? current.owner : "employee" }));
       await loadWorkspace(response.user);
     } catch (error) {
       setLoginError(error.message);
@@ -1585,7 +1606,10 @@ export default function App() {
   }
 
   function openSection(sectionId) {
-    if (!isAdmin && sectionRegistry[sectionId]?.adminOnly) return;
+    const meta = sectionRegistry[sectionId];
+    if (!meta) return;
+    if (meta.adminOnly && !isAdmin) return;
+    if (meta.platformAdminOnly && !isPlatformAdminRole(user)) return;
     setUserMessage("");
     setPendingDeletePersonId("");
     setActiveSection(sectionId);
@@ -2078,6 +2102,22 @@ export default function App() {
     setUserMessage("CSV скачан");
   }
 
+  async function saveSurveyAsTemplate(surveyId) {
+    setUserMessage("");
+    try {
+      const response = await apiFetch(`/api/surveys/${encodeURIComponent(surveyId)}/template`, {
+        method: "POST",
+        body: "{}"
+      });
+      if (response.workspace) {
+        setWorkspace({ ...emptyWorkspace, ...response.workspace });
+      }
+      setUserMessage("Сохранено как шаблон");
+    } catch (error) {
+      setUserMessage(error.message);
+    }
+  }
+
   async function deleteSurvey(surveyId) {
     setUserMessage("");
     try {
@@ -2288,6 +2328,25 @@ export default function App() {
       setUserMessage("Имя сохранено");
     } catch (error) {
       setFormError("profile", error.message);
+    }
+  }
+
+  async function updateMyPassword(event) {
+    event.preventDefault();
+    setUserMessage("");
+    clearFormError("myPassword");
+    try {
+      if (myPassword.length < 8) {
+        throw new Error("Пароль должен быть не короче 8 символов");
+      }
+      await apiFetch("/api/me/password", {
+        method: "POST",
+        body: JSON.stringify({ password: myPassword })
+      });
+      setMyPassword("");
+      setUserMessage("Пароль обновлён. Старые сессии закрыты");
+    } catch (error) {
+      setFormError("myPassword", error.message);
     }
   }
 
@@ -2577,7 +2636,12 @@ export default function App() {
 
         <div className="global-nav-list">
           {primarySections
-            .filter((sectionId) => isAdmin || !sectionRegistry[sectionId].adminOnly)
+            .filter((sectionId) => {
+              const meta = sectionRegistry[sectionId];
+              if (meta.adminOnly && !isAdmin) return false;
+              if (meta.platformAdminOnly && !isPlatformAdminRole(user)) return false;
+              return true;
+            })
             .map((sectionId) => {
               const item = sectionRegistry[sectionId];
               const Icon = item.icon;
@@ -2674,7 +2738,7 @@ export default function App() {
           <div>
             <p className="eyebrow">{pageEyebrow}</p>
             <h2>{pageTitle}</h2>
-            <span className="session-user">Вы вошли как {displayName} · {isAdmin ? "лид команды" : "участник 1:1"}</span>
+            <span className="session-user">Вы вошли как {displayName} · {roleLabel[user?.role] || "участник"}</span>
           </div>
           {activeSection === "meetings" && selectedPerson && (
             <div className="topbar-actions">
@@ -2882,10 +2946,9 @@ export default function App() {
                 <section className="dashboard-panel quick-panel">
                   <div className="section-heading compact">
                     <div>
-                      <p className="eyebrow">Навигация</p>
-                      <h3>Быстрые действия</h3>
+                      <p className="eyebrow">Куда пойти</p>
+                      <h3>Быстрая навигация</h3>
                     </div>
-                    <Bell size={18} />
                   </div>
                   <div className="quick-actions">
                     {upcomingMeetings[0]?.person ? (
@@ -2894,23 +2957,23 @@ export default function App() {
                         type="button"
                         onClick={() => selectPerson(upcomingMeetings[0].person.id)}
                       >
-                        <PlayCircle size={17} />
-                        Открыть ближайший 1:1
+                        <PlayCircle size={16} />
+                        Ближайший 1:1
                       </button>
                     ) : (
                       <button className="primary-button" type="button" onClick={() => openSection("team")}>
-                        <UserPlus size={17} />
+                        <UserPlus size={16} />
                         Добавить участника
                       </button>
                     )}
-                    <button className="ghost-button" type="button" onClick={() => openSection("meetings")}>
-                      <MessageSquarePlus size={16} />
-                      Открыть все 1:1
+                    <button className="soft-button" type="button" onClick={() => openSection("meetings")}>
+                      <MessageSquarePlus size={15} />
+                      Все 1:1
                     </button>
                     {isAdmin && (
-                      <button className="ghost-button" type="button" onClick={() => openSection("team")}>
-                        <UsersRound size={16} />
-                        Участники и доступы
+                      <button className="soft-button" type="button" onClick={() => openSection("team")}>
+                        <UsersRound size={15} />
+                        Команда
                       </button>
                     )}
                   </div>
@@ -4031,6 +4094,37 @@ export default function App() {
                       )}
                     </button>
                   ))}
+                  {(workspace.surveyTemplates || []).map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      className="survey-template-card user-template"
+                      onClick={() => {
+                        const reKeyed = (t.questions || []).map((q) => ({
+                          ...q,
+                          id: `q-${Math.random().toString(16).slice(2, 8)}`
+                        }));
+                        setSurveyComposer({
+                          title: t.title,
+                          description: t.description,
+                          anonymous: t.anonymous,
+                          questions: reKeyed.length ? reKeyed : [emptyQuestionFor("scale")]
+                        });
+                        setShowSurveyComposer(true);
+                        window.requestAnimationFrame(() => {
+                          document.querySelector(".survey-composer")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                        });
+                      }}
+                    >
+                      <strong>{t.title || "Без названия"}</strong>
+                      <small>{t.description || "Ваш шаблон"}</small>
+                      <em>
+                        {t.questions.length} {pluralizeRu(t.questions.length, ["вопрос", "вопроса", "вопросов"])}
+                        {" · "}
+                        мой шаблон
+                      </em>
+                    </button>
+                  ))}
                 </div>
               </section>
             )}
@@ -4092,6 +4186,15 @@ export default function App() {
                             >
                               <Pencil size={15} />
                               Копия
+                            </button>
+                            <button
+                              className="soft-button"
+                              type="button"
+                              onClick={() => saveSurveyAsTemplate(survey.id)}
+                              title="Сохранить как шаблон"
+                            >
+                              <ClipboardList size={15} />
+                              В шаблоны
                             </button>
                             <button
                               className="soft-button danger-button"
@@ -4740,214 +4843,157 @@ export default function App() {
               </section>
             )}
 
-            <section className="team-access-section">
-              <div className="section-heading">
+            {isPlatformAdminRole(user) && (
+              <div className="team-admin-hint">
+                <ShieldCheck size={18} />
+                <span>
+                  Управление пользователями (создание логинов, сброс паролей, удаление) —{" "}
+                  <button className="text-link" type="button" onClick={() => openSection("admin")}>
+                    в Админке
+                  </button>
+                  .
+                </span>
+              </div>
+            )}
+          </section>
+        )}
+
+        {activeSection === "admin" && isPlatformAdminRole(user) && (
+          <section className="admin-view">
+            <article className="settings-card">
+              <div className="settings-card-head">
+                <div>
+                  <p className="eyebrow">Пользователи</p>
+                  <h3>Создать логин</h3>
+                  <p>Создаёт профиль и логин. Лиды видят свою команду, участники — только свой 1:1.</p>
+                </div>
+              </div>
+              <form className="settings-inline-form admin-inline" onSubmit={createEmployeeUser}>
+                <label>
+                  Имя
+                  <input
+                    value={newUser.personName}
+                    onChange={(event) => setNewUser((current) => ({ ...current, personName: event.target.value }))}
+                    placeholder="Например: Иван Петров"
+                    autoComplete="name"
+                  />
+                </label>
+                <div className="two-field-grid">
+                  <label>
+                    Роль в команде
+                    <input
+                      value={newUser.personRole}
+                      onChange={(event) => setNewUser((current) => ({ ...current, personRole: event.target.value }))}
+                      placeholder="SRE Engineer"
+                    />
+                  </label>
+                  <label>
+                    Команда
+                    <input
+                      value={newUser.personTeam}
+                      onChange={(event) => setNewUser((current) => ({ ...current, personTeam: event.target.value }))}
+                      placeholder="Reliability"
+                    />
+                  </label>
+                </div>
+                <div className="two-field-grid">
+                  <label>
+                    Логин
+                    <input
+                      value={newUser.username}
+                      onChange={(event) => setNewUser((current) => ({ ...current, username: event.target.value }))}
+                      placeholder="ivan.sre"
+                    />
+                  </label>
+                  <label>
+                    Пароль
+                    <input
+                      type="password"
+                      value={newUser.password}
+                      onChange={(event) => setNewUser((current) => ({ ...current, password: event.target.value }))}
+                      placeholder="минимум 8 символов"
+                    />
+                  </label>
+                </div>
+                {formErrors.createUser && <div className="form-error inline-form-error">{formErrors.createUser}</div>}
+                <button className="primary-button" type="submit">
+                  <UserPlus size={16} />
+                  Создать логин
+                </button>
+              </form>
+            </article>
+
+            <article className="settings-card">
+              <div className="settings-card-head">
+                <div>
+                  <p className="eyebrow">Безопасность</p>
+                  <h3>Сбросить пароль пользователю</h3>
+                  <p>После сброса все активные сессии этого пользователя закроются.</p>
+                </div>
+              </div>
+              <form className="settings-inline-form admin-inline" data-form="password" onSubmit={updateEmployeePassword}>
+                <label>
+                  Логин
+                  <select
+                    value={passwordUpdate.userId}
+                    onChange={(event) => setPasswordUpdate((current) => ({ ...current, userId: event.target.value }))}
+                  >
+                    <option value="">Выберите логин</option>
+                    {editableUsers.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.username} — {item.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Новый пароль
+                  <input
+                    type="password"
+                    value={passwordUpdate.password}
+                    onChange={(event) => setPasswordUpdate((current) => ({ ...current, password: event.target.value }))}
+                    placeholder="минимум 8 символов"
+                  />
+                </label>
+                {formErrors.password && <div className="form-error inline-form-error">{formErrors.password}</div>}
+                <button className="primary-button" type="submit" disabled={!passwordUpdate.userId}>
+                  <KeyRound size={16} />
+                  Сбросить пароль
+                </button>
+              </form>
+            </article>
+
+            <article className="settings-card">
+              <div className="settings-card-head">
                 <div>
                   <p className="eyebrow">Доступы</p>
-                  <h3>Доступы команды</h3>
+                  <h3>Все логины</h3>
+                  <p>Список всех аккаунтов платформы. Удаление логина закрывает все его сессии.</p>
                 </div>
-                <span className="count-pill">{countLabel(workspace.users.length, ["логин", "логина", "логинов"])}</span>
               </div>
-
-              <div className="users-admin-grid">
-                <div className="users-list-panel">
-                  {[
-                    ["Активные логины", realUsers]
-                  ].map(([title, users]) => (
-                    <section className="access-group" key={title}>
-                      <div className="section-heading compact">
-                        <div>
-                          <p className="eyebrow">Рабочая команда</p>
-                          <h3>{title}</h3>
-                        </div>
-                        <span className="count-pill">{users.length}</span>
-                      </div>
-                      <div className={`access-table ${sectionStaggerClass("team-access")}`}>
-                        {users.map((item) => {
-                          const person = workspace.people.find((candidate) => candidate.id === item.personId);
-                          return (
-                            <article key={item.id} className="access-row">
-                              <div>
-                                <strong>{item.role === "admin" ? item.name : person?.name || "Не привязан"}</strong>
-                                <span className="login-secondary">{item.username}</span>
-                              </div>
-                              <span>{item.role === "admin" ? "лид команды" : "участник 1:1"}</span>
-                              <div className="access-actions">
-                                {!isProtectedAccess(item) && (
-                                  <>
-                                    <button
-                                      className="soft-button"
-                                      type="button"
-                                      onClick={() => {
-                                        setPasswordUpdate((current) => ({ ...current, userId: item.id }));
-                                        // Bring the password form into view and focus the input so the
-                                        // click feels connected to a visible action.
-                                        window.requestAnimationFrame(() => {
-                                          const form = document.querySelector(".admin-form[data-form='password']");
-                                          if (form) {
-                                            form.scrollIntoView({ behavior: "smooth", block: "center" });
-                                            form.querySelector("input[type='password']")?.focus();
-                                          }
-                                        });
-                                      }}
-                                    >
-                                      Пароль
-                                    </button>
-                                    <button className="soft-button danger-button" type="button" onClick={() => deleteEmployeeUser(item)}>
-                                      <Trash2 size={16} />
-                                      Удалить
-                                    </button>
-                                  </>
-                                )}
-                              </div>
-                            </article>
-                          );
-                        })}
-                      </div>
-                    </section>
-                  ))}
-                </div>
-
-                <div className="team-admin-forms">
-                  <form className="admin-form" onSubmit={updateAccountName}>
-                    <div className="section-heading compact">
+              <div className="access-table">
+                {realUsers.map((item) => {
+                  const person = workspace.people.find((candidate) => candidate.id === item.personId);
+                  return (
+                    <article key={item.id} className="access-row">
                       <div>
-                        <p className="eyebrow">Профиль лида</p>
-                        <h3>Как вас видит команда</h3>
+                        <strong>{isPlatformAdminRole(item) ? item.name : person?.name || item.name || "Без имени"}</strong>
+                        <span className="login-secondary">{item.username}</span>
                       </div>
-                      <UserCog size={18} />
-                    </div>
-                    <p className="form-note">
-                      Это имя показывается в шапке интерфейса и в списке доступов.
-                    </p>
-                    <label>
-                      Имя
-                      <input
-                        value={profileName}
-                        onChange={(event) => setProfileName(event.target.value)}
-                        placeholder="Например: Максим Гусев"
-                        autoComplete="name"
-                      />
-                    </label>
-                    {formErrors.profile && <div className="form-error inline-form-error">{formErrors.profile}</div>}
-                    <button className="primary-button" type="submit">
-                      <ShieldCheck size={16} />
-                      Сохранить имя
-                    </button>
-                  </form>
-
-                  <form className="admin-form" onSubmit={createEmployeeUser}>
-                    <div className="section-heading compact">
-                      <div>
-                        <p className="eyebrow">Новый участник</p>
-                        <h3>Добавить участника</h3>
-                      </div>
-                      <UserCog size={18} />
-                    </div>
-                    <p className="form-note">
-                      Создает профиль участника и логин с доступом только к его 1:1.
-                    </p>
-                    <label>
-                      Имя участника
-                      <input
-                        value={newUser.personName}
-                        onChange={(event) => setNewUser((current) => ({ ...current, personName: event.target.value }))}
-                        placeholder="Например: Иван Петров"
-                        autoComplete="name"
-                      />
-                    </label>
-                    <div className="two-field-grid">
-                      <label>
-                        Роль
-                        <input
-                          value={newUser.personRole}
-                          onChange={(event) => setNewUser((current) => ({ ...current, personRole: event.target.value }))}
-                          placeholder="SRE Engineer"
-                        />
-                      </label>
-                      <label>
-                        Команда
-                        <input
-                          value={newUser.personTeam}
-                          onChange={(event) => setNewUser((current) => ({ ...current, personTeam: event.target.value }))}
-                          placeholder="Reliability"
-                        />
-                      </label>
-                    </div>
-                    <div className="two-field-grid">
-                      <label>
-                        Логин
-                        <input
-                          value={newUser.username}
-                          onChange={(event) => setNewUser((current) => ({ ...current, username: event.target.value }))}
-                          placeholder="ivan.sre"
-                        />
-                      </label>
-                      <label>
-                        Пароль
-                        <input
-                          type="password"
-                          value={newUser.password}
-                          onChange={(event) => setNewUser((current) => ({ ...current, password: event.target.value }))}
-                          placeholder="минимум 8 символов"
-                        />
-                      </label>
-                    </div>
-                    {formErrors.createUser && <div className="form-error inline-form-error">{formErrors.createUser}</div>}
-                    <button className="primary-button" type="submit">
-                      <ShieldCheck size={16} />
-                      Создать логин
-                    </button>
-                  </form>
-
-                  <form className="admin-form" data-form="password" onSubmit={updateEmployeePassword}>
-                    <div className="section-heading compact">
-                      <div>
-                        <p className="eyebrow">Безопасность</p>
-                        <h3>Обновить пароль</h3>
-                        {passwordUpdate.userId && (
-                          <p className="form-note" style={{ margin: 0 }}>
-                            Для логина{" "}
-                            <strong>
-                              {editableUsers.find((u) => u.id === passwordUpdate.userId)?.username || ""}
-                            </strong>
-                          </p>
+                      <span>{roleLabel[item.role] || item.role}</span>
+                      <div className="access-actions">
+                        {!isProtectedAccess(item) && (
+                          <button className="soft-button danger-button" type="button" onClick={() => deleteEmployeeUser(item)}>
+                            <Trash2 size={15} />
+                            Удалить
+                          </button>
                         )}
                       </div>
-                      <KeyRound size={18} />
-                    </div>
-                    <label>
-                      Логин
-                      <select
-                        value={passwordUpdate.userId}
-                        onChange={(event) => setPasswordUpdate((current) => ({ ...current, userId: event.target.value }))}
-                      >
-                        <option value="">Выберите логин</option>
-                        {editableUsers.map((item) => (
-                          <option key={item.id} value={item.id}>
-                            {item.username}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      Новый пароль
-                      <input
-                        type="password"
-                        value={passwordUpdate.password}
-                        onChange={(event) => setPasswordUpdate((current) => ({ ...current, password: event.target.value }))}
-                        placeholder="минимум 8 символов"
-                      />
-                    </label>
-                    {formErrors.password && <div className="form-error inline-form-error">{formErrors.password}</div>}
-                    <button className="primary-button" type="submit" disabled={!passwordUpdate.userId}>
-                      <RotateCcw size={16} />
-                      Обновить пароль
-                    </button>
-                  </form>
-                </div>
+                    </article>
+                  );
+                })}
               </div>
-            </section>
+            </article>
           </section>
         )}
 
@@ -4956,9 +5002,64 @@ export default function App() {
             <article className="settings-card">
               <div className="settings-card-head">
                 <div>
+                  <p className="eyebrow">Профиль</p>
+                  <h3>Как вас зовут</h3>
+                  <p>Имя видно в шапке и в списке доступов. Логин (<code>{user?.username}</code>) изменить нельзя.</p>
+                </div>
+              </div>
+              <form
+                className="settings-inline-form"
+                onSubmit={updateAccountName}
+              >
+                <label>
+                  Имя
+                  <input
+                    value={profileName}
+                    onChange={(event) => setProfileName(event.target.value)}
+                    autoComplete="name"
+                  />
+                </label>
+                {formErrors.profile && <div className="form-error inline-form-error">{formErrors.profile}</div>}
+                <button className="primary-button" type="submit">
+                  <Check size={16} />
+                  Сохранить
+                </button>
+              </form>
+            </article>
+
+            <article className="settings-card">
+              <div className="settings-card-head">
+                <div>
+                  <p className="eyebrow">Безопасность</p>
+                  <h3>Сменить пароль</h3>
+                  <p>Все активные сессии этого аккаунта на других устройствах будут закрыты.</p>
+                </div>
+              </div>
+              <form className="settings-inline-form" onSubmit={updateMyPassword}>
+                <label>
+                  Новый пароль
+                  <input
+                    type="password"
+                    value={myPassword}
+                    onChange={(event) => setMyPassword(event.target.value)}
+                    placeholder="минимум 8 символов"
+                    autoComplete="new-password"
+                  />
+                </label>
+                {formErrors.myPassword && <div className="form-error inline-form-error">{formErrors.myPassword}</div>}
+                <button className="primary-button" type="submit" disabled={!myPassword}>
+                  <KeyRound size={16} />
+                  Сменить пароль
+                </button>
+              </form>
+            </article>
+
+            <article className="settings-card">
+              <div className="settings-card-head">
+                <div>
                   <p className="eyebrow">Внешний вид</p>
                   <h3>Тема интерфейса</h3>
-                  <p>Выберите светлую, тёмную или автоматическую под настройки системы.</p>
+                  <p>Светлая, тёмная или автоматическая (под настройки системы).</p>
                 </div>
               </div>
               <div className="theme-toggle" role="radiogroup" aria-label="Тема интерфейса">
@@ -4988,7 +5089,7 @@ export default function App() {
                   <div>
                     <p className="eyebrow">Служебные действия</p>
                     <h3>Сбросить демо-данные</h3>
-                    <p>Удаляет рабочую команду и возвращает seed-аккаунты. Сессия лида сохраняется.</p>
+                    <p>Удаляет рабочую команду и возвращает seed-аккаунты. Сессия не закрывается.</p>
                   </div>
                 </div>
                 <div className="settings-card-actions">
@@ -5147,7 +5248,7 @@ export default function App() {
             <div className="user-list">
               {workspace.users.map((item) => {
                 const name =
-                  item.role === "admin"
+                  isPlatformAdminRole(item)
                     ? item.name
                     : workspace.people.find((person) => person.id === item.personId)?.name || "Участник 1:1";
                 return (
@@ -5156,7 +5257,7 @@ export default function App() {
                       <strong>{name}</strong>
                       <span className="login-secondary">{item.username}</span>
                     </div>
-                    <span>{item.role === "admin" ? "лид команды" : "участник 1:1"}</span>
+                    <span>{roleLabel[item.role] || "участник 1:1"}</span>
                   </div>
                 );
               })}
