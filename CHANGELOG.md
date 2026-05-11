@@ -1,5 +1,13 @@
 # Changelog
 
+## rc0.2.3 - 2026-05-11
+
+Patch release for left navigation visual stability.
+
+### Fixed
+
+- Kept the global sidebar at full viewport height so its background does not end before the screen bottom.
+
 ## rc0.2.2 - 2026-05-11
 
 Patch release for dashboard focus and test alignment.

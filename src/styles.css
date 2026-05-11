@@ -381,7 +381,10 @@ textarea:focus-visible,
   position: sticky;
   top: 0;
   align-self: start;
-  max-height: 100dvh;
+  /* Force viewport-height so the dark background always reaches the bottom of
+     the screen — without this the panel shrinks to its content and exposes the
+     page background below the last nav item. */
+  height: 100dvh;
   overflow-y: auto;
 }
 
