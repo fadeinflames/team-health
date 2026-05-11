@@ -1,5 +1,14 @@
 # Changelog
 
+## rc0.2.4 - 2026-05-11
+
+Patch release for left navigation contrast and theme consistency.
+
+### Changed
+
+- Moved the global sidebar colors onto design tokens so hover, active, brand, and footer states stay consistent across light and dark themes.
+- Tuned the dark-mode sidebar background so navigation remains visually separate from the main content.
+
 ## rc0.2.3 - 2026-05-11
 
 Patch release for left navigation visual stability.
