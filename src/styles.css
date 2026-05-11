@@ -385,9 +385,11 @@ textarea:focus-visible,
   overflow-y: auto;
 }
 
+/* Let the context-sidebar and right-rail stretch to the bottom of the grid row
+   so their background fills the page even when the inner content is short. */
 .sidebar,
 .right-rail {
-  align-self: start;
+  align-self: stretch;
 }
 
 .global-sidebar {
@@ -3095,20 +3097,24 @@ input[type="range"] {
 }
 
 .date-picker-trigger {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
-  min-height: 38px;
-  padding: 8px 12px;
-  background: var(--surface);
+  margin-top: 7px;
+  padding: 11px 12px;
+  background: #fbfcfa;
   color: var(--ink);
   border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius);
   font: inherit;
   cursor: pointer;
   text-align: left;
   transition: border-color var(--duration-quick) var(--ease-snap);
+}
+
+:root[data-theme="dark"] .date-picker-trigger {
+  background: var(--surface);
 }
 
 .date-picker-trigger:hover {
@@ -4008,10 +4014,15 @@ input[type="range"] {
   }
 }
 
+/* Forms inside admin cards can grow wider than the default settings form since
+   the create-login form has two-column grids that need room. */
+.admin-inline {
+  max-width: 720px;
+}
+
 .settings-view {
   display: grid;
   gap: 16px;
-  max-width: 720px;
 }
 
 .settings-card {
@@ -4040,11 +4051,6 @@ input[type="range"] {
 .admin-view {
   display: grid;
   gap: 16px;
-  max-width: 880px;
-}
-
-.admin-inline {
-  max-width: 600px;
 }
 
 .team-admin-hint {

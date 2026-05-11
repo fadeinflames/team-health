@@ -5232,38 +5232,6 @@ export default function App() {
           </section>
         )}
 
-        {isAdmin && (
-          <section className="rail-section">
-            <div className="section-heading compact">
-              <div>
-                <p className="eyebrow">Команда</p>
-                <h3>Участники и доступы</h3>
-              </div>
-              <UserPlus size={18} />
-            </div>
-            <button className="primary-button full-width-button" type="button" onClick={() => openSection("team")}>
-              <UsersRound size={16} />
-              Открыть команду
-            </button>
-            <div className="user-list">
-              {workspace.users.map((item) => {
-                const name =
-                  isPlatformAdminRole(item)
-                    ? item.name
-                    : workspace.people.find((person) => person.id === item.personId)?.name || "Участник 1:1";
-                return (
-                  <div key={item.id}>
-                    <div className="user-list-main">
-                      <strong>{name}</strong>
-                      <span className="login-secondary">{item.username}</span>
-                    </div>
-                    <span>{roleLabel[item.role] || "участник 1:1"}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        )}
 
         <section className="rail-section">
           <div className="section-heading compact">

@@ -1,5 +1,20 @@
 # Changelog
 
+## rc0.2.1 - 2026-05-11
+
+Patch release for production stability and interface cleanup after rc0.2.
+
+### Fixed
+
+- Hardened Postgres user replacement so an empty upstream user array cannot wipe logins.
+- Clarified the role-check migration for existing Railway databases using the new `platform_admin` and `lead` roles.
+- Removed the duplicate right-rail access list now that user management lives in the admin section.
+
+### Changed
+
+- Improved right-rail/sidebar stretching and admin/settings form widths.
+- Refined the date picker trigger spacing and surface treatment.
+
 ## rc0.2 - 2026-05-11
 
 Second release candidate focused on account hierarchy, admin workflows, and survey reuse.

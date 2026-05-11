@@ -868,7 +868,9 @@ async function migratePostgres() {
 
     -- Existing rc0.1 databases still have users_role_check limited to
     -- ('admin', 'employee'). Recreate role checks before seedPostgres upgrades
-    -- the seed admin to platform_admin.
+    -- the seed admin to platform_admin. Without this, writes that persist
+    -- role='platform_admin' or 'lead' roll back and can look like phantom 401s
+    -- when the request also touched sessions.
     do $$
     declare
       role_check_name text;
@@ -1837,6 +1839,13 @@ async function replaceNotes(client, notes) {
 }
 
 async function replaceUsers(client, users) {
+  // Defensive guard: never blow away the users table because an upstream
+  // glitch produced an empty array. At minimum the seed platform admin must
+  // be present for the system to remain logged-in-able.
+  if (!Array.isArray(users) || users.length === 0) {
+    console.warn("replaceUsers called with empty users array — skipping delete to avoid wiping logins");
+    return;
+  }
   await client.query("delete from users where id <> all($1::text[])", [users.map((user) => user.id)]);
   // Insert in two passes so lead_user_id self-references can resolve regardless
   // of the order rows appear in the input array.
