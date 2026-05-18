@@ -1342,6 +1342,7 @@ export default function App() {
   const teamLeadUsers = realUsers.filter((item) => item.role === "lead");
   const editableUsers = workspace?.users.filter((item) => !isProtectedAccess(item)) || [];
   const dashboardPeople = isAdmin && realPeople.length ? realPeople : workspace?.people || [];
+  const hasDashboardPeople = dashboardPeople.length > 0;
   const dashboardPersonIds = new Set(dashboardPeople.map((person) => person.id));
   const dashboardCards = workspace?.cards.filter((card) => dashboardPersonIds.has(card.personId)) || [];
   const openDashboardCards = dashboardCards.filter((card) => card.status !== "done");
@@ -3290,310 +3291,247 @@ export default function App() {
 
         {activeSection === "home" && (
           <section className="dashboard-view">
-            <section className="dashboard-hero" aria-label="Сводка команды">
-              <div className="dashboard-hero-main">
-                <p className="eyebrow">{isAdmin ? "Сегодня" : "Мой профиль"}</p>
-                <h3>{isAdmin ? "Операционная сводка" : "Сводка по 1:1"}</h3>
-                <p>{dashboardIntroText}</p>
-              </div>
-              <div className={`dashboard-score-card ${dashboardSnapshots.length === 0 ? "" : dashboardScore < 64 ? "score-risk" : dashboardScore < 76 ? "score-watch" : "score-good"}`}>
-                <span className="metric-label">{isAdmin ? "Пульс команды" : "Мой пульс"}</span>
-                <strong>{dashboardScore}</strong>
-                <div className="team-score-line" aria-hidden="true">
-                  <span style={{ width: `${dashboardScore}%` }} />
+            {!hasDashboardPeople ? (
+              <section className="dashboard-empty-panel" aria-label="Пустая команда">
+                <div className="dashboard-empty-copy">
+                  <p className="eyebrow">{isAdmin ? "Старт" : "Мой профиль"}</p>
+                  <h3>{isAdmin ? "Команда пока пустая" : "Профиль 1:1 пока не настроен"}</h3>
+                  <p>
+                    {isAdmin
+                      ? "Добавьте участников и логины, после этого здесь появятся ближайшие 1:1, пульс, срочные темы и следующие шаги."
+                      : "Когда лидер добавит ваш профиль, здесь появятся темы, пульс, цели и договорённости."}
+                  </p>
                 </div>
-                <small>{peopleInRiskZone} в зоне внимания из {dashboardPeople.length}</small>
-              </div>
-            </section>
-
-            <section className="manager-command" aria-label="Рабочий цикл менеджера">
-              <div className="section-heading compact">
-                <div>
-                  <p className="eyebrow">Рабочий цикл</p>
-                  <h3>{isAdmin ? "Что закрыть сегодня" : "Что подготовить к 1:1"}</h3>
-                </div>
-                <span className="count-pill">{actionInboxItems.length + prepQueue.length}</span>
-              </div>
-
-              <div className="command-grid">
-                <article className="command-card command-card-main">
-                  <span className="command-label">Ближайший 1:1</span>
-                  {firstUpcomingMeeting ? (
-                    <>
-                      <div className="command-person">
-                        <span className="avatar">{firstUpcomingMeeting.person.initials}</span>
-                        <span>
-                          <strong>{firstUpcomingMeeting.person.name}</strong>
-                          <small>{firstUpcomingMeeting.person.nextMeeting} · {firstUpcomingMeeting.person.cadence}</small>
-                        </span>
-                      </div>
-                      <div className="command-metrics">
-                        <span>{firstUpcomingMeeting.readiness}% готовность</span>
-                        <span>{countLabel(firstUpcomingMeeting.openActions, ["шаг", "шага", "шагов"])}</span>
-                        <span>{countLabel(firstUpcomingMeeting.urgentCards, ["срочная тема", "срочные темы", "срочных тем"])}</span>
-                      </div>
-                      <button className="primary-button" type="button" onClick={() => selectPerson(firstUpcomingMeeting.person.id)}>
-                        <ClipboardCheck size={16} />
-                        Подготовить
-                      </button>
-                    </>
-                  ) : (
-                    <div className="empty-state compact-empty">
-                      <CalendarDays size={20} />
-                      <span>Ближайших 1:1 пока нет.</span>
+                {isAdmin && (
+                  <div className="dashboard-empty-actions">
+                    <button className="primary-button" type="button" onClick={() => openSection("admin")}>
+                      <UserPlus size={16} />
+                      Создать логин
+                    </button>
+                    <button className="soft-button" type="button" onClick={() => openSection("team")}>
+                      <UsersRound size={16} />
+                      Открыть команду
+                    </button>
+                  </div>
+                )}
+              </section>
+            ) : (
+              <>
+                <section className="dashboard-hero" aria-label="Сводка команды">
+                  <div className="dashboard-hero-main">
+                    <p className="eyebrow">{isAdmin ? "Сегодня" : "Мой профиль"}</p>
+                    <h3>{isAdmin ? "Операционная сводка" : "Сводка по 1:1"}</h3>
+                    <p>{dashboardIntroText}</p>
+                  </div>
+                  <div className={`dashboard-score-card ${dashboardScore < 64 ? "score-risk" : dashboardScore < 76 ? "score-watch" : "score-good"}`}>
+                    <span className="metric-label">{isAdmin ? "Пульс команды" : "Мой пульс"}</span>
+                    <strong>{dashboardScore}</strong>
+                    <div className="team-score-line" aria-hidden="true">
+                      <span style={{ width: `${dashboardScore}%` }} />
                     </div>
-                  )}
-                </article>
+                    <small>{peopleInRiskZone} в зоне внимания из {dashboardPeople.length}</small>
+                  </div>
+                </section>
 
-                <article className="command-card">
-                  <span className="command-label">Action inbox</span>
-                  <div className="command-list">
-                    {actionInboxItems.map((item) => (
-                      <button className={`command-row tone-${item.tone}`} key={item.id} type="button" onClick={() => selectPerson(item.personId)}>
-                        <span className="command-row-type">{item.label}</span>
-                        <span className="command-row-main">
-                          <strong>{item.title}</strong>
-                          <small>{item.meta}</small>
-                        </span>
-                        <ChevronRight size={14} />
-                      </button>
-                    ))}
-                    {actionInboxItems.length === 0 && (
-                      <div className="empty-state compact-empty">
-                        <CheckCircle2 size={20} />
-                        <span>Критичных действий сейчас нет.</span>
+                <section className="manager-command" aria-label="Рабочий цикл менеджера">
+                  <div className="section-heading compact">
+                    <div>
+                      <p className="eyebrow">Рабочий цикл</p>
+                      <h3>{isAdmin ? "Что закрыть сегодня" : "Что подготовить к 1:1"}</h3>
+                    </div>
+                    <span className="count-pill">{actionInboxItems.length}</span>
+                  </div>
+
+                  <div className="command-grid">
+                    <article className="command-card command-card-main">
+                      <span className="command-label">Календарь</span>
+                      <h3 className="command-card-title">Ближайшие 1:1</h3>
+                      {firstUpcomingMeeting ? (
+                        <>
+                          <div className="command-person">
+                            <span className="avatar">{firstUpcomingMeeting.person.initials}</span>
+                            <span>
+                              <strong>{firstUpcomingMeeting.person.name}</strong>
+                              <small>{firstUpcomingMeeting.person.nextMeeting} · {firstUpcomingMeeting.person.cadence}</small>
+                            </span>
+                          </div>
+                          <div className="command-metrics">
+                            <span>{firstUpcomingMeeting.readiness}% готовность</span>
+                            <span>{countLabel(firstUpcomingMeeting.openActions, ["шаг", "шага", "шагов"])}</span>
+                            <span>{countLabel(firstUpcomingMeeting.urgentCards, ["срочная тема", "срочные темы", "срочных тем"])}</span>
+                          </div>
+                          <button className="primary-button" type="button" onClick={() => selectPerson(firstUpcomingMeeting.person.id)}>
+                            <ClipboardCheck size={16} />
+                            Подготовить
+                          </button>
+                        </>
+                      ) : (
+                        <div className="empty-state compact-empty">
+                          <CalendarDays size={20} />
+                          <span>Ближайших 1:1 пока нет.</span>
+                        </div>
+                      )}
+                    </article>
+
+                    <article className="command-card">
+                      <span className="command-label">Фокус</span>
+                      <h3 className="command-card-title">Что требует решения</h3>
+                      <div className="command-list">
+                        {actionInboxItems.map((item) => (
+                          <button className={`command-row tone-${item.tone}`} key={item.id} type="button" onClick={() => selectPerson(item.personId)}>
+                            <span className="command-row-type">{item.label}</span>
+                            <span className="command-row-main">
+                              <strong>{item.title}</strong>
+                              <small>{item.meta}</small>
+                            </span>
+                            <ChevronRight size={14} />
+                          </button>
+                        ))}
+                        {actionInboxItems.length === 0 && (
+                          <div className="empty-state compact-empty">
+                            <CheckCircle2 size={20} />
+                            <span>Критичных действий сейчас нет.</span>
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                </article>
+                    </article>
 
-                <article className="command-card">
-                  <span className="command-label">Очередь подготовки</span>
-                  <div className="command-list">
-                    {prepQueue.map(({ person, readiness: personReadiness, openActions, urgentCards }) => (
-                      <button className="prep-row" key={person.id} type="button" onClick={() => selectPerson(person.id)}>
-                        <span className="avatar mini">{person.initials}</span>
-                        <span className="prep-row-main">
-                          <strong>{person.name}</strong>
-                          <small>
-                            {personReadiness}% · {countLabel(openActions, ["шаг", "шага", "шагов"])}
-                            {urgentCards > 0 && ` · ${urgentCards} срочн.`}
-                          </small>
-                        </span>
-                        <span className="readiness-mini">
-                          <span style={{ width: `${personReadiness}%` }} />
-                        </span>
-                      </button>
-                    ))}
-                    {prepQueue.length === 0 && (
-                      <div className="empty-state compact-empty">
-                        <CheckCircle2 size={20} />
-                        <span>Все встречи выглядят готовыми.</span>
+                    <article className="command-card command-card-actions">
+                      <span className="command-label">Навигация</span>
+                      <h3 className="command-card-title">Петля улучшений</h3>
+                      <div className="command-quick-actions">
+                        {isAdmin && (
+                          <button className="soft-button" type="button" onClick={() => openSection("surveys")}>
+                            <ClipboardList size={15} />
+                            Запустить опрос
+                          </button>
+                        )}
+                        <button className="soft-button" type="button" onClick={() => openSection("reports")}>
+                          <BarChart3 size={15} />
+                          Открыть отчёты
+                        </button>
+                        <button className="soft-button" type="button" onClick={() => openSection("lprs")}>
+                          <ClipboardCheck size={15} />
+                          Открыть ЛПР
+                        </button>
+                        <button className="soft-button" type="button" onClick={() => openSection("goals")}>
+                          <Target size={15} />
+                          Открыть цели
+                        </button>
                       </div>
-                    )}
+                    </article>
                   </div>
-                </article>
+                </section>
 
-                <article className="command-card command-card-actions">
-                  <span className="command-label">Петля улучшений</span>
-                  <div className="command-quick-actions">
-                    {isAdmin && (
-                      <button className="soft-button" type="button" onClick={() => openSection("surveys")}>
-                        <ClipboardList size={15} />
-                        Запустить опрос
-                      </button>
-                    )}
-                    <button className="soft-button" type="button" onClick={() => openSection("reports")}>
-                      <BarChart3 size={15} />
-                      Открыть отчёты
-                    </button>
-                    <button className="soft-button" type="button" onClick={() => openSection("lprs")}>
-                      <ClipboardCheck size={15} />
-                      Открыть ЛПР
-                    </button>
-                    <button className="soft-button" type="button" onClick={() => openSection("goals")}>
-                      <Target size={15} />
-                      Открыть цели
-                    </button>
-                  </div>
-                </article>
-              </div>
-            </section>
+                {isAdmin && alertsData.length > 0 && (
+                  <section className="alerts-strip" aria-label="Сигналы по команде">
+                    <div className="alerts-head">
+                      <AlertTriangle size={18} />
+                      <strong>Сигналы по команде</strong>
+                      <span className="count-pill">{alertsData.length}</span>
+                    </div>
+                    <div className="alerts-list">
+                      {alertsData.slice(0, 6).map((alert) => (
+                        <button
+                          className={`alert-row severity-${alert.severity}`}
+                          key={`${alert.personId}-${alert.kind}`}
+                          type="button"
+                          onClick={() => selectPerson(alert.personId)}
+                        >
+                          <span className={`alert-dot severity-${alert.severity}`} />
+                          <span>{alert.label}</span>
+                          <ChevronRight size={14} />
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                )}
 
-            {isAdmin && alertsData.length > 0 && (
-              <section className="alerts-strip" aria-label="Сигналы по команде">
-                <div className="alerts-head">
-                  <AlertTriangle size={18} />
-                  <strong>Сигналы по команде</strong>
-                  <span className="count-pill">{alertsData.length}</span>
-                </div>
-                <div className="alerts-list">
-                  {alertsData.slice(0, 6).map((alert) => (
-                    <button
-                      className={`alert-row severity-${alert.severity}`}
-                      key={`${alert.personId}-${alert.kind}`}
-                      type="button"
-                      onClick={() => selectPerson(alert.personId)}
-                    >
-                      <span className={`alert-dot severity-${alert.severity}`} />
-                      <span>{alert.label}</span>
-                      <ChevronRight size={14} />
-                    </button>
+                <div className="dashboard-kpis" aria-label="Ключевые показатели">
+                  {dashboardKpis.map(([Icon, label, value, detail, tone]) => (
+                    <article className={`kpi-card ${tone}`} key={label}>
+                      <span className="kpi-icon">
+                        <Icon size={18} />
+                      </span>
+                      <div>
+                        <span>{label}</span>
+                        <strong>{value}</strong>
+                        <small>{detail}</small>
+                      </div>
+                    </article>
                   ))}
                 </div>
-              </section>
+
+                <div className="dashboard-grid dashboard-grid-main-only">
+                  <div className="dashboard-main-stack">
+                    <section className="dashboard-panel urgent-panel">
+                      <div className="section-heading compact">
+                        <div>
+                          <p className="eyebrow">Из 1:1</p>
+                          <h3>Срочные вопросы</h3>
+                        </div>
+                        <span className="count-pill">{urgentDashboardCards.length}</span>
+                      </div>
+                      <div className={`urgent-list ${sectionStaggerClass("home-urgent")}`}>
+                        {urgentDashboardCards.slice(0, 5).map((card) => {
+                          const person = workspace.people.find((item) => item.id === card.personId);
+                          return (
+                            <button className="urgent-row" key={card.id} type="button" onClick={() => selectPerson(card.personId)}>
+                              <span className={`urgent-marker priority-${card.priority}`} />
+                              <span className="urgent-main">
+                                <strong>{card.title}</strong>
+                                {card.body && <small>{card.body}</small>}
+                              </span>
+                              <span className="urgent-meta">
+                                <span>{person?.name || "участник"}</span>
+                                <em>{priorityLabel(card.priority)}</em>
+                              </span>
+                              <ChevronRight size={16} />
+                            </button>
+                          );
+                        })}
+                        {urgentDashboardCards.length === 0 && (
+                          <div className="empty-state">
+                            <CheckCircle2 size={22} />
+                            <span>Срочных открытых тем нет.</span>
+                          </div>
+                        )}
+                      </div>
+                    </section>
+
+                    <section className="dashboard-panel">
+                      <div className="section-heading compact">
+                        <div>
+                          <p className="eyebrow">Команда</p>
+                          <h3>Состояние участников</h3>
+                        </div>
+                        <Activity size={18} />
+                      </div>
+                      <div className={`employee-health-list ${sectionStaggerClass("home-health")}`}>
+                        {attentionPeople.map(({ person, score, readiness: personReadiness, openCards, openActions, urgentCards }) => (
+                          <button className="employee-health-row" key={person.id} type="button" onClick={() => selectPerson(person.id)}>
+                            <span className="avatar">{person.initials}</span>
+                            <span className="employee-health-main">
+                              <strong>{person.name}</strong>
+                              <small>{person.role} · {person.team}</small>
+                            </span>
+                            <span className="employee-health-metrics">
+                              <span>{countLabel(openCards, ["тема", "темы", "тем"])}</span>
+                              <span>{countLabel(openActions, ["шаг", "шага", "шагов"])}</span>
+                              {urgentCards > 0 && <span>{countLabel(urgentCards, ["срочная тема", "срочные темы", "срочных тем"])}</span>}
+                            </span>
+                            <span className="readiness-mini">
+                              <span style={{ width: `${personReadiness}%` }} />
+                            </span>
+                            <span className={`health-dot ${score < 64 ? "risk" : score < 76 ? "watch" : "good"}`}>{score}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </section>
+                  </div>
+                </div>
+              </>
             )}
-
-            <div className="dashboard-kpis" aria-label="Ключевые показатели">
-              {dashboardKpis.map(([Icon, label, value, detail, tone]) => (
-                <article className={`kpi-card ${tone}`} key={label}>
-                  <span className="kpi-icon">
-                    <Icon size={18} />
-                  </span>
-                  <div>
-                    <span>{label}</span>
-                    <strong>{value}</strong>
-                    <small>{detail}</small>
-                  </div>
-                </article>
-              ))}
-            </div>
-
-            <div className="dashboard-grid">
-              <div className="dashboard-main-stack">
-                <section className="dashboard-panel urgent-panel">
-                  <div className="section-heading compact">
-                    <div>
-                      <p className="eyebrow">Из 1:1</p>
-                      <h3>Срочные вопросы</h3>
-                    </div>
-                    <span className="count-pill">{urgentDashboardCards.length}</span>
-                  </div>
-                  <div className={`urgent-list ${sectionStaggerClass("home-urgent")}`}>
-                    {urgentDashboardCards.slice(0, 5).map((card) => {
-                      const person = workspace.people.find((item) => item.id === card.personId);
-                      return (
-                        <button className="urgent-row" key={card.id} type="button" onClick={() => selectPerson(card.personId)}>
-                          <span className={`urgent-marker priority-${card.priority}`} />
-                          <span className="urgent-main">
-                            <strong>{card.title}</strong>
-                            {card.body && <small>{card.body}</small>}
-                          </span>
-                          <span className="urgent-meta">
-                            <span>{person?.name || "участник"}</span>
-                            <em>{priorityLabel(card.priority)}</em>
-                          </span>
-                          <ChevronRight size={16} />
-                        </button>
-                      );
-                    })}
-                    {urgentDashboardCards.length === 0 && (
-                      <div className="empty-state">
-                        <CheckCircle2 size={22} />
-                        <span>Срочных открытых тем нет.</span>
-                      </div>
-                    )}
-                  </div>
-                </section>
-
-                <section className="dashboard-panel">
-                  <div className="section-heading compact">
-                    <div>
-                      <p className="eyebrow">Команда</p>
-                      <h3>Состояние участников</h3>
-                    </div>
-                    <Activity size={18} />
-                  </div>
-                  <div className={`employee-health-list ${sectionStaggerClass("home-health")}`}>
-                    {attentionPeople.map(({ person, score, readiness: personReadiness, openCards, openActions, urgentCards }) => (
-                      <button className="employee-health-row" key={person.id} type="button" onClick={() => selectPerson(person.id)}>
-                        <span className="avatar">{person.initials}</span>
-                        <span className="employee-health-main">
-                          <strong>{person.name}</strong>
-                          <small>{person.role} · {person.team}</small>
-                        </span>
-                        <span className="employee-health-metrics">
-                          <span>{countLabel(openCards, ["тема", "темы", "тем"])}</span>
-                          <span>{countLabel(openActions, ["шаг", "шага", "шагов"])}</span>
-                          {urgentCards > 0 && <span>{countLabel(urgentCards, ["срочная тема", "срочные темы", "срочных тем"])}</span>}
-                        </span>
-                        <span className="readiness-mini">
-                          <span style={{ width: `${personReadiness}%` }} />
-                        </span>
-                        <span className={`health-dot ${score < 64 ? "risk" : score < 76 ? "watch" : "good"}`}>{score}</span>
-                      </button>
-                    ))}
-                    {attentionPeople.length === 0 && (
-                      <div className="empty-state compact-empty">
-                        <UsersRound size={20} />
-                        <span>Участников 1:1 пока нет.</span>
-                      </div>
-                    )}
-                  </div>
-                </section>
-              </div>
-
-              <aside className="dashboard-side-stack" aria-label="Ближайшие события">
-                <section className="dashboard-panel">
-                  <div className="section-heading compact">
-                    <div>
-                      <p className="eyebrow">Календарь</p>
-                      <h3>Ближайшие 1:1</h3>
-                    </div>
-                    <CalendarDays size={18} />
-                  </div>
-                  <div className={`dashboard-meetings-list ${sectionStaggerClass("home-meetings")}`}>
-                    {upcomingMeetings.map(({ person, readiness: personReadiness }) => (
-                      <button className="dashboard-meeting-row" key={person.id} type="button" onClick={() => selectPerson(person.id)}>
-                        <CalendarDays size={16} />
-                        <span>
-                          <strong>{person.name}</strong>
-                          <small>{person.nextMeeting} · {person.cadence}</small>
-                        </span>
-                        <em>{personReadiness}%</em>
-                      </button>
-                    ))}
-                    {upcomingMeetings.length === 0 && (
-                      <div className="empty-state compact-empty">
-                        <CalendarDays size={20} />
-                        <span>Ближайших 1:1 пока нет.</span>
-                      </div>
-                    )}
-                  </div>
-                </section>
-
-                <section className="dashboard-panel">
-                  <div className="section-heading compact">
-                    <div>
-                      <p className="eyebrow">Следующие шаги</p>
-                      <h3>Открытые шаги</h3>
-                    </div>
-                    <ClipboardCheck size={18} />
-                  </div>
-                  <div className={`dashboard-actions-list ${sectionStaggerClass("home-actions")}`}>
-                    {openDashboardActions.slice(0, 5).map((action) => {
-                      const person = workspace.people.find((item) => item.id === action.personId);
-                      return (
-                        <button className="dashboard-action-row" key={action.id} type="button" onClick={() => selectPerson(action.personId)}>
-                          <CheckCircle2 size={16} />
-                          <span>
-                            <strong>{action.title}</strong>
-                            <small>{person?.name || "участник"} · {action.due}</small>
-                          </span>
-                        </button>
-                      );
-                    })}
-                    {openDashboardActions.length === 0 && (
-                      <div className="empty-state compact-empty">
-                        <CircleDashed size={20} />
-                        <span>Открытых шагов нет.</span>
-                      </div>
-                    )}
-                  </div>
-                </section>
-
-              </aside>
-            </div>
           </section>
         )}
 

@@ -27,9 +27,8 @@ test("auth, admin workflow, and employee data isolation work", async ({ page, re
   await page.getByRole("button", { name: "Войти", exact: true }).click();
 
   await expect(page.getByRole("heading", { name: "Дашборд команды" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Срочные вопросы" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Состояние участников" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Ближайшие 1:1" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Команда пока пустая" })).toBeVisible();
+  await expect(page.getByText("Добавьте участников и логины")).toBeVisible();
   await expect(page.getByText("Как этим пользоваться")).not.toBeVisible();
   await expect(page.getByText("Демо участник команды")).not.toBeVisible();
   await expect(page.getByText("Анна Морозова")).not.toBeVisible();

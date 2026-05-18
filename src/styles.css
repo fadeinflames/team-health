@@ -1317,6 +1317,47 @@ h4 {
   padding: 16px;
 }
 
+.dashboard-empty-panel {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+  min-height: 240px;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+}
+
+.dashboard-empty-copy {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.dashboard-empty-copy h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: clamp(1.45rem, 2vw, 2rem);
+  line-height: 1.08;
+  letter-spacing: 0;
+}
+
+.dashboard-empty-copy p:last-child {
+  max-width: 62ch;
+  margin: 0;
+  color: var(--ink-soft);
+  line-height: 1.55;
+}
+
+.dashboard-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
 .manager-command {
   display: grid;
   gap: 14px;
@@ -1329,7 +1370,7 @@ h4 {
 
 .command-grid {
   display: grid;
-  grid-template-columns: minmax(260px, 1.1fr) repeat(3, minmax(210px, 0.9fr));
+  grid-template-columns: minmax(280px, 1fr) minmax(300px, 1.2fr) minmax(260px, 0.9fr);
   gap: 12px;
   align-items: stretch;
 }
@@ -1339,7 +1380,7 @@ h4 {
   align-content: start;
   gap: 12px;
   min-width: 0;
-  min-height: 190px;
+  min-height: 0;
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -1356,6 +1397,14 @@ h4 {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.command-card-title {
+  margin: -6px 0 0;
+  color: var(--ink);
+  font-size: 1.02rem;
+  line-height: 1.2;
+  letter-spacing: 0;
 }
 
 .command-person {
@@ -1473,6 +1522,10 @@ h4 {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+}
+
+.dashboard-grid-main-only {
+  grid-template-columns: 1fr;
 }
 
 .urgent-row,
@@ -2670,6 +2723,15 @@ input[type="range"] {
   .dashboard-meeting-row em {
     justify-self: start;
     grid-column: 2;
+  }
+
+  .dashboard-empty-panel {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .dashboard-empty-actions {
+    justify-content: flex-start;
   }
 
   .person-360-grid,
