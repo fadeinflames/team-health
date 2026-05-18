@@ -3229,6 +3229,11 @@ input[type="range"] {
   gap: 20px;
 }
 
+.reports-view > .dashboard-kpis {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
 .report-panel {
   display: grid;
   gap: 14px;
@@ -4271,6 +4276,11 @@ button.heatmap-row:hover {
   border-radius: var(--radius);
   padding: 16px 20px;
   box-shadow: var(--shadow-soft);
+}
+
+.section-intro {
+  margin-bottom: 28px;
+  padding: 20px 24px;
 }
 
 .section-intro p,
