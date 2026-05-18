@@ -5919,31 +5919,6 @@ export default function App() {
 
         {activeSection === "admin" && isPlatformAdminRole(user) && (
           <section className="admin-view">
-            <article className="settings-card role-model-card">
-              <div className="settings-card-head">
-                <div>
-                  <p className="eyebrow">Ролевая модель</p>
-                  <h3>Кто что видит</h3>
-                  <p>Доступы разведены по зонам: платформа, команда лида и личный 1:1 участника.</p>
-                </div>
-              </div>
-              <div className="role-model-grid">
-                {[
-                  ["Админ платформы", "Пользователи, команды, демо-данные, все отчёты"],
-                  ["Тимлид", "Своя команда, 1:1, ЛПР, цели, опросы и отчёты"],
-                  ["Участник", "Личный 1:1, свои темы, пульс, шаги и ответы на опросы"]
-                ].map(([role, scope]) => (
-                  <div className="role-model-row" key={role}>
-                    <ShieldCheck size={16} />
-                    <span>
-                      <strong>{role}</strong>
-                      <small>{scope}</small>
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </article>
-
             <article className="settings-card">
               <div className="settings-card-head">
                 <div>

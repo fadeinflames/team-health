@@ -2657,8 +2657,7 @@ input[type="range"] {
   .directory-row,
   .access-row,
   .placeholder-panel,
-  .command-grid,
-  .role-model-grid {
+  .command-grid {
     grid-template-columns: 1fr;
   }
 
@@ -4776,45 +4775,6 @@ button.heatmap-row:hover {
   gap: 16px;
 }
 
-.role-model-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.role-model-row {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  gap: 10px;
-  align-items: start;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface-soft);
-}
-
-.role-model-row svg {
-  color: var(--teal);
-  margin-top: 2px;
-}
-
-.role-model-row strong,
-.role-model-row small {
-  display: block;
-}
-
-.role-model-row strong {
-  color: var(--ink);
-  font-size: 0.94rem;
-}
-
-.role-model-row small {
-  margin-top: 4px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
 .team-admin-hint {
   display: flex;
   align-items: center;
@@ -4977,7 +4937,6 @@ button.heatmap-row:hover {
 @media (max-width: 820px) {
   .command-grid,
   .report-insights-grid,
-  .role-model-grid,
   .reports-grid {
     grid-template-columns: 1fr;
   }
