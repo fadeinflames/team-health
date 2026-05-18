@@ -295,11 +295,9 @@ const themeOptions = ["system", "light", "dark"];
 function readStoredTheme() {
   try {
     const value = window.localStorage.getItem(themeStorageKey);
-    const wasExplicitlyChosen = window.localStorage.getItem(themeExplicitStorageKey) === "1";
-    if (value === "system" && !wasExplicitlyChosen) return "light";
-    return themeOptions.includes(value) ? value : "light";
+    return themeOptions.includes(value) ? value : "system";
   } catch {
-    return "light";
+    return "system";
   }
 }
 
@@ -1007,6 +1005,7 @@ export default function App() {
   const [credentials, setCredentials] = useState({ username: "", password: "" });
   const [loginError, setLoginError] = useState("");
   const [saveError, setSaveError] = useState("");
+  const [saveRetryTick, setSaveRetryTick] = useState(0);
   const [newCard, setNewCard] = useState({
     source: "employee",
     category: "checkin",
@@ -1133,6 +1132,7 @@ export default function App() {
   const [revealSummary, setRevealSummary] = useState(false);
   const summaryPanelRef = useRef(null);
   const dirtyRef = useRef(false);
+  const retrySaveTimerRef = useRef(null);
   const pendingCardTitleKeysRef = useRef(new Set());
   const pendingActionTitleKeysRef = useRef(new Set());
 
@@ -1155,7 +1155,15 @@ export default function App() {
       void saveWorkspace(snapshot);
     }, 350);
     return () => window.clearTimeout(timeoutId);
-  }, [workspace]);
+  }, [workspace, saveRetryTick]);
+
+  useEffect(() => {
+    return () => {
+      if (retrySaveTimerRef.current) {
+        window.clearTimeout(retrySaveTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!userMessage) return undefined;
@@ -1278,6 +1286,10 @@ export default function App() {
   async function saveWorkspace(nextWorkspace) {
     try {
       setSaveError("");
+      if (retrySaveTimerRef.current) {
+        window.clearTimeout(retrySaveTimerRef.current);
+        retrySaveTimerRef.current = null;
+      }
       const saved = await apiFetch("/api/workspace", {
         method: "POST",
         body: JSON.stringify(nextWorkspace)
@@ -1294,6 +1306,14 @@ export default function App() {
       if (error.message.includes("авторизация")) {
         setUser(null);
         setWorkspace(null);
+        return;
+      }
+      dirtyRef.current = true;
+      if (!retrySaveTimerRef.current) {
+        retrySaveTimerRef.current = window.setTimeout(() => {
+          retrySaveTimerRef.current = null;
+          setSaveRetryTick((tick) => tick + 1);
+        }, 1600);
       }
     }
   }
@@ -2541,6 +2561,7 @@ export default function App() {
           title: surveyComposer.title.trim(),
           description: surveyComposer.description.trim(),
           anonymous: surveyComposer.anonymous,
+          anonymousMinResponses: 3,
           questions: cleanedQuestions
         })
       });
@@ -3273,6 +3294,22 @@ export default function App() {
         {saveError && <div className="form-error inline-error">{saveError}</div>}
         {userMessage && <div className="form-hint inline-message">{userMessage}</div>}
 
+        {activeSection === "meetings" && selectedPerson && filteredMeetingPeople.length > 1 && (
+          <label className="meeting-person-switcher">
+            <span>
+              <UsersRound size={16} />
+              Участник 1:1
+            </span>
+            <select value={selectedPerson.id} onChange={(event) => selectPerson(event.target.value)}>
+              {filteredMeetingPeople.map((person) => (
+                <option key={person.id} value={person.id}>
+                  {person.name} · {person.role}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
         {pageDescription && activeSection !== "home" && (
           <div className="section-intro">
             <p>{pageDescription}</p>
@@ -3502,8 +3539,8 @@ export default function App() {
                     <section className="dashboard-panel">
                       <div className="section-heading compact">
                         <div>
-                          <p className="eyebrow">Команда</p>
-                          <h3>Состояние участников</h3>
+                          <p className="eyebrow">{isAdmin ? "Команда" : "Личный контур"}</p>
+                          <h3>{isAdmin ? "Состояние участников" : "Мой профиль 1:1"}</h3>
                         </div>
                         <Activity size={18} />
                       </div>
@@ -3513,7 +3550,7 @@ export default function App() {
                             <span className="avatar">{person.initials}</span>
                             <span className="employee-health-main">
                               <strong>{person.name}</strong>
-                              <small>{person.role} · {person.team}</small>
+                              <small>{isAdmin ? `${person.role} · ${person.team}` : `${person.role} · персональный режим`}</small>
                             </span>
                             <span className="employee-health-metrics">
                               <span>{countLabel(openCards, ["тема", "темы", "тем"])}</span>
@@ -4833,7 +4870,7 @@ export default function App() {
                   />
                   <span>
                     <strong>Анонимный</strong>
-                    <small>В аггрегатах не будет указано, кто как ответил</small>
+                    <small>Агрегаты откроются после 3 ответов, авторы не раскрываются</small>
                   </span>
                 </label>
 
@@ -5117,7 +5154,15 @@ export default function App() {
 
                     {isExpanded && isAdmin && (
                       <div className="survey-aggregate">
-                        {survey.questions.map((question) => {
+                        {aggregate?.hidden && (
+                          <div className="empty-state compact-empty">
+                            <LockKeyhole size={18} />
+                            <span>
+                              Анонимные результаты скрыты до {aggregate.minResponses} ответов. Сейчас: {aggregate.count}.
+                            </span>
+                          </div>
+                        )}
+                        {!aggregate?.hidden && survey.questions.map((question) => {
                           const stats = aggregate?.perQuestion?.[question.id];
                           return (
                             <section className="survey-aggregate-row" key={question.id}>

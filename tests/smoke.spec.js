@@ -11,6 +11,11 @@ test("auth, admin workflow, and employee data isolation work", async ({ page, re
 
   const unauthenticated = await request.get(`${baseURL}/api/workspace`);
   expect(unauthenticated.status()).toBe(401);
+  const malformedJson = await request.post(`${baseURL}/api/login`, {
+    headers: { "Content-Type": "text/plain" },
+    data: "{bad"
+  });
+  expect(malformedJson.status()).toBe(400);
 
   const resetContext = await playwrightRequest.newContext({ baseURL });
   await resetContext.post("/api/login", {
@@ -240,8 +245,8 @@ test("auth, admin workflow, and employee data isolation work", async ({ page, re
       role: "lead",
       name: "Лид Data",
       personName: "Лид Data",
-      personTeam: "Data Platform",
-      teamLabel: "Data Platform",
+      personTeam: "Core Platform",
+      teamLabel: "Core Platform",
       username: `lead_data_${suffix}`,
       password: "TeamPass121"
     }
@@ -254,7 +259,7 @@ test("auth, admin workflow, and employee data isolation work", async ({ page, re
       role: "employee",
       personName: "Участник Data",
       personRole: "Support Specialist",
-      personTeam: "Data Platform",
+      personTeam: "Core Platform",
       leadUserId: leadB.id,
       username: `member_data_${suffix}`,
       password: "TeamPass121"
@@ -308,6 +313,66 @@ test("auth, admin workflow, and employee data isolation work", async ({ page, re
   const savedLeadWorkspace = await saveLeadWorkspace.json();
   expect(savedLeadWorkspace.lprs).toEqual([expect.objectContaining({ id: lpr.id, personId: memberA.personId })]);
   expect(savedLeadWorkspace.goals).toEqual([expect.objectContaining({ id: goal.id, lprId: lpr.id })]);
+
+  const surveyCreate = await leadApi.post("/api/surveys", {
+    data: {
+      title: `Анонимный пульс Core ${suffix}`,
+      description: "Проверка scoped surveys",
+      anonymous: true,
+      questions: [
+        {
+          id: "q1",
+          type: "scale",
+          prompt: "Насколько всё ок?",
+          required: true,
+          options: []
+        }
+      ]
+    }
+  });
+  expect(surveyCreate.status()).toBe(201);
+  const surveyWorkspace = (await surveyCreate.json()).workspace;
+  const coreSurvey = surveyWorkspace.surveys.find((survey) => survey.title.includes(`Core ${suffix}`));
+  expect(coreSurvey).toBeTruthy();
+
+  const leadBApi = await playwrightRequest.newContext({ baseURL });
+  await leadBApi.post("/api/login", {
+    data: { username: leadB.username, password: "TeamPass121" }
+  });
+  const leadBWorkspace = await (await leadBApi.get("/api/workspace")).json();
+  expect(leadBWorkspace.surveys.some((survey) => survey.id === coreSurvey.id)).toBeFalsy();
+  expect((await leadBApi.delete(`/api/surveys/${encodeURIComponent(coreSurvey.id)}`)).status()).toBe(404);
+  await leadBApi.dispose();
+
+  const memberBApi = await playwrightRequest.newContext({ baseURL });
+  await memberBApi.post("/api/login", {
+    data: { username: memberB.username, password: "TeamPass121" }
+  });
+  const crossTeamSurveyResponse = await memberBApi.post(`/api/surveys/${encodeURIComponent(coreSurvey.id)}/respond`, {
+    data: { answers: { q1: { value: 9 } } }
+  });
+  expect(crossTeamSurveyResponse.status()).toBe(404);
+  await memberBApi.dispose();
+
+  const memberAApi = await playwrightRequest.newContext({ baseURL });
+  await memberAApi.post("/api/login", {
+    data: { username: memberA.username, password: "TeamPass121" }
+  });
+  const firstAnonymousResponse = await memberAApi.post(`/api/surveys/${encodeURIComponent(coreSurvey.id)}/respond`, {
+    data: { answers: { q1: { value: 7 } } }
+  });
+  expect(firstAnonymousResponse.status()).toBe(200);
+  const secondAnonymousResponse = await memberAApi.post(`/api/surveys/${encodeURIComponent(coreSurvey.id)}/respond`, {
+    data: { answers: { q1: { value: 8 } } }
+  });
+  expect(secondAnonymousResponse.status()).toBe(200);
+  await memberAApi.dispose();
+
+  const refreshedLeadWorkspace = await (await leadApi.get("/api/workspace")).json();
+  const refreshedSurvey = refreshedLeadWorkspace.surveys.find((survey) => survey.id === coreSurvey.id);
+  expect(refreshedSurvey.responseCount).toBe(1);
+  expect(refreshedSurvey.aggregate.hidden).toBe(true);
+  expect(refreshedSurvey.aggregate.minResponses).toBe(3);
   await leadApi.dispose();
 
   const otherMemberApi = await playwrightRequest.newContext({ baseURL });

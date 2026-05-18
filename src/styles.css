@@ -281,7 +281,7 @@ body {
   font-family: "Onest", "Aptos", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   font-feature-settings: "ss01", "ss02", "cv01";
   font-optical-sizing: auto;
-  letter-spacing: -0.005em;
+  letter-spacing: 0;
   background:
     linear-gradient(90deg, var(--surface-tint), transparent 34%),
     var(--bg);
@@ -289,15 +289,15 @@ body {
 }
 
 h1 {
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
 }
 
 h2 {
-  letter-spacing: -0.018em;
+  letter-spacing: 0;
 }
 
 h3 {
-  letter-spacing: -0.014em;
+  letter-spacing: 0;
 }
 
 button,
@@ -1144,6 +1144,32 @@ h4 {
   margin-bottom: 14px;
 }
 
+.meeting-person-switcher {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+}
+
+.meeting-person-switcher span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-soft);
+  font-weight: 760;
+}
+
+.meeting-person-switcher select {
+  width: min(100%, 360px);
+  min-height: 40px;
+}
+
 .dashboard-view {
   display: grid;
   gap: 16px;
@@ -1174,10 +1200,10 @@ h4 {
 
 .dashboard-hero-main h3 {
   max-width: 760px;
-  font-size: clamp(1.7rem, 2.7vw, 2.6rem);
+  font-size: 1.45rem;
   font-weight: 700;
-  letter-spacing: -0.025em;
-  line-height: 1.04;
+  letter-spacing: 0;
+  line-height: 1.14;
 }
 
 .dashboard-hero-main p {
@@ -2515,6 +2541,10 @@ input[type="range"] {
     display: none;
   }
 
+  .meeting-person-switcher {
+    display: flex;
+  }
+
   .right-rail {
     position: static;
     grid-column: 2;
@@ -2691,6 +2721,15 @@ input[type="range"] {
 }
 
 @media (max-width: 520px) {
+  .meeting-person-switcher {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .meeting-person-switcher select {
+    width: 100%;
+  }
+
   .people-list {
     grid-template-columns: 1fr;
   }

@@ -11,7 +11,7 @@ import {
 import { createServer } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const distDir = join(__dirname, "dist");
@@ -24,6 +24,7 @@ const failedLoginWindowMs = 1000 * 60 * 15;
 const maxFailedLoginAttempts = 8;
 const maxFailedLoginAttemptsPerIp = 30;
 const trustProxy = Boolean(process.env.RAILWAY_ENVIRONMENT) || process.env.TRUST_PROXY === "1";
+const allowFileStorageInProduction = process.env.ALLOW_FILE_STORAGE === "1";
 
 const defaultAdminUsername = "mgusev";
 const defaultAdminPassword = "passwb121";
@@ -31,6 +32,7 @@ const adminUsername = process.env.ADMIN_USERNAME || defaultAdminUsername;
 const adminPassword = process.env.ADMIN_PASSWORD || defaultAdminPassword;
 const demoUsername = process.env.DEMO_USERNAME || "demo";
 const demoPassword = process.env.DEMO_PASSWORD || "demo";
+const surveyResponseSecret = process.env.SURVEY_RESPONSE_SECRET || adminPassword;
 
 let pgPool = null;
 const failedLogins = new Map();
@@ -489,6 +491,13 @@ function verifyPassword(password, user) {
   return stored.length === candidate.length && timingSafeEqual(stored, candidate);
 }
 
+class HttpError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
 function makeId(prefix) {
   return `${prefix}-${randomBytes(16).toString("hex")}`;
 }
@@ -701,7 +710,7 @@ function normalizeDb(rawDb = {}) {
     pulse: { ...initialPulse, ...(rawDb.pulse || {}) },
     pulseHistory: Array.isArray(rawDb.pulseHistory)
       ? rawDb.pulseHistory
-          .filter((entry) => entry && personIds.has(entry.personId) && typeof entry.capturedAt === "string")
+          .filter((entry) => entry && personIds.has(entry.personId) && isValidISODate(String(entry.capturedAt || "").slice(0, 10)))
           .map((entry) => ({
             personId: String(entry.personId),
             capturedAt: String(entry.capturedAt).slice(0, 10),
@@ -711,7 +720,7 @@ function normalizeDb(rawDb = {}) {
             trust: clampInt(entry.trust, 1, 10, 7)
           }))
       : [],
-    surveys: Array.isArray(rawDb.surveys) ? rawDb.surveys.map((s) => sanitizeSurvey(s)) : [],
+    surveys: Array.isArray(rawDb.surveys) ? rawDb.surveys.map((s) => sanitizeSurvey(s, users)) : [],
     surveyResponses: [],
     managerNotes: Array.isArray(rawDb.managerNotes)
       ? rawDb.managerNotes
@@ -777,6 +786,25 @@ function clampInt(value, min, max, fallback) {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
   return Math.max(min, Math.min(max, Math.round(number)));
+}
+
+function isValidISODate(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
+
+function safeDecodeURIComponent(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 function sanitizePulsePatch(current = {}, incoming = {}) {
@@ -1097,25 +1125,35 @@ async function migratePostgres() {
       questions_json jsonb not null,
       is_demo_seed boolean not null default false,
       is_template boolean not null default false,
+      owner_user_id text references users(id) on delete set null,
+      anonymous_min_responses integer not null default 3,
       created_at timestamptz not null default now()
     );
 
     alter table surveys add column if not exists is_demo_seed boolean not null default false;
     alter table surveys add column if not exists is_template boolean not null default false;
+    alter table surveys add column if not exists owner_user_id text references users(id) on delete set null;
+    alter table surveys add column if not exists anonymous_min_responses integer not null default 3;
 
     create table if not exists survey_responses (
       id text primary key,
       survey_id text not null references surveys(id) on delete cascade,
       person_id text references people(id) on delete set null,
+      respondent_hash text,
       answers_json jsonb not null,
       submitted_at timestamptz not null default now()
     );
+
+    alter table survey_responses add column if not exists respondent_hash text;
 
     create index if not exists survey_responses_survey_id_idx on survey_responses(survey_id);
     create index if not exists survey_responses_person_id_idx on survey_responses(person_id);
     create unique index if not exists survey_responses_unique_per_person
       on survey_responses(survey_id, person_id)
       where person_id is not null;
+    create unique index if not exists survey_responses_unique_per_hash
+      on survey_responses(survey_id, respondent_hash)
+      where respondent_hash is not null;
 
     create table if not exists manager_notes (
       id text primary key,
@@ -1400,15 +1438,17 @@ async function insertSeedSurveys(client) {
   for (const survey of initialSurveys) {
     await client.query(
       `
-        insert into surveys (id, title, description, anonymous, status, questions_json, is_demo_seed, created_at)
-        values ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::timestamptz)
+        insert into surveys (id, title, description, anonymous, status, questions_json, is_demo_seed, is_template, owner_user_id, anonymous_min_responses, created_at)
+        values ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11::timestamptz)
         on conflict (id) do update set
           title = excluded.title,
           description = excluded.description,
           anonymous = excluded.anonymous,
           status = excluded.status,
           questions_json = excluded.questions_json,
-          is_demo_seed = excluded.is_demo_seed
+          is_demo_seed = excluded.is_demo_seed,
+          is_template = excluded.is_template,
+          anonymous_min_responses = excluded.anonymous_min_responses
       `,
       [
         survey.id,
@@ -1418,6 +1458,9 @@ async function insertSeedSurveys(client) {
         survey.status,
         JSON.stringify(survey.questions),
         survey.isDemoSeed === true,
+        survey.isTemplate === true,
+        survey.ownerUserId || null,
+        survey.anonymousMinResponses || 3,
         survey.createdAt
       ]
     );
@@ -1603,6 +1646,8 @@ async function readDb() {
             questions_json as "questions",
             is_demo_seed as "isDemoSeed",
             is_template as "isTemplate",
+            owner_user_id as "ownerUserId",
+            anonymous_min_responses as "anonymousMinResponses",
             created_at as "createdAt"
           from surveys
           order by created_at asc
@@ -1612,6 +1657,7 @@ async function readDb() {
             id,
             survey_id as "surveyId",
             person_id as "personId",
+            respondent_hash as "respondentHash",
             answers_json as "answers",
             submitted_at as "submittedAt"
           from survey_responses
@@ -1897,8 +1943,8 @@ async function replaceSurveys(client, surveys) {
   for (const survey of surveys || []) {
     await client.query(
       `
-        insert into surveys (id, title, description, anonymous, status, questions_json, is_demo_seed, is_template, created_at)
-        values ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, coalesce($9::timestamptz, now()))
+        insert into surveys (id, title, description, anonymous, status, questions_json, is_demo_seed, is_template, owner_user_id, anonymous_min_responses, created_at)
+        values ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, coalesce($11::timestamptz, now()))
       `,
       [
         survey.id,
@@ -1909,6 +1955,8 @@ async function replaceSurveys(client, surveys) {
         JSON.stringify(survey.questions || []),
         survey.isDemoSeed === true,
         survey.isTemplate === true,
+        survey.ownerUserId || null,
+        survey.anonymousMinResponses || 3,
         survey.createdAt || null
       ]
     );
@@ -1967,13 +2015,14 @@ async function replaceSurveyResponses(client, responses) {
   for (const response of responses || []) {
     await client.query(
       `
-        insert into survey_responses (id, survey_id, person_id, answers_json, submitted_at)
-        values ($1, $2, $3, $4::jsonb, coalesce($5::timestamptz, now()))
+        insert into survey_responses (id, survey_id, person_id, respondent_hash, answers_json, submitted_at)
+        values ($1, $2, $3, $4, $5::jsonb, coalesce($6::timestamptz, now()))
       `,
       [
         response.id,
         response.surveyId,
         response.personId || null,
+        response.respondentHash || null,
         JSON.stringify(response.answers || {}),
         response.submittedAt || null
       ]
@@ -2139,6 +2188,10 @@ function validateProductionSecrets() {
     console.error("ADMIN_PASSWORD must be set explicitly in production. Refusing to start with the default value.");
     process.exit(1);
   }
+  if (process.env.RAILWAY_ENVIRONMENT && storageMode === "file" && !allowFileStorageInProduction) {
+    console.error("DATABASE_URL must be set in production. Refusing to start with ephemeral file storage.");
+    process.exit(1);
+  }
 }
 
 function clientAddress(request) {
@@ -2203,7 +2256,7 @@ function parseCookies(cookieHeader = "") {
       .map((part) => {
         const index = part.indexOf("=");
         if (index === -1) return [part, ""];
-        return [part.slice(0, index), decodeURIComponent(part.slice(index + 1))];
+        return [part.slice(0, index), safeDecodeURIComponent(part.slice(index + 1))];
       })
   );
 }
@@ -2237,14 +2290,19 @@ function sendJson(response, status, payload, headers = {}) {
 function readJson(request) {
   return new Promise((resolve, reject) => {
     let body = "";
+    let settled = false;
     request.on("data", (chunk) => {
+      if (settled) return;
       body += chunk;
       if (body.length > 1_000_000) {
+        settled = true;
         request.destroy();
-        reject(new Error("Payload too large"));
+        reject(new HttpError(413, "Слишком большой запрос"));
       }
     });
     request.on("end", () => {
+      if (settled) return;
+      settled = true;
       if (!body) {
         resolve({});
         return;
@@ -2253,10 +2311,14 @@ function readJson(request) {
       try {
         resolve(JSON.parse(body));
       } catch (error) {
-        reject(error);
+        reject(new HttpError(400, "Некорректный JSON"));
       }
     });
-    request.on("error", reject);
+    request.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    });
   });
 }
 
@@ -2338,19 +2400,23 @@ function teamLabelForUser(db, user) {
 function personInLeadTeam(db, lead, person) {
   if (!lead || !person) return false;
   if (lead.personId && lead.personId === person.id) return true;
+  const linkedUser = db.users.find((user) => user.personId === person.id);
+  if (linkedUser?.leadUserId) return linkedUser.leadUserId === lead.id;
   const leadTeam = normalizeTeamName(teamLabelForUser(db, lead));
   const personTeam = normalizeTeamName(person.team);
-  const linkedUser = db.users.find((user) => user.personId === person.id);
   return (
-    (leadTeam && personTeam && leadTeam === personTeam) ||
-    linkedUser?.leadUserId === lead.id
+    !linkedUser &&
+    leadTeam &&
+    personTeam &&
+    leadTeam === personTeam
   );
 }
 
 function userInLeadTeam(db, lead, user) {
   if (!lead || !user) return false;
   if (user.id === lead.id) return true;
-  if (user.leadUserId === lead.id) return true;
+  if (user.leadUserId) return user.leadUserId === lead.id;
+  if (user.role === "lead" || user.role === "platform_admin" || user.role === "admin") return false;
   const leadTeam = normalizeTeamName(teamLabelForUser(db, lead));
   const userTeam = normalizeTeamName(teamLabelForUser(db, user));
   return Boolean(leadTeam && userTeam && leadTeam === userTeam);
@@ -2400,6 +2466,65 @@ function scopedUsers(db, user) {
   return [];
 }
 
+function surveyOwner(db, survey) {
+  if (!survey?.ownerUserId) return null;
+  return db.users.find((user) => user.id === survey.ownerUserId) || null;
+}
+
+function surveyAudiencePersonIds(db, survey) {
+  if (survey?.isDemoSeed) return new Set(["demo-sre"]);
+  const owner = surveyOwner(db, survey);
+  if (!owner || isPlatformAdmin(owner)) {
+    return new Set(
+      db.people
+        .filter((person) => !isDemoOnlyPersonId(person.id))
+        .filter((person) => !person.archivedAt)
+        .map((person) => person.id)
+    );
+  }
+  return scopedPersonIds(db, owner);
+}
+
+function hasAnyPersonId(left, right) {
+  for (const id of left) {
+    if (right.has(id)) return true;
+  }
+  return false;
+}
+
+function canAccessSurvey(db, user, survey) {
+  if (!survey || survey.isTemplate) return false;
+  if (isDemoUser(user)) return Boolean(survey.isDemoSeed);
+  if (survey.isDemoSeed) return false;
+
+  const audienceIds = surveyAudiencePersonIds(db, survey);
+  if (isAdmin(user)) {
+    if (isPlatformAdmin(user)) return true;
+    return survey.ownerUserId === user.id || hasAnyPersonId(scopedPersonIds(db, user), audienceIds);
+  }
+
+  return Boolean(user?.personId && audienceIds.has(user.personId));
+}
+
+function canManageSurvey(db, user, survey) {
+  if (!survey || survey.isTemplate || !isAdmin(user)) return false;
+  if (isPlatformAdmin(user)) return !survey.isDemoSeed;
+  return survey.ownerUserId === user.id;
+}
+
+function canSeeSurveyTemplate(db, user, survey) {
+  if (!survey?.isTemplate || survey.isDemoSeed || !isLead(user)) return false;
+  if (isPlatformAdmin(user)) return true;
+  return !survey.ownerUserId || survey.ownerUserId === user.id;
+}
+
+function surveyRespondentHash(user, survey) {
+  if (!user?.id || !survey?.id) return null;
+  return createHash("sha256")
+    .update(`${survey.id}:${user.id}:${surveyResponseSecret}`)
+    .digest("hex");
+}
+
 function scopeWorkspace(db, user) {
   const ids = scopedPersonIds(db, user);
   const pickObject = (source) =>
@@ -2410,24 +2535,32 @@ function scopeWorkspace(db, user) {
   // not see them so they do not look like a built-in fixed survey.
   // Templates are NOT delivered as regular surveys — they go to a separate
   // surveyTemplates collection for the composer's empty state.
-  const visibleSurveys = (isAdmin(user)
-    ? allSurveys.filter((s) => !s.isDemoSeed)
-    : isDemoUser(user)
-      ? allSurveys
-      : allSurveys.filter((s) => !s.isDemoSeed)
-  ).filter((s) => !s.isTemplate);
+  const visibleSurveys = allSurveys.filter((s) => canAccessSurvey(db, user, s));
   const userTemplates = isLead(user)
-    ? allSurveys.filter((s) => s.isTemplate && !s.isDemoSeed)
+    ? allSurveys.filter((s) => canSeeSurveyTemplate(db, user, s))
     : [];
   const allResponses = db.surveyResponses || [];
   const scopedSurveys = visibleSurveys.map((survey) => {
     const responsesForSurvey = allResponses.filter((response) => response.surveyId === survey.id);
+    const currentRespondentHash = survey.anonymous ? surveyRespondentHash(user, survey) : null;
     const scopedResponsesForSurvey = responsesForSurvey.filter((response) => {
+      if (survey.anonymous) {
+        if (canManageSurvey(db, user, survey)) return true;
+        return Boolean(
+          !isAdmin(user) &&
+          currentRespondentHash &&
+          response.respondentHash === currentRespondentHash
+        );
+      }
       if (isPlatformAdmin(user) || isDemoUser(user)) return true;
       return response.personId ? ids.has(response.personId) : false;
     });
     const myResponse = !isAdmin(user) && user.personId
-      ? scopedResponsesForSurvey.find((response) => response.personId === user.personId) || null
+      ? scopedResponsesForSurvey.find((response) =>
+          survey.anonymous
+            ? response.respondentHash && response.respondentHash === currentRespondentHash
+            : response.personId === user.personId
+        ) || null
       : null;
     const aggregate = isAdmin(user) ? buildSurveyAggregate(survey, scopedResponsesForSurvey) : null;
     const responseList =
@@ -2465,6 +2598,7 @@ function scopeWorkspace(db, user) {
       title: s.title,
       description: s.description,
       anonymous: s.anonymous,
+      anonymousMinResponses: s.anonymousMinResponses,
       questions: s.questions
     })),
     notes: isAdmin(user) ? pickObject(db.notes) : {},
@@ -2491,6 +2625,13 @@ function scopeWorkspace(db, user) {
 
 function buildSurveyAggregate(survey, responses) {
   const totals = { count: responses.length, perQuestion: {} };
+  if (survey.anonymous && responses.length < (survey.anonymousMinResponses || 3)) {
+    return {
+      ...totals,
+      hidden: true,
+      minResponses: survey.anonymousMinResponses || 3
+    };
+  }
   for (const question of survey.questions) {
     if (question.type === "scale") {
       const values = responses
@@ -2576,8 +2717,7 @@ function sanitizeCard(card, personId, forcedSource = null, lprIds = new Set()) {
 
 function sanitizeAction(action, personId, forcedOwner = null) {
   const rawDueDate = String(action.dueDate || "").trim();
-  // Accept ISO date YYYY-MM-DD only; ignore anything else.
-  const dueDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDueDate) ? rawDueDate : "";
+  const dueDate = isValidISODate(rawDueDate) ? rawDueDate : "";
   return {
     id: String(action.id || makeId("action")),
     personId,
@@ -2610,13 +2750,16 @@ function sanitizeSurveyQuestion(question, fallbackId) {
 
 const demoSeedSurveyIds = new Set(initialSurveys.map((s) => s.id));
 
-function sanitizeSurvey(survey) {
+function sanitizeSurvey(survey, users = []) {
   const questions = Array.isArray(survey?.questions) ? survey.questions : [];
   const sanitized = questions
     .slice(0, 30)
     .map((q, i) => sanitizeSurveyQuestion(q, `q${i + 1}`))
     .filter((q) => q.prompt.length > 0);
   const id = String(survey?.id || makeId("survey"));
+  const ownerUserId = survey?.ownerUserId && users.some((user) => user.id === survey.ownerUserId)
+    ? String(survey.ownerUserId)
+    : null;
   return {
     id,
     title: String(survey?.title || "").slice(0, 200),
@@ -2627,6 +2770,8 @@ function sanitizeSurvey(survey) {
     // seed id so the demo survey is still hidden from the admin's real workspace.
     isDemoSeed: Boolean(survey?.isDemoSeed) || demoSeedSurveyIds.has(id),
     isTemplate: Boolean(survey?.isTemplate),
+    ownerUserId,
+    anonymousMinResponses: clampInt(survey?.anonymousMinResponses, 2, 10, 3),
     createdAt:
       typeof survey?.createdAt === "string" && survey.createdAt
         ? survey.createdAt
@@ -2658,7 +2803,7 @@ function sanitizeSurveyAnswers(rawAnswers, questions) {
       if (text) result[question.id] = { value: text };
     } else if (question.type === "date") {
       const raw = String(value?.value ?? value ?? "").trim();
-      if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) result[question.id] = { value: raw };
+      if (isValidISODate(raw)) result[question.id] = { value: raw };
     }
   }
   return result;
@@ -2671,6 +2816,7 @@ function sanitizeSurveyResponse(response, surveys) {
     id: String(response?.id || makeId("response")),
     surveyId: survey.id,
     personId: response?.personId ? String(response.personId) : null,
+    respondentHash: response?.respondentHash ? String(response.respondentHash).slice(0, 128) : null,
     submittedAt:
       typeof response?.submittedAt === "string" && response.submittedAt
         ? response.submittedAt
@@ -2697,7 +2843,7 @@ function sanitizeMeetingLog(entry, personIds) {
 function sanitizeOncallEntry(entry, personIds) {
   if (!entry || !personIds.has(entry.personId)) return null;
   const week = String(entry.weekStart || "").trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(week)) return null;
+  if (!isValidISODate(week)) return null;
   return {
     personId: String(entry.personId),
     weekStart: week,
@@ -2778,6 +2924,7 @@ function sanitizeLpr(lpr, personId) {
 
 function sanitizeGoal(goal, personId, lprIds = new Set()) {
   const lprId = String(goal.lprId || "").trim();
+  const dueDate = String(goal.dueDate || "").trim();
   return {
     id: String(goal.id || makeId("goal")),
     personId,
@@ -2788,7 +2935,7 @@ function sanitizeGoal(goal, personId, lprIds = new Set()) {
     progress: clampInt(goal.progress, 0, 100, 0),
     status: goalStatuses.includes(goal.status) ? goal.status : "active",
     createdAt: typeof goal.createdAt === "string" && goal.createdAt ? goal.createdAt : new Date().toISOString(),
-    dueDate: String(goal.dueDate || "").slice(0, 32)
+    dueDate: isValidISODate(dueDate) ? dueDate : ""
   };
 }
 
@@ -3205,7 +3352,7 @@ async function handleApi(request, response) {
       return;
     }
 
-    const targetUser = context.db.users.find((item) => item.id === decodeURIComponent(userPasswordMatch[1]));
+    const targetUser = context.db.users.find((item) => item.id === safeDecodeURIComponent(userPasswordMatch[1]));
     if (!targetUser) {
       sendJson(response, 404, { error: "Пользователь не найден" });
       return;
@@ -3243,7 +3390,7 @@ async function handleApi(request, response) {
       sendJson(response, 403, { error: "Только администратор платформы может менять иерархию" });
       return;
     }
-    const target = context.db.users.find((u) => u.id === decodeURIComponent(userPatchMatch[1]));
+    const target = context.db.users.find((u) => u.id === safeDecodeURIComponent(userPatchMatch[1]));
     if (!target || isDemoOnlyAccess(target)) {
       sendJson(response, 404, { error: "Пользователь не найден" });
       return;
@@ -3285,7 +3432,7 @@ async function handleApi(request, response) {
       return;
     }
 
-    const targetUser = context.db.users.find((item) => item.id === decodeURIComponent(userMatch[1]));
+    const targetUser = context.db.users.find((item) => item.id === safeDecodeURIComponent(userMatch[1]));
     if (!targetUser) {
       sendJson(response, 404, { error: "Пользователь не найден" });
       return;
@@ -3369,7 +3516,7 @@ async function handleApi(request, response) {
       sendJson(response, 403, { error: "Только администратор платформы может изменять участников" });
       return;
     }
-    const personId = decodeURIComponent(personMatch[1]);
+    const personId = safeDecodeURIComponent(personMatch[1]);
     const target = context.db.people.find((person) => person.id === personId);
     if (!target || isDemoOnlyPersonId(personId)) {
       sendJson(response, 404, { error: "Участник не найден" });
@@ -3438,7 +3585,7 @@ async function handleApi(request, response) {
       return;
     }
 
-    const personId = decodeURIComponent(personMatch[1]);
+    const personId = safeDecodeURIComponent(personMatch[1]);
     const targetPerson = context.db.people.find((person) => person.id === personId);
     if (!targetPerson || isDemoOnlyPersonId(personId)) {
       sendJson(response, 404, { error: "Участник не найден" });
@@ -3476,7 +3623,7 @@ async function handleApi(request, response) {
       sendJson(response, 403, { error: "Только администратор платформы может восстанавливать участников" });
       return;
     }
-    const personId = decodeURIComponent(personRestoreMatch[1]);
+    const personId = safeDecodeURIComponent(personRestoreMatch[1]);
     const target = context.db.people.find((p) => p.id === personId);
     if (!target) {
       sendJson(response, 404, { error: "Участник не найден" });
@@ -3578,7 +3725,7 @@ async function handleApi(request, response) {
       sendJson(response, 403, { error: "Заметки лида доступны только лиду команды" });
       return;
     }
-    const noteId = decodeURIComponent(managerNoteMatch[1]);
+    const noteId = safeDecodeURIComponent(managerNoteMatch[1]);
     const ids = scopedPersonIds(context.db, context.user);
     const note = (context.db.managerNotes || []).find((item) => item.id === noteId);
     if (!note || !ids.has(note.personId)) {
@@ -3605,8 +3752,10 @@ async function handleApi(request, response) {
       description: body.description,
       anonymous: body.anonymous,
       status: "active",
+      ownerUserId: context.user.id,
+      anonymousMinResponses: body.anonymousMinResponses,
       questions: body.questions
-    });
+    }, context.db.users);
     if (!survey.title || survey.questions.length === 0) {
       sendJson(response, 400, { error: "Название и хотя бы один вопрос обязательны" });
       return;
@@ -3626,9 +3775,9 @@ async function handleApi(request, response) {
       sendJson(response, 403, { error: "Только лид может сохранять шаблоны" });
       return;
     }
-    const sourceId = decodeURIComponent(surveyTemplateMatch[1]);
+    const sourceId = safeDecodeURIComponent(surveyTemplateMatch[1]);
     const source = (context.db.surveys || []).find((s) => s.id === sourceId);
-    if (!source) {
+    if (!source || !canAccessSurvey(context.db, context.user, source)) {
       sendJson(response, 404, { error: "Опрос не найден" });
       return;
     }
@@ -3638,8 +3787,10 @@ async function handleApi(request, response) {
       anonymous: source.anonymous,
       status: "active",
       isTemplate: true,
+      ownerUserId: context.user.id,
+      anonymousMinResponses: source.anonymousMinResponses,
       questions: source.questions
-    });
+    }, context.db.users);
     context.db.surveys = [...(context.db.surveys || []), template];
     await writeDb(context.db);
     const refreshed = await readDb();
@@ -3655,9 +3806,9 @@ async function handleApi(request, response) {
       sendJson(response, 403, { error: "Только лид команды может удалять опросы" });
       return;
     }
-    const surveyId = decodeURIComponent(surveyDeleteMatch[1]);
-    const exists = (context.db.surveys || []).some((survey) => survey.id === surveyId);
-    if (!exists) {
+    const surveyId = safeDecodeURIComponent(surveyDeleteMatch[1]);
+    const survey = (context.db.surveys || []).find((item) => item.id === surveyId);
+    if (!survey || !canManageSurvey(context.db, context.user, survey)) {
       sendJson(response, 404, { error: "Опрос не найден" });
       return;
     }
@@ -3677,9 +3828,9 @@ async function handleApi(request, response) {
   if (request.method === "POST" && surveyRespondMatch) {
     const context = await requireAuth(request, response);
     if (!context) return;
-    const surveyId = decodeURIComponent(surveyRespondMatch[1]);
+    const surveyId = safeDecodeURIComponent(surveyRespondMatch[1]);
     const survey = (context.db.surveys || []).find((item) => item.id === surveyId);
-    if (!survey || survey.status !== "active") {
+    if (!survey || survey.status !== "active" || !canAccessSurvey(context.db, context.user, survey)) {
       sendJson(response, 404, { error: "Опрос не найден или закрыт" });
       return;
     }
@@ -3722,13 +3873,28 @@ async function handleApi(request, response) {
         });
       }
     } else {
-      context.db.surveyResponses.push({
+      const respondentHash = surveyRespondentHash(context.user, survey);
+      const existingIndex = context.db.surveyResponses.findIndex(
+        (response) => response.surveyId === survey.id && response.respondentHash === respondentHash
+      );
+      const anonymousResponse = {
         id: makeId("response"),
         surveyId: survey.id,
         personId: null,
+        respondentHash,
         answers: sanitizedAnswers,
         submittedAt: new Date().toISOString()
-      });
+      };
+      if (existingIndex >= 0) {
+        context.db.surveyResponses[existingIndex] = {
+          ...context.db.surveyResponses[existingIndex],
+          respondentHash,
+          answers: sanitizedAnswers,
+          submittedAt: anonymousResponse.submittedAt
+        };
+      } else {
+        context.db.surveyResponses.push(anonymousResponse);
+      }
     }
 
     await writeDb(context.db);
@@ -3768,7 +3934,12 @@ async function handleApi(request, response) {
 }
 
 function safeResolve(pathname) {
-  const decoded = decodeURIComponent(pathname.split("?")[0]);
+  let decoded = "/";
+  try {
+    decoded = decodeURIComponent(pathname.split("?")[0]);
+  } catch {
+    decoded = "/";
+  }
   const normalizedPath = normalize(decoded).replace(/^(\.\.[/\\])+/, "");
   const requested = join(distDir, normalizedPath);
 
@@ -3790,7 +3961,13 @@ createServer((request, response) => {
   if ((request.url || "").startsWith("/api/")) {
     handleApi(request, response).catch((error) => {
       console.error(error);
-      sendJson(response, 500, { error: "Внутренняя ошибка сервера" });
+      const status = error instanceof HttpError ? error.status : 500;
+      const message = error instanceof HttpError ? error.message : "Внутренняя ошибка сервера";
+      if (!response.headersSent) {
+        sendJson(response, status, { error: message });
+      } else {
+        response.end();
+      }
     });
     return;
   }
