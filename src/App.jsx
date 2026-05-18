@@ -41,6 +41,7 @@ import {
 
 const emptyWorkspace = {
   people: [],
+  lprs: [],
   cards: [],
   actions: [],
   goals: [],
@@ -61,6 +62,14 @@ const goalStatusLabel = {
 
 const goalStatusOrder = { active: 0, achieved: 1, abandoned: 2 };
 
+const lprStatusLabel = {
+  active: "В работе",
+  paused: "Пауза",
+  done: "Завершён"
+};
+
+const lprStatusOrder = { active: 0, paused: 1, done: 2 };
+
 function todayISODate() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -76,6 +85,22 @@ function formatDateRu(iso) {
   const parts = String(iso).split("-");
   if (parts.length !== 3) return iso;
   return `${parts[2]}.${parts[1]}.${parts[0]}`;
+}
+
+function duplicateTitleKey(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/[?!.,;:]+$/u, "")
+    .toLowerCase()
+    .replace(/ё/g, "е");
+}
+
+function clampRangeValue(value, min, max, fallback) {
+  const number = Number(value);
+  const safeNumber = Number.isFinite(number) ? number : fallback;
+  return Math.max(min, Math.min(max, Math.round(safeNumber)));
 }
 
 function buildMonthGrid(year, month /* 0-11 */) {
@@ -108,9 +133,37 @@ function buildMonthGrid(year, month /* 0-11 */) {
 
 function DatePicker({ value, onChange, placeholder = "Выбрать дату", id }) {
   const [open, setOpen] = useState(false);
+  const [popupStyle, setPopupStyle] = useState(null);
   const initial = value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00Z`) : new Date();
   const [view, setView] = useState({ year: initial.getUTCFullYear(), month: initial.getUTCMonth() });
   const ref = useRef(null);
+  const triggerRef = useRef(null);
+
+  function positionPopup() {
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const viewportPadding = 16;
+    const width = Math.min(280, Math.max(240, window.innerWidth - viewportPadding * 2));
+    const maxLeft = Math.max(viewportPadding, window.innerWidth - width - viewportPadding);
+    const left = Math.min(
+      Math.max(viewportPadding, rect.left),
+      maxLeft
+    );
+    const estimatedHeight = 342;
+    const belowTop = rect.bottom + 6;
+    const aboveTop = rect.top - estimatedHeight - 6;
+    const top =
+      belowTop + estimatedHeight > window.innerHeight - viewportPadding && aboveTop > viewportPadding
+        ? aboveTop
+        : Math.min(belowTop, window.innerHeight - viewportPadding - estimatedHeight);
+
+    setPopupStyle({
+      position: "fixed",
+      top: Math.max(viewportPadding, top),
+      left,
+      width
+    });
+  }
 
   useEffect(() => {
     if (!open) return undefined;
@@ -119,6 +172,18 @@ function DatePicker({ value, onChange, placeholder = "Выбрать дату", 
     };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    positionPopup();
+    const reposition = () => positionPopup();
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, true);
+    return () => {
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
+    };
   }, [open]);
 
   const cells = buildMonthGrid(view.year, view.month);
@@ -138,7 +203,15 @@ function DatePicker({ value, onChange, placeholder = "Выбрать дату", 
       <button
         type="button"
         className="date-picker-trigger"
-        onClick={() => setOpen((v) => !v)}
+        ref={triggerRef}
+        onClick={() => {
+          if (open) {
+            setOpen(false);
+            return;
+          }
+          positionPopup();
+          setOpen(true);
+        }}
         id={id}
       >
         <CalendarDays size={14} />
@@ -147,7 +220,7 @@ function DatePicker({ value, onChange, placeholder = "Выбрать дату", 
         </span>
       </button>
       {open && (
-        <div className="date-picker-popup">
+        <div className="date-picker-popup" style={popupStyle || undefined}>
           <div className="date-picker-head">
             <button type="button" onClick={() => shift(-1)} aria-label="Предыдущий месяц">
               <ArrowUp size={14} style={{ transform: "rotate(-90deg)" }} />
@@ -216,14 +289,17 @@ function DatePicker({ value, onChange, placeholder = "Выбрать дату", 
 }
 
 const themeStorageKey = "th_theme";
+const themeExplicitStorageKey = "th_theme_explicit";
 const themeOptions = ["system", "light", "dark"];
 
 function readStoredTheme() {
   try {
     const value = window.localStorage.getItem(themeStorageKey);
-    return themeOptions.includes(value) ? value : "system";
+    const wasExplicitlyChosen = window.localStorage.getItem(themeExplicitStorageKey) === "1";
+    if (value === "system" && !wasExplicitlyChosen) return "light";
+    return themeOptions.includes(value) ? value : "light";
   } catch {
-    return "system";
+    return "light";
   }
 }
 
@@ -261,7 +337,7 @@ const meetingTypeLabel = {
   regular: "Обычный 1:1",
   career: "Карьера и рост",
   performance: "Performance",
-  "post-incident": "Разбор инцидента",
+  "post-incident": "Разбор события",
   "first-1on1": "Первый 1:1",
   "skip-level": "Skip-level"
 };
@@ -287,7 +363,7 @@ const baseQuestionSeeds = [
   },
   {
     title: "Какие риски требуют решения?",
-    body: "Отдельная тема для on-call, инцидентов, алертов, процессов и блокеров.",
+    body: "Отдельная тема для рисков, зависимостей, процессов и блокеров.",
     category: "blocker",
     source: "manager"
   },
@@ -322,7 +398,7 @@ const questionSeedsByMeetingType = {
     },
     {
       title: "Какие навыки нужны для следующего грейда?",
-      body: "Сравнить с reliability-ladder. Зафиксировать пробелы.",
+      body: "Сравнить с матрицей роли. Зафиксировать пробелы и следующий шаг.",
       category: "growth",
       source: "manager"
     },
@@ -355,19 +431,19 @@ const questionSeedsByMeetingType = {
   ],
   "post-incident": [
     {
-      title: "Как ты сейчас? (после инцидента)",
+      title: "Как ты сейчас? (после сложной ситуации)",
       body: "Эмоциональное состояние и восстановление важнее аналитики.",
       category: "checkin",
       source: "manager"
     },
     {
       title: "Что в процессе должно поменяться?",
-      body: "Не про конкретного человека — про систему и runbook.",
+      body: "Не про конкретного человека — про систему, договоренности и процесс.",
       category: "feedback",
       source: "manager"
     },
     {
-      title: "Какие follow-up из postmortem на тебе?",
+      title: "Какие follow-up из разбора на тебе?",
       body: "С чёткими сроками и владельцем — иначе они умрут.",
       category: "blocker",
       source: "employee"
@@ -476,6 +552,7 @@ function formatRuDate(iso) {
 const sectionRegistry = {
   home: { label: "Главная", eyebrow: "Сводка команды", title: "Дашборд команды", icon: Home },
   meetings: { label: "1:1 встречи", eyebrow: "Повестка и шаги", title: "1:1", icon: MessageSquarePlus },
+  lprs: { label: "ЛПР", eyebrow: "1:1 -> ЛПР -> цели", title: "ЛПР", icon: ClipboardCheck },
   goals: { label: "Цели", eyebrow: "Развитие и фокус", title: "Цели", icon: Target },
   surveys: { label: "Опросы", eyebrow: "Регулярная обратная связь", title: "Опросы", icon: ClipboardList },
   reports: { label: "Отчёты", eyebrow: "Аналитика и тренды", title: "Отчёты", icon: BarChart3 },
@@ -484,7 +561,33 @@ const sectionRegistry = {
   settings: { label: "Настройки", eyebrow: "Профиль, пароль, тема", title: "Настройки", icon: Settings }
 };
 
-const primarySections = ["home", "meetings", "goals", "surveys", "reports", "team", "admin", "settings"];
+const primarySections = ["home", "meetings", "lprs", "goals", "surveys", "reports", "team", "admin", "settings"];
+
+function sectionDescriptionFor(sectionId, { isAdmin, selectedPerson }) {
+  const descriptions = {
+    meetings: selectedPerson
+      ? isAdmin
+        ? "Ведите общую повестку 1:1, фиксируйте сигналы, договорённости и следующие шаги до следующей встречи."
+        : "Добавляйте свои темы, обновляйте пульс и держите договорённости с лидом в одном месте."
+      : "Выберите участника, чтобы открыть его рабочее пространство 1:1: повестку, пульс, подготовку и итоги.",
+    lprs: isAdmin
+      ? "Превращайте повторяющиеся темы из 1:1 в планы развития и связывайте их с целями."
+      : "Смотрите свои планы развития и темы из 1:1, которые превращаются в практические шаги.",
+    goals: isAdmin
+      ? "Держите цели команды в фокусе: прогресс, сроки, статус и связь с ЛПР видны в одном разделе."
+      : "Обновляйте прогресс по своим целям и связывайте работу с планом развития.",
+    surveys: isAdmin
+      ? "Создавайте опросы для команды и смотрите агрегированные ответы. Анонимные опросы не показывают, кто ответил."
+      : "Заполните доступные опросы — это поможет лиду подготовиться к встрече и увидеть командный контекст.",
+    reports: isAdmin
+      ? "Смотрите тренды по пульсу, темам, целям, действиям и балансу авторства повестки."
+      : "Смотрите свои тренды по пульсу, темам, целям и договорённостям между встречами.",
+    team: "Ведите состав команды, профили участников, роли, фокус менеджера и статус рабочих 1:1.",
+    admin: "Управляйте доступами, ролями, логинами и паролями без смешивания демо и рабочей команды.",
+    settings: "Настройте имя профиля, пароль, тему интерфейса и безопасные действия с демо-данными."
+  };
+  return descriptions[sectionId] || "";
+}
 
 const roleLabel = {
   platform_admin: "Админ платформы",
@@ -545,18 +648,18 @@ const surveyTemplates = [
   },
   {
     id: "on-call-review",
-    label: "Разбор on-call",
-    description: "После недели дежурства: pages, сон, что менять.",
+    label: "Ops-домена",
+    description: "Опционально для команд с дежурствами, сигналами и инцидентами.",
     survey: {
-      title: "On-call дежурство — разбор",
-      description: "Заполняется тем, кто только что сошёл с дежурства.",
+      title: "Дежурство — разбор недели",
+      description: "Доменный шаблон для команд, у которых есть дежурства, сигналы или инциденты.",
       anonymous: false,
       questions: [
-        templateQuestion("scale", "Шумность on-call (1 — тишина, 10 — горело всё)"),
-        templateQuestion("single", "Сколько ночных pages было?", ["0", "1-2", "3-5", "Больше 5"]),
-        templateQuestion("multi", "Что съедало фокус?", ["Шумные алерты", "Релизы", "Инциденты", "Координация", "Документация"], false),
+        templateQuestion("scale", "Шумность дежурства (1 — спокойно, 10 — горело всё)"),
+        templateQuestion("single", "Сколько ночных срабатываний было?", ["0", "1-2", "3-5", "Больше 5"]),
+        templateQuestion("multi", "Что съедало фокус?", ["Шумные сигналы", "Релизы", "Инциденты", "Координация", "Документация"], false),
         templateQuestion("scale", "Как ты сейчас? (1 — выгорел, 10 — норм)"),
-        templateQuestion("text", "Какой алерт надо переработать?", [], false)
+        templateQuestion("text", "Какой сигнал или процесс надо переработать?", [], false)
       ]
     }
   },
@@ -786,6 +889,18 @@ function scorePulse(pulse = {}) {
   return Math.max(0, Math.min(100, Math.round((energy * 0.28 + loadRelief * 0.24 + clarity * 0.24 + trust * 0.24) * 10)));
 }
 
+function heatmapTone(metric, value) {
+  if (!value) return "empty";
+  if (metric === "load") {
+    if (value >= 8) return "risk";
+    if (value >= 6) return "watch";
+    return "good";
+  }
+  if (value <= 4) return "risk";
+  if (value <= 6) return "watch";
+  return "good";
+}
+
 function priorityLabel(priority) {
   return {
     high: "Срочный",
@@ -896,6 +1011,7 @@ export default function App() {
     source: "employee",
     category: "checkin",
     priority: "medium",
+    lprId: "",
     title: "",
     body: ""
   });
@@ -906,10 +1022,11 @@ export default function App() {
   });
   const [summaryText, setSummaryText] = useState("");
   const [newUser, setNewUser] = useState({
-    accessType: "real",
+    role: "employee",
+    leadUserId: "",
     personName: "",
-    personRole: "SRE Engineer",
-    personTeam: "Reliability",
+    personRole: "Team Member",
+    personTeam: "Product",
     username: "",
     password: ""
   });
@@ -917,8 +1034,8 @@ export default function App() {
   const [newPerson, setNewPerson] = useState({
     name: "",
     meetingName: "",
-    role: "SRE Engineer",
-    team: "Reliability",
+    role: "Team Member",
+    team: "Product",
     cadence: "каждую неделю",
     nextMeeting: "нужно запланировать",
     managerFocus: ""
@@ -940,12 +1057,19 @@ export default function App() {
   const [pendingDeletePersonId, setPendingDeletePersonId] = useState("");
   const [newGoal, setNewGoal] = useState({
     personId: "",
+    lprId: "",
     title: "",
     description: "",
     horizon: "",
     dueDate: ""
   });
   const [goalsFilter, setGoalsFilter] = useState({ personId: "all", status: "active" });
+  const [newLpr, setNewLpr] = useState({
+    personId: "",
+    title: "",
+    focus: ""
+  });
+  const [lprFilter, setLprFilter] = useState({ personId: "all", status: "active" });
   const [surveyDrafts, setSurveyDrafts] = useState({});
   const [expandedSurveyId, setExpandedSurveyId] = useState("");
   const [showSurveyComposer, setShowSurveyComposer] = useState(false);
@@ -963,6 +1087,8 @@ export default function App() {
   const [expandedMeetingId, setExpandedMeetingId] = useState("");
   const [myPassword, setMyPassword] = useState("");
   const [newManagerNote, setNewManagerNote] = useState({ body: "", tags: [] });
+  const [pulseDrafts, setPulseDrafts] = useState({});
+  const [goalProgressDrafts, setGoalProgressDrafts] = useState({});
   const [editingPersonId, setEditingPersonId] = useState("");
   const [personEditDraft, setPersonEditDraft] = useState({
     name: "",
@@ -1007,11 +1133,13 @@ export default function App() {
   const [revealSummary, setRevealSummary] = useState(false);
   const summaryPanelRef = useRef(null);
   const dirtyRef = useRef(false);
+  const pendingCardTitleKeysRef = useRef(new Set());
+  const pendingActionTitleKeysRef = useRef(new Set());
 
-  // "isAdmin" is the legacy alias for platform_admin in the UI. Reuse the helper
-  // so the new role name from the server still drives the admin sections.
-  const isAdmin = isPlatformAdminRole(user);
-  const isLead = isLeadRole(user);
+  // "isAdmin" is the legacy UI flag for "can manage the visible team workspace";
+  // platform admin sections still check the exact role.
+  const isPlatformAdmin = isPlatformAdminRole(user);
+  const isAdmin = isLeadRole(user);
   const displayName = user?.name || user?.username || "";
 
   useEffect(() => {
@@ -1046,6 +1174,15 @@ export default function App() {
       personId: isAdmin ? "all" : user?.personId || "all"
     }));
     setNewGoal((current) => ({
+      ...current,
+      personId: isAdmin ? "" : user?.personId || "",
+      lprId: ""
+    }));
+    setLprFilter((current) => ({
+      ...current,
+      personId: isAdmin ? "all" : user?.personId || "all"
+    }));
+    setNewLpr((current) => ({
       ...current,
       personId: isAdmin ? "" : user?.personId || ""
     }));
@@ -1113,9 +1250,9 @@ export default function App() {
       });
       setUser(response.user);
       setActiveSection("home");
-      const responseIsAdmin = isPlatformAdminRole(response.user);
-      setNewCard((current) => ({ ...current, source: responseIsAdmin ? current.source : "employee" }));
-      setNewAction((current) => ({ ...current, owner: responseIsAdmin ? current.owner : "employee" }));
+      const responseCanManageTeam = isLeadRole(response.user);
+      setNewCard((current) => ({ ...current, source: responseCanManageTeam ? current.source : "employee" }));
+      setNewAction((current) => ({ ...current, owner: responseCanManageTeam ? current.owner : "employee" }));
       await loadWorkspace(response.user);
     } catch (error) {
       setLoginError(error.message);
@@ -1166,14 +1303,43 @@ export default function App() {
     workspace?.people[0] ||
     null;
   const selectedPulse = selectedPerson ? workspace?.pulse[selectedPerson.id] || {} : {};
+  const selectedPulseDraft = selectedPerson ? pulseDrafts[selectedPerson.id] || {} : {};
   const selectedScore = selectedPerson ? scorePulse(selectedPulse) : 0;
   const personPrep = selectedPerson ? workspace?.prep[selectedPerson.id] || {} : {};
   const personActions = selectedPerson ? workspace?.actions.filter((action) => action.personId === selectedPerson.id) || [] : [];
   const unresolvedActions = personActions.filter((action) => !action.done);
   const personCards = selectedPerson ? workspace?.cards.filter((card) => card.personId === selectedPerson.id) || [] : [];
+  const openCardTitleKeys = useMemo(
+    () =>
+      new Set(
+        personCards
+          .filter((card) => card.status !== "done")
+          .map((card) => duplicateTitleKey(card.title))
+          .filter(Boolean)
+      ),
+    [personCards]
+  );
+  const openActionTitleKeys = useMemo(
+    () => new Set(unresolvedActions.map((action) => duplicateTitleKey(action.title)).filter(Boolean)),
+    [unresolvedActions]
+  );
+  const newCardTitleKey = duplicateTitleKey(newCard.title);
+  const newCardAlreadyOpen = Boolean(newCardTitleKey && openCardTitleKeys.has(newCardTitleKey));
+  const newActionTitleKey = duplicateTitleKey(newAction.title);
+  const newActionAlreadyOpen = Boolean(newActionTitleKey && openActionTitleKeys.has(newActionTitleKey));
+
+  useEffect(() => {
+    pendingCardTitleKeysRef.current = new Set(openCardTitleKeys);
+  }, [openCardTitleKeys]);
+
+  useEffect(() => {
+    pendingActionTitleKeysRef.current = new Set(openActionTitleKeys);
+  }, [openActionTitleKeys]);
+
   const riskCards = workspace?.cards.filter((card) => card.category === "blocker" && card.status !== "done") || [];
   const realPeople = workspace?.people.filter((person) => person.id !== "demo-sre") || [];
   const realUsers = workspace?.users.filter((item) => !isDemoAccess(item)) || [];
+  const teamLeadUsers = realUsers.filter((item) => item.role === "lead");
   const editableUsers = workspace?.users.filter((item) => !isProtectedAccess(item)) || [];
   const dashboardPeople = isAdmin && realPeople.length ? realPeople : workspace?.people || [];
   const dashboardPersonIds = new Set(dashboardPeople.map((person) => person.id));
@@ -1217,6 +1383,7 @@ export default function App() {
   const selectedSection = sectionRegistry[activeSection] || sectionRegistry.home;
   const pageTitle = activeSection === "meetings" && selectedPerson ? `1:1 с ${selectedPerson.meetingName}` : selectedSection.title;
   const pageEyebrow = activeSection === "meetings" ? "Повестка и шаги" : selectedSection.eyebrow;
+  const pageDescription = sectionDescriptionFor(activeSection, { isAdmin, selectedPerson });
   const normalizedPeopleSearch = peopleSearch.trim().toLowerCase();
   const filteredMeetingPeople = normalizedPeopleSearch
     ? (workspace?.people || []).filter((person) =>
@@ -1245,8 +1412,40 @@ export default function App() {
   }, [personPrep]);
 
   const allGoals = workspace?.goals || [];
+  const allLprs = workspace?.lprs || [];
+  const lprById = useMemo(() => new Map(allLprs.map((lpr) => [lpr.id, lpr])), [allLprs]);
   const personGoals = selectedPerson ? allGoals.filter((goal) => goal.personId === selectedPerson.id) : [];
   const activePersonGoals = personGoals.filter((goal) => goal.status === "active");
+  const personLprs = selectedPerson ? allLprs.filter((lpr) => lpr.personId === selectedPerson.id) : [];
+  const activePersonLprs = personLprs.filter((lpr) => lpr.status === "active");
+  const lprTargetPersonId = newLpr.personId || selectedPersonId;
+  const goalTargetPersonId = newGoal.personId || selectedPersonId;
+  const goalAvailableLprs = allLprs.filter((lpr) => lpr.personId === goalTargetPersonId && lpr.status !== "done");
+
+  const filteredLprs = useMemo(() => {
+    return allLprs
+      .filter((lpr) => {
+        if (lprFilter.personId !== "all" && lpr.personId !== lprFilter.personId) return false;
+        if (lprFilter.status !== "all" && lpr.status !== lprFilter.status) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const statusDelta = (lprStatusOrder[a.status] ?? 9) - (lprStatusOrder[b.status] ?? 9);
+        if (statusDelta !== 0) return statusDelta;
+        return (b.updatedAt || b.createdAt || "").localeCompare(a.updatedAt || a.createdAt || "");
+      });
+  }, [allLprs, lprFilter]);
+
+  const lprAggregate = useMemo(() => {
+    const active = allLprs.filter((lpr) => lpr.status === "active");
+    const linkedGoals = allGoals.filter((goal) => goal.lprId).length;
+    const linkedCards = (workspace?.cards || []).filter((card) => card.lprId).length;
+    const activeGoalProgress = allGoals.filter((goal) => goal.lprId && goal.status === "active");
+    const avgProgress = activeGoalProgress.length
+      ? Math.round(activeGoalProgress.reduce((sum, goal) => sum + (goal.progress || 0), 0) / activeGoalProgress.length)
+      : 0;
+    return { active: active.length, linkedGoals, linkedCards, avgProgress };
+  }, [allLprs, allGoals, workspace?.cards]);
 
   const briefing = useMemo(() => {
     if (!selectedPerson) return null;
@@ -1410,14 +1609,14 @@ export default function App() {
             personId: person.id,
             severity: "high",
             kind: "oncall-noise",
-            label: `${person.name}: средний на-call ${Math.round(avgPerWeek)} pages/нед — alert fatigue`
+            label: `${person.name}: высокий on-call шум, нужен разбор нагрузки`
           });
         } else if (totalAfterHours >= 6) {
           alerts.push({
             personId: person.id,
             severity: "medium",
             kind: "after-hours",
-            label: `${person.name}: ${totalAfterHours} after-hours pages за месяц`
+            label: `${person.name}: ${totalAfterHours} внерабочих срабатываний за месяц`
           });
         }
         if (totalSleep >= 4) {
@@ -1578,6 +1777,135 @@ export default function App() {
     return { active: active.length, achieved, avgProgress, atRisk };
   }, [allGoals]);
 
+  const peopleById = useMemo(
+    () => new Map((workspace?.people || []).map((person) => [person.id, person])),
+    [workspace?.people]
+  );
+  const firstUpcomingMeeting = upcomingMeetings[0] || null;
+  const actionInboxItems = [
+    ...urgentDashboardCards.slice(0, 4).map((card) => {
+      const person = peopleById.get(card.personId);
+      return {
+        id: `card-${card.id}`,
+        label: "Тема",
+        tone: card.priority === "high" ? "risk" : "watch",
+        title: card.title,
+        meta: `${person?.name || "Участник"} · ${priorityLabel(card.priority)}`,
+        personId: card.personId
+      };
+    }),
+    ...openDashboardActions.slice(0, 4).map((action) => {
+      const person = peopleById.get(action.personId);
+      const isOverdue = action.dueDate && action.dueDate < todayISODate();
+      return {
+        id: `action-${action.id}`,
+        label: "Шаг",
+        tone: isOverdue ? "risk" : "neutral",
+        title: action.title,
+        meta: `${person?.name || "Участник"} · ${action.due || action.dueDate || "без срока"}`,
+        personId: action.personId
+      };
+    }),
+    ...alertsData.slice(0, 4).map((alert) => ({
+      id: `alert-${alert.personId}-${alert.kind}`,
+      label: "Сигнал",
+      tone: alert.severity === "high" ? "risk" : "watch",
+      title: alert.label,
+      meta: "проверить на ближайшем 1:1",
+      personId: alert.personId
+    }))
+  ].slice(0, 6);
+  const prepQueue = [...dashboardSnapshots]
+    .filter((item) => item.readiness < 85 || item.openActions > 0 || item.urgentCards > 0)
+    .sort((a, b) => {
+      const weightA = a.urgentCards * 30 + a.openActions * 8 + (100 - a.readiness);
+      const weightB = b.urgentCards * 30 + b.openActions * 8 + (100 - b.readiness);
+      return weightB - weightA;
+    })
+    .slice(0, 4);
+  const person360Metrics = selectedPerson
+    ? [
+        {
+          label: "Темы",
+          value: briefing?.openTopics ?? personCards.filter((card) => card.status !== "done").length,
+          detail: briefing?.urgentTopics ? `${briefing.urgentTopics} срочных` : "в повестке"
+        },
+        {
+          label: "Шаги",
+          value: briefing?.openActionsCount ?? unresolvedActions.length,
+          detail: "открытые"
+        },
+        {
+          label: "ЛПР",
+          value: activePersonLprs.length,
+          detail: "активных"
+        },
+        {
+          label: "Цели",
+          value: activePersonGoals.length,
+          detail: "активных"
+        },
+        {
+          label: "Пульс",
+          value: selectedScore,
+          detail: selectedPerson.trend || "сейчас"
+        }
+      ]
+    : [];
+  const teamHeatmapRows = [...dashboardSnapshots]
+    .map((item) => {
+      const pulse = workspace?.pulse?.[item.person.id] || {};
+      return {
+        ...item,
+        energy: Number(pulse.energy) || 0,
+        load: Number(pulse.load) || 0,
+        clarity: Number(pulse.clarity) || 0,
+        trust: Number(pulse.trust) || 0
+      };
+    })
+    .sort((a, b) => a.score - b.score || b.urgentCards - a.urgentCards)
+    .slice(0, 8);
+  const reportRecommendations = [
+    ...alertsData.slice(0, 3).map((alert) => ({
+      id: `alert-${alert.personId}-${alert.kind}`,
+      tone: alert.severity === "high" ? "risk" : "watch",
+      title: alert.label,
+      action: "разобрать на ближайшем 1:1",
+      personId: alert.personId
+    })),
+    reportsData.authorRatioWarn.length > 0 && {
+      id: "author-ratio",
+      tone: "watch",
+      title: `${reportsData.authorRatioWarn.length} ${pluralizeRu(reportsData.authorRatioWarn.length, ["повестка", "повестки", "повесток"])} ведёт лид`,
+      action: "вернуть участнику ownership тем",
+      section: "reports"
+    },
+    reportsData.completionPct < 65 && {
+      id: "actions-completion",
+      tone: "risk",
+      title: "Следующие шаги закрываются медленно",
+      action: "сузить WIP и назначить владельцев",
+      section: "reports"
+    },
+    goalsAggregate.atRisk > 0 && {
+      id: "goals-risk",
+      tone: "watch",
+      title: `${goalsAggregate.atRisk} ${pluralizeRu(goalsAggregate.atRisk, ["цель", "цели", "целей"])} под риском`,
+      action: "привязать к ЛПР и ближайшим шагам",
+      section: "goals"
+    }
+  ].filter(Boolean).slice(0, 6);
+  const peopleWithoutAccess = (workspace?.people || []).filter(
+    (person) => !(workspace?.users || []).some((item) => item.personId === person.id)
+  ).length;
+  const peopleWithoutMeetings = (workspace?.people || []).filter((person) => !person.nextMeeting).length;
+  const teamOverviewStats = [
+    [UsersRound, "Участники", workspace?.people?.length || 0, "в рабочей команде", "slate"],
+    [HeartPulse, "В зоне внимания", peopleInRiskZone, "по пульсу и темам", "amber"],
+    [KeyRound, "Без доступа", peopleWithoutAccess, "логин не выдан", "teal"],
+    [CalendarDays, "Без 1:1", peopleWithoutMeetings, "нужно назначить", "green"]
+  ];
+
   const filteredCards = useMemo(() => {
     const statusOrder = { todo: 0, discussing: 1, done: 2 };
     const priorityOrder = { high: 0, medium: 1, low: 2 };
@@ -1620,18 +1948,54 @@ export default function App() {
     }
   }
 
-  function updatePulse(metric, value) {
+  function pulseValue(metric) {
+    return selectedPulseDraft[metric] ?? selectedPulse[metric] ?? 5;
+  }
+
+  function updatePulseDraft(metric, value) {
     if (!selectedPerson) return;
+    const next = clampRangeValue(value, 1, 10, 5);
+    setPulseDrafts((current) => ({
+      ...current,
+      [selectedPerson.id]: {
+        ...(current[selectedPerson.id] || {}),
+        [metric]: next
+      }
+    }));
+  }
+
+  function clearPulseDraft(metric) {
+    if (!selectedPerson) return;
+    setPulseDrafts((current) => {
+      const personDraft = { ...(current[selectedPerson.id] || {}) };
+      delete personDraft[metric];
+      if (Object.keys(personDraft).length === 0) {
+        const next = { ...current };
+        delete next[selectedPerson.id];
+        return next;
+      }
+      return { ...current, [selectedPerson.id]: personDraft };
+    });
+  }
+
+  function commitPulseValue(metric, value) {
+    if (!selectedPerson) return;
+    const next = clampRangeValue(value, 1, 10, 5);
+    if ((selectedPulse[metric] ?? 5) === next) {
+      clearPulseDraft(metric);
+      return;
+    }
     commitWorkspace((current) => ({
       ...current,
       pulse: {
         ...current.pulse,
         [selectedPerson.id]: {
           ...(current.pulse[selectedPerson.id] || selectedPulse),
-          [metric]: Number(value)
+          [metric]: next
         }
       }
     }));
+    clearPulseDraft(metric);
   }
 
   function togglePrep(itemId) {
@@ -1652,17 +2016,25 @@ export default function App() {
 
   function addAgendaCard(event) {
     event.preventDefault();
-    if (!selectedPerson || !newCard.title.trim()) return;
+    const title = newCard.title.trim();
+    const titleKey = duplicateTitleKey(title);
+    if (!selectedPerson || !titleKey) return;
+    if (pendingCardTitleKeysRef.current.has(titleKey)) {
+      setUserMessage("Такая тема уже есть в открытой повестке");
+      return;
+    }
+    pendingCardTitleKeysRef.current.add(titleKey);
 
     const source = isAdmin ? newCard.source : "employee";
     const card = {
       id: makeId("card"),
       personId: selectedPerson.id,
+      lprId: activePersonLprs.some((lpr) => lpr.id === newCard.lprId) ? newCard.lprId : "",
       source,
       category: newCard.category,
       priority: newCard.priority,
       status: "todo",
-      title: newCard.title.trim(),
+      title,
       body: newCard.body.trim()
     };
 
@@ -1677,11 +2049,19 @@ export default function App() {
         }
       }
     }));
-    setNewCard((current) => ({ ...current, title: "", body: "" }));
+    setNewCard((current) => ({ ...current, title: "", body: "", lprId: "" }));
   }
 
   function addSeedCard(seed) {
     if (!selectedPerson) return;
+    const titleKey = duplicateTitleKey(seed.title);
+    if (!titleKey) return;
+    if (pendingCardTitleKeysRef.current.has(titleKey)) {
+      setUserMessage("Такая тема уже есть в открытой повестке");
+      return;
+    }
+    pendingCardTitleKeysRef.current.add(titleKey);
+
     const source = isAdmin ? seed.source : "employee";
     const card = {
       id: makeId("card"),
@@ -1748,6 +2128,14 @@ export default function App() {
 
   function promoteCardToAction(card) {
     if (!selectedPerson) return;
+    const titleKey = duplicateTitleKey(card.title);
+    if (!titleKey) return;
+    if (pendingActionTitleKeysRef.current.has(titleKey)) {
+      setUserMessage("Такой шаг уже есть в открытых действиях");
+      return;
+    }
+    pendingActionTitleKeysRef.current.add(titleKey);
+
     const owner = isAdmin && card.source === "manager" ? "manager" : "employee";
     const action = {
       id: makeId("action"),
@@ -1777,13 +2165,20 @@ export default function App() {
 
   function addAction(event) {
     event.preventDefault();
-    if (!selectedPerson || !newAction.title.trim()) return;
+    const title = newAction.title.trim();
+    const titleKey = duplicateTitleKey(title);
+    if (!selectedPerson || !titleKey) return;
+    if (pendingActionTitleKeysRef.current.has(titleKey)) {
+      setUserMessage("Такой шаг уже есть в открытых действиях");
+      return;
+    }
+    pendingActionTitleKeysRef.current.add(titleKey);
 
     const action = {
       id: makeId("action"),
       personId: selectedPerson.id,
       owner: isAdmin ? newAction.owner : "employee",
-      title: newAction.title.trim(),
+      title,
       due: newAction.due.trim() || "к следующему 1:1",
       done: false
     };
@@ -1813,10 +2208,12 @@ export default function App() {
     event.preventDefault();
     const targetPersonId = isAdmin ? newGoal.personId || selectedPersonId : user?.personId;
     if (!targetPersonId || !newGoal.title.trim()) return;
+    const targetLpr = allLprs.find((lpr) => lpr.id === newGoal.lprId && lpr.personId === targetPersonId);
 
     const goal = {
       id: makeId("goal"),
       personId: targetPersonId,
+      lprId: targetLpr?.id || "",
       title: newGoal.title.trim(),
       description: newGoal.description.trim(),
       horizon: newGoal.horizon.trim(),
@@ -1832,6 +2229,7 @@ export default function App() {
     }));
     setNewGoal({
       personId: isAdmin ? targetPersonId : "",
+      lprId: targetLpr?.id || "",
       title: "",
       description: "",
       horizon: "",
@@ -1841,7 +2239,7 @@ export default function App() {
   }
 
   function updateGoalProgress(goalId, value) {
-    const next = Math.max(0, Math.min(100, Number(value) || 0));
+    const next = clampRangeValue(value, 0, 100, 0);
     commitWorkspace((current) => ({
       ...current,
       goals: (current.goals || []).map((goal) =>
@@ -1849,11 +2247,42 @@ export default function App() {
           ? {
               ...goal,
               progress: next,
-              status: next >= 100 ? "achieved" : goal.status === "abandoned" ? "active" : goal.status
+              status: next >= 100 ? "achieved" : ["abandoned", "achieved"].includes(goal.status) ? "active" : goal.status
             }
           : goal
       )
     }));
+  }
+
+  function goalProgressValue(goal) {
+    return goalProgressDrafts[goal.id] ?? goal.progress;
+  }
+
+  function updateGoalProgressDraft(goalId, value) {
+    setGoalProgressDrafts((current) => ({
+      ...current,
+      [goalId]: clampRangeValue(value, 0, 100, 0)
+    }));
+  }
+
+  function clearGoalProgressDraft(goalId) {
+    setGoalProgressDrafts((current) => {
+      if (!(goalId in current)) return current;
+      const next = { ...current };
+      delete next[goalId];
+      return next;
+    });
+  }
+
+  function commitGoalProgressValue(goalId, value) {
+    const next = clampRangeValue(value, 0, 100, 0);
+    const goal = allGoals.find((item) => item.id === goalId);
+    if ((goal?.progress ?? 0) === next) {
+      clearGoalProgressDraft(goalId);
+      return;
+    }
+    updateGoalProgress(goalId, next);
+    clearGoalProgressDraft(goalId);
   }
 
   function setGoalStatus(goalId, status) {
@@ -1889,6 +2318,85 @@ export default function App() {
       goals: (current.goals || []).filter((goal) => goal.id !== goalId)
     }));
     setUserMessage("Цель удалена");
+  }
+
+  function addLpr(event) {
+    event.preventDefault();
+    const targetPersonId = isAdmin ? newLpr.personId || selectedPersonId : user?.personId;
+    if (!targetPersonId || !newLpr.title.trim()) return;
+    const now = new Date().toISOString();
+    const lpr = {
+      id: makeId("lpr"),
+      personId: targetPersonId,
+      title: newLpr.title.trim(),
+      focus: newLpr.focus.trim(),
+      status: "active",
+      createdAt: now,
+      updatedAt: now
+    };
+
+    commitWorkspace((current) => ({
+      ...current,
+      lprs: [lpr, ...(current.lprs || [])]
+    }));
+    setNewLpr({
+      personId: isAdmin ? targetPersonId : "",
+      title: "",
+      focus: ""
+    });
+    setUserMessage("ЛПР добавлен");
+  }
+
+  function setLprStatus(lprId, status) {
+    commitWorkspace((current) => ({
+      ...current,
+      lprs: (current.lprs || []).map((lpr) =>
+        lpr.id === lprId ? { ...lpr, status, updatedAt: new Date().toISOString() } : lpr
+      )
+    }));
+    setLprFilter((current) => (current.status === "all" || current.status === status ? current : { ...current, status }));
+    setUserMessage(status === "done" ? "ЛПР завершён" : status === "paused" ? "ЛПР поставлен на паузу" : "ЛПР снова в работе");
+  }
+
+  function deleteLpr(lprId) {
+    commitWorkspace((current) => ({
+      ...current,
+      lprs: (current.lprs || []).filter((lpr) => lpr.id !== lprId),
+      cards: current.cards.map((card) => (card.lprId === lprId ? { ...card, lprId: "" } : card)),
+      goals: (current.goals || []).map((goal) => (goal.lprId === lprId ? { ...goal, lprId: "" } : goal))
+    }));
+    setUserMessage("ЛПР удалён, связанные темы и цели сохранены");
+  }
+
+  function promoteCardToLpr(card) {
+    if (!selectedPerson) return;
+    const now = new Date().toISOString();
+    const lpr = {
+      id: makeId("lpr"),
+      personId: selectedPerson.id,
+      title: `ЛПР: ${card.title}`,
+      focus: card.body || "План создан из темы 1:1. Уточните фокус и привяжите цели.",
+      status: "active",
+      createdAt: now,
+      updatedAt: now
+    };
+    commitWorkspace((current) => ({
+      ...current,
+      lprs: [lpr, ...(current.lprs || [])],
+      cards: current.cards.map((item) => (item.id === card.id ? { ...item, lprId: lpr.id } : item))
+    }));
+    setUserMessage("Тема 1:1 перенесена в ЛПР");
+  }
+
+  function openGoalForLpr(lpr) {
+    setSelectedPersonId(lpr.personId);
+    setNewGoal((current) => ({
+      ...current,
+      personId: lpr.personId,
+      lprId: lpr.id
+    }));
+    setGoalsFilter((current) => ({ ...current, personId: isAdmin ? lpr.personId : current.personId, status: "active" }));
+    setActiveSection("goals");
   }
 
   function addSurveyQuestion(type = "scale") {
@@ -2225,7 +2733,7 @@ export default function App() {
   }
 
   async function resetDemo() {
-    if (!isAdmin) return;
+    if (!isPlatformAdmin) return;
     try {
       setSaveError("");
       setUserMessage("");
@@ -2235,10 +2743,11 @@ export default function App() {
       setWorkspace(nextWorkspace);
       setSelectedPersonId(nextWorkspace.people?.[0]?.id || "");
       setNewUser({
-        accessType: "real",
+        role: "employee",
+        leadUserId: "",
         personName: "",
-        personRole: "SRE Engineer",
-        personTeam: "Reliability",
+        personRole: "Team Member",
+        personTeam: "Product",
         username: "",
         password: ""
       });
@@ -2247,7 +2756,7 @@ export default function App() {
       setActiveView("agenda");
       setActiveFilter("all");
       setSummaryText("");
-      setUserMessage("Демо-данные сброшены. Вы остались в аккаунте лида");
+      setUserMessage("Демо-данные сброшены. Вы остались в аккаунте админа");
     } catch (error) {
       setSaveError(error.message);
     }
@@ -2270,8 +2779,13 @@ export default function App() {
         throw new Error("Пароль должен быть не короче 8 символов");
       }
 
+      const isLeadLogin = newUser.role === "lead";
       if (newUser.personName.trim().length < 2) {
-        throw new Error("Укажите имя участника");
+        throw new Error(isLeadLogin ? "Укажите имя тимлида" : "Укажите имя участника");
+      }
+
+      if (newUser.personTeam.trim().length < 2) {
+        throw new Error("Укажите команду");
       }
 
       if (workspace.users.some((item) => item.username.toLowerCase() === username.toLowerCase())) {
@@ -2281,22 +2795,28 @@ export default function App() {
       const userResponse = await apiFetch("/api/users", {
         method: "POST",
         body: JSON.stringify({
+          role: newUser.role,
           username,
           password,
+          name: newUser.personName,
           personName: newUser.personName,
           personRole: newUser.personRole,
-          personTeam: newUser.personTeam
+          personTeam: newUser.personTeam,
+          teamLabel: newUser.personTeam,
+          leadUserId: newUser.role === "employee" ? newUser.leadUserId : ""
         })
       });
       const nextWorkspace = userResponse.workspace ? { ...emptyWorkspace, ...userResponse.workspace } : null;
       setWorkspace((current) => (nextWorkspace ? nextWorkspace : current));
-      setSelectedPersonId(userResponse.user.personId);
+      if (userResponse.user.personId) setSelectedPersonId(userResponse.user.personId);
       setUserMessage(`Логин ${userResponse.user.username} создан`);
       setNewUser((current) => ({
         ...current,
+        role: "employee",
+        leadUserId: "",
         personName: "",
-        personRole: "SRE Engineer",
-        personTeam: "Reliability",
+        personRole: "Team Member",
+        personTeam: "Product",
         username: "",
         password: ""
       }));
@@ -2538,8 +3058,8 @@ export default function App() {
       setNewPerson({
         name: "",
         meetingName: "",
-        role: "SRE Engineer",
-        team: "Reliability",
+        role: "Team Member",
+        team: "Product",
         cadence: "каждую неделю",
         nextMeeting: "нужно запланировать",
         managerFocus: ""
@@ -2752,6 +3272,22 @@ export default function App() {
         {saveError && <div className="form-error inline-error">{saveError}</div>}
         {userMessage && <div className="form-hint inline-message">{userMessage}</div>}
 
+        {pageDescription && activeSection !== "home" && (
+          <div className="section-intro">
+            <p>{pageDescription}</p>
+            {activeSection === "surveys" && isAdmin && (
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => setShowSurveyComposer((v) => !v)}
+              >
+                <Plus size={16} />
+                {showSurveyComposer ? "Скрыть форму" : "Создать опрос"}
+              </button>
+            )}
+          </div>
+        )}
+
         {activeSection === "home" && (
           <section className="dashboard-view">
             <section className="dashboard-hero" aria-label="Сводка команды">
@@ -2767,6 +3303,120 @@ export default function App() {
                   <span style={{ width: `${dashboardScore}%` }} />
                 </div>
                 <small>{peopleInRiskZone} в зоне внимания из {dashboardPeople.length}</small>
+              </div>
+            </section>
+
+            <section className="manager-command" aria-label="Рабочий цикл менеджера">
+              <div className="section-heading compact">
+                <div>
+                  <p className="eyebrow">Рабочий цикл</p>
+                  <h3>{isAdmin ? "Что закрыть сегодня" : "Что подготовить к 1:1"}</h3>
+                </div>
+                <span className="count-pill">{actionInboxItems.length + prepQueue.length}</span>
+              </div>
+
+              <div className="command-grid">
+                <article className="command-card command-card-main">
+                  <span className="command-label">Ближайший 1:1</span>
+                  {firstUpcomingMeeting ? (
+                    <>
+                      <div className="command-person">
+                        <span className="avatar">{firstUpcomingMeeting.person.initials}</span>
+                        <span>
+                          <strong>{firstUpcomingMeeting.person.name}</strong>
+                          <small>{firstUpcomingMeeting.person.nextMeeting} · {firstUpcomingMeeting.person.cadence}</small>
+                        </span>
+                      </div>
+                      <div className="command-metrics">
+                        <span>{firstUpcomingMeeting.readiness}% готовность</span>
+                        <span>{countLabel(firstUpcomingMeeting.openActions, ["шаг", "шага", "шагов"])}</span>
+                        <span>{countLabel(firstUpcomingMeeting.urgentCards, ["срочная тема", "срочные темы", "срочных тем"])}</span>
+                      </div>
+                      <button className="primary-button" type="button" onClick={() => selectPerson(firstUpcomingMeeting.person.id)}>
+                        <ClipboardCheck size={16} />
+                        Подготовить
+                      </button>
+                    </>
+                  ) : (
+                    <div className="empty-state compact-empty">
+                      <CalendarDays size={20} />
+                      <span>Ближайших 1:1 пока нет.</span>
+                    </div>
+                  )}
+                </article>
+
+                <article className="command-card">
+                  <span className="command-label">Action inbox</span>
+                  <div className="command-list">
+                    {actionInboxItems.map((item) => (
+                      <button className={`command-row tone-${item.tone}`} key={item.id} type="button" onClick={() => selectPerson(item.personId)}>
+                        <span className="command-row-type">{item.label}</span>
+                        <span className="command-row-main">
+                          <strong>{item.title}</strong>
+                          <small>{item.meta}</small>
+                        </span>
+                        <ChevronRight size={14} />
+                      </button>
+                    ))}
+                    {actionInboxItems.length === 0 && (
+                      <div className="empty-state compact-empty">
+                        <CheckCircle2 size={20} />
+                        <span>Критичных действий сейчас нет.</span>
+                      </div>
+                    )}
+                  </div>
+                </article>
+
+                <article className="command-card">
+                  <span className="command-label">Очередь подготовки</span>
+                  <div className="command-list">
+                    {prepQueue.map(({ person, readiness: personReadiness, openActions, urgentCards }) => (
+                      <button className="prep-row" key={person.id} type="button" onClick={() => selectPerson(person.id)}>
+                        <span className="avatar mini">{person.initials}</span>
+                        <span className="prep-row-main">
+                          <strong>{person.name}</strong>
+                          <small>
+                            {personReadiness}% · {countLabel(openActions, ["шаг", "шага", "шагов"])}
+                            {urgentCards > 0 && ` · ${urgentCards} срочн.`}
+                          </small>
+                        </span>
+                        <span className="readiness-mini">
+                          <span style={{ width: `${personReadiness}%` }} />
+                        </span>
+                      </button>
+                    ))}
+                    {prepQueue.length === 0 && (
+                      <div className="empty-state compact-empty">
+                        <CheckCircle2 size={20} />
+                        <span>Все встречи выглядят готовыми.</span>
+                      </div>
+                    )}
+                  </div>
+                </article>
+
+                <article className="command-card command-card-actions">
+                  <span className="command-label">Петля улучшений</span>
+                  <div className="command-quick-actions">
+                    {isAdmin && (
+                      <button className="soft-button" type="button" onClick={() => openSection("surveys")}>
+                        <ClipboardList size={15} />
+                        Запустить опрос
+                      </button>
+                    )}
+                    <button className="soft-button" type="button" onClick={() => openSection("reports")}>
+                      <BarChart3 size={15} />
+                      Открыть отчёты
+                    </button>
+                    <button className="soft-button" type="button" onClick={() => openSection("lprs")}>
+                      <ClipboardCheck size={15} />
+                      Открыть ЛПР
+                    </button>
+                    <button className="soft-button" type="button" onClick={() => openSection("goals")}>
+                      <Target size={15} />
+                      Открыть цели
+                    </button>
+                  </div>
+                </article>
               </div>
             </section>
 
@@ -3000,6 +3650,43 @@ export default function App() {
               </div>
             </section>
 
+            <section className="person-360-panel" aria-label="Person 360">
+              <div className="person-360-head">
+                <div>
+                  <p className="eyebrow">Person 360</p>
+                  <h3>{selectedPerson.name}</h3>
+                </div>
+                <div className="privacy-pills" aria-label="Приватность контекста">
+                  <span className="visibility-chip shared">Общее</span>
+                  {isAdmin && (
+                    <span className="visibility-chip private">
+                      <LockKeyhole size={12} />
+                      Только лид
+                    </span>
+                  )}
+                  <span className="visibility-chip muted">Опросы агрегируются</span>
+                </div>
+              </div>
+              <div className="person-360-grid">
+                {person360Metrics.map((metric) => (
+                  <article className="person-360-metric" key={metric.label}>
+                    <span>{metric.label}</span>
+                    <strong>{metric.value}</strong>
+                    <small>{metric.detail}</small>
+                  </article>
+                ))}
+              </div>
+              <div className="workflow-trace" aria-label="Связь работы">
+                <span>1:1</span>
+                <ChevronRight size={14} />
+                <span>ЛПР</span>
+                <ChevronRight size={14} />
+                <span>Цели</span>
+                <ChevronRight size={14} />
+                <span>Шаги</span>
+              </div>
+            </section>
+
             {briefing && (
               <section className="briefing-card" aria-label="Брифинг к встрече">
                 <header className="briefing-head">
@@ -3073,10 +3760,10 @@ export default function App() {
                         <strong>{briefing.avgPagesPerWeek}/нед</strong>
                         <small>
                           {briefing.avgPagesPerWeek > 8
-                            ? "alert fatigue, нужен разбор"
+                            ? "высокий шум, нужен разбор"
                             : briefing.avgPagesPerWeek > 4
                               ? "среднее, выше нормы"
-                              : "в норме (Google SRE ≤2)"}
+                              : "ниже порога риска"}
                         </small>
                       </article>
                       <article
@@ -3086,7 +3773,7 @@ export default function App() {
                         <strong>{briefing.totalSleepNights}</strong>
                         <small>
                           {briefing.totalSleepNights === 0
-                            ? "без ночных pages"
+                            ? "без ночных срабатываний"
                             : `${pluralizeRu(briefing.totalSleepNights, ["ночь", "ночи", "ночей"])} прерывали`}
                         </small>
                       </article>
@@ -3156,6 +3843,7 @@ export default function App() {
                   filteredCards.map((card) => {
                     const canEdit = isAdmin || card.source === "employee";
                     const isEditing = editingCardId === card.id;
+                    const actionAlreadyOpen = openActionTitleKeys.has(duplicateTitleKey(card.title));
                     return (
                       <article className={`agenda-card priority-${card.priority}`} key={card.id}>
                         <div className="card-topline">
@@ -3171,6 +3859,12 @@ export default function App() {
                             <small>Приоритет</small>
                             {priorityLabel(card.priority)}
                           </span>
+                          <span className="visibility-chip shared">Видно участнику и лиду</span>
+                          {card.lprId && lprById.get(card.lprId) && (
+                            <span className="goal-chip muted">
+                              ЛПР · {lprById.get(card.lprId).title}
+                            </span>
+                          )}
                         </div>
                         {isEditing ? (
                           <div className="card-edit-fields">
@@ -3245,10 +3939,22 @@ export default function App() {
                                 <Check size={15} />
                                 Обсудили
                               </button>
-                              <button className="soft-button" type="button" onClick={() => promoteCardToAction(card)}>
-                                <ChevronRight size={15} />
-                                Добавить в шаги
+                              <button
+                                className="soft-button"
+                                type="button"
+                                onClick={() => promoteCardToAction(card)}
+                                disabled={actionAlreadyOpen}
+                                title={actionAlreadyOpen ? "Такой шаг уже есть" : "Добавить в шаги"}
+                              >
+                                {actionAlreadyOpen ? <Check size={15} /> : <ChevronRight size={15} />}
+                                {actionAlreadyOpen ? "Уже в шагах" : "Добавить в шаги"}
                               </button>
+                              {!card.lprId && (
+                                <button className="soft-button" type="button" onClick={() => promoteCardToLpr(card)}>
+                                  <ClipboardCheck size={15} />
+                                  В ЛПР
+                                </button>
+                              )}
                               {canEdit && (
                                 <>
                                   <button
@@ -3290,9 +3996,22 @@ export default function App() {
                     <p className="eyebrow">Новая тема</p>
                     <h3>Добавить тему</h3>
                   </div>
-                  <button className="icon-button" type="submit" title="Добавить тему">
+                  <button
+                    className="icon-button"
+                    type="submit"
+                    title={newCardAlreadyOpen ? "Такая тема уже есть" : "Добавить тему"}
+                    disabled={!newCardTitleKey || newCardAlreadyOpen}
+                  >
                     <Plus size={18} />
                   </button>
+                </div>
+
+                <div className="privacy-strip">
+                  <span className="visibility-chip shared">Тема видна участнику и лиду</span>
+                  <span className="visibility-chip private">
+                    <LockKeyhole size={12} />
+                    Приватные заметки отдельно
+                  </span>
                 </div>
 
                 {isAdmin ? (
@@ -3318,6 +4037,20 @@ export default function App() {
                   </select>
                 </label>
 
+                {activePersonLprs.length > 0 && (
+                  <label>
+                    Связь с ЛПР
+                    <select value={newCard.lprId || ""} onChange={(event) => setNewCard((current) => ({ ...current, lprId: event.target.value }))}>
+                      <option value="">Без ЛПР</option>
+                      {activePersonLprs.map((lpr) => (
+                        <option key={lpr.id} value={lpr.id}>
+                          {lpr.title}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+
                 <label>
                   Приоритет
                   <select value={newCard.priority} onChange={(event) => setNewCard((current) => ({ ...current, priority: event.target.value }))}>
@@ -3332,7 +4065,7 @@ export default function App() {
                   <input
                     value={newCard.title}
                     onChange={(event) => setNewCard((current) => ({ ...current, title: event.target.value }))}
-                    placeholder="Например: шумят алерты после деплоя"
+                    placeholder="Например: слишком много срочных запросов"
                   />
                 </label>
 
@@ -3354,12 +4087,21 @@ export default function App() {
                 {getQuestionSeeds(
                   selectedPerson?.meetingType || "regular",
                   selectedPerson?.mentorshipMode || "coach"
-                ).map((seed) => (
-                  <button key={seed.title} type="button" onClick={() => addSeedCard(seed)}>
-                    <span>{seed.title}</span>
-                    <Plus size={15} />
-                  </button>
-                ))}
+                ).map((seed) => {
+                  const seedAlreadyOpen = openCardTitleKeys.has(duplicateTitleKey(seed.title));
+                  return (
+                    <button
+                      key={seed.title}
+                      type="button"
+                      onClick={() => addSeedCard(seed)}
+                      disabled={seedAlreadyOpen}
+                      title={seedAlreadyOpen ? "Такая тема уже есть" : undefined}
+                    >
+                      <span>{seed.title}</span>
+                      {seedAlreadyOpen ? <Check size={15} /> : <Plus size={15} />}
+                    </button>
+                  );
+                })}
               </div>
             </aside>
           </section>
@@ -3382,19 +4124,35 @@ export default function App() {
                   ["load", "Нагрузка", "низкая", "высокая"],
                   ["clarity", "Ясность", "мало ясности", "ясно"],
                   ["trust", "Доверие", "низкое", "высокое"]
-                ].map(([id, label, min, max]) => (
-                  <label className="signal-control" key={id}>
-                    <span>
-                      <strong>{label}</strong>
-                      <em>{selectedPulse[id] || 5}/10</em>
-                    </span>
-                    <input min="1" max="10" type="range" value={selectedPulse[id] || 5} onChange={(event) => updatePulse(id, event.target.value)} />
-                    <small>
-                      <span>{min}</span>
-                      <span>{max}</span>
-                    </small>
-                  </label>
-                ))}
+                ].map(([id, label, min, max]) => {
+                  const value = pulseValue(id);
+                  return (
+                    <label className="signal-control" key={id}>
+                      <span>
+                        <strong>{label}</strong>
+                        <em>{value}/10</em>
+                      </span>
+                      <input
+                        min="1"
+                        max="10"
+                        type="range"
+                        value={value}
+                        onChange={(event) => updatePulseDraft(id, event.target.value)}
+                        onPointerDown={(event) => event.currentTarget.setPointerCapture?.(event.pointerId)}
+                        onPointerUp={(event) => {
+                          event.currentTarget.releasePointerCapture?.(event.pointerId);
+                          commitPulseValue(id, event.currentTarget.value);
+                        }}
+                        onKeyUp={(event) => commitPulseValue(id, event.currentTarget.value)}
+                        onBlur={(event) => commitPulseValue(id, event.currentTarget.value)}
+                      />
+                      <small>
+                        <span>{min}</span>
+                        <span>{max}</span>
+                      </small>
+                    </label>
+                  );
+                })}
               </div>
             </div>
 
@@ -3417,29 +4175,6 @@ export default function App() {
               </ul>
             </div>
 
-            {isAdmin && (
-              <div className="team-map">
-                <div className="section-heading compact">
-                  <div>
-                    <p className="eyebrow">Команда</p>
-                    <h3>Пульс участников</h3>
-                  </div>
-                  <UsersRound size={18} />
-                </div>
-                {workspace.people.map((person) => {
-                  const score = scorePulse(workspace.pulse[person.id]);
-                  return (
-                    <button key={person.id} type="button" className="team-map-row" onClick={() => selectPerson(person.id)}>
-                      <span>{person.name}</span>
-                      <div className="mini-bar" aria-hidden="true">
-                        <span style={{ width: `${score}%` }} />
-                      </div>
-                      <strong>{score}</strong>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
           </section>
         )}
 
@@ -3601,7 +4336,12 @@ export default function App() {
                   Срок
                   <input value={newAction.due} onChange={(event) => setNewAction((current) => ({ ...current, due: event.target.value }))} />
                 </label>
-                <button className="primary-button" type="submit">
+                <button
+                  className="primary-button"
+                  type="submit"
+                  disabled={!newActionTitleKey || newActionAlreadyOpen}
+                  title={newActionAlreadyOpen ? "Такой шаг уже есть" : "Добавить шаг"}
+                >
                   <Plus size={16} />
                   Добавить шаг
                 </button>
@@ -3623,6 +4363,238 @@ export default function App() {
           </section>
         )}
           </>
+        )}
+
+        {activeSection === "lprs" && (
+          <section className="goals-view lpr-view">
+            <div className="goals-kpis">
+              {[
+                [ClipboardCheck, "ЛПР в работе", lprAggregate.active, "активных планов", "teal"],
+                [Target, "Связанные цели", lprAggregate.linkedGoals, "цели с ЛПР", "green"],
+                [MessageSquarePlus, "Темы из 1:1", lprAggregate.linkedCards, "привязаны к ЛПР", "slate"],
+                [Activity, "Средний прогресс", `${lprAggregate.avgProgress}%`, "по активным целям", "amber"]
+              ].map(([Icon, label, value, detail, tone]) => (
+                <article className={`kpi-card ${tone}`} key={label}>
+                  <span className="kpi-icon">
+                    <Icon size={18} />
+                  </span>
+                  <div>
+                    <span>{label}</span>
+                    <strong>{value}</strong>
+                    <small>{detail}</small>
+                  </div>
+                </article>
+              ))}
+            </div>
+
+            <div className="goals-toolbar" role="toolbar" aria-label="Фильтры ЛПР">
+              {isAdmin && (
+                <label className="toolbar-field">
+                  <span>Участник</span>
+                  <select
+                    value={lprFilter.personId}
+                    onChange={(event) => setLprFilter((current) => ({ ...current, personId: event.target.value }))}
+                  >
+                    <option value="all">Все участники</option>
+                    {workspace.people.map((person) => (
+                      <option key={person.id} value={person.id}>
+                        {person.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <label className="toolbar-field">
+                <span>Статус</span>
+                <select
+                  value={lprFilter.status}
+                  onChange={(event) => setLprFilter((current) => ({ ...current, status: event.target.value }))}
+                >
+                  <option value="active">{lprStatusLabel.active}</option>
+                  <option value="paused">{lprStatusLabel.paused}</option>
+                  <option value="done">{lprStatusLabel.done}</option>
+                  <option value="all">Все</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="goals-grid">
+              <div className={`goals-list ${sectionStaggerClass("lprs")}`}>
+                {filteredLprs.length === 0 ? (
+                  <div className="empty-state">
+                    <ClipboardCheck size={22} />
+                    <span>Пока нет ЛПР в этом фильтре.</span>
+                  </div>
+                ) : (
+                  filteredLprs.map((lpr) => {
+                    const lprPerson = workspace.people.find((person) => person.id === lpr.personId);
+                    const linkedGoals = allGoals.filter((goal) => goal.lprId === lpr.id);
+                    const linkedCards = (workspace.cards || []).filter((card) => card.lprId === lpr.id);
+                    const activeLinkedGoals = linkedGoals.filter((goal) => goal.status === "active");
+                    const avgProgress = activeLinkedGoals.length
+                      ? Math.round(activeLinkedGoals.reduce((sum, goal) => sum + (goal.progress || 0), 0) / activeLinkedGoals.length)
+                      : 0;
+                    const canEdit = isAdmin || user?.personId === lpr.personId;
+                    return (
+                      <article className={`goal-card lpr-card status-${lpr.status}`} key={lpr.id}>
+                        <div className="goal-topline">
+                          {lprPerson && (
+                            <span className="goal-person">
+                              <span className="avatar mini">{lprPerson.initials}</span>
+                              {lprPerson.name}
+                            </span>
+                          )}
+                          <span className={`goal-status status-${lpr.status}`}>{lprStatusLabel[lpr.status]}</span>
+                          <span className="goal-chip muted">{linkedCards.length} тем 1:1</span>
+                          <span className="goal-chip muted">{linkedGoals.length} целей</span>
+                        </div>
+                        <h4>{lpr.title}</h4>
+                        {lpr.focus && <p>{lpr.focus}</p>}
+
+                        <div className="workflow-trace compact" aria-label="Связь ЛПР">
+                          <span>{linkedCards.length} тем 1:1</span>
+                          <ChevronRight size={13} />
+                          <span>ЛПР</span>
+                          <ChevronRight size={13} />
+                          <span>{linkedGoals.length} целей</span>
+                          <ChevronRight size={13} />
+                          <span>{avgProgress}% прогресс</span>
+                        </div>
+
+                        <div className="goal-progress">
+                          <div className="goal-progress-meta">
+                            <strong>{avgProgress}%</strong>
+                            <div className="goal-progress-line" aria-hidden="true">
+                              <span style={{ width: `${avgProgress}%` }} />
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="lpr-linked-grid">
+                          <div>
+                            <strong>Из 1:1</strong>
+                            {linkedCards.slice(0, 4).map((card) => (
+                              <button key={card.id} className="lpr-link-row" type="button" onClick={() => selectPerson(card.personId)}>
+                                <span>{card.title}</span>
+                                <ChevronRight size={14} />
+                              </button>
+                            ))}
+                            {linkedCards.length === 0 && <small>Свяжите тему 1:1 с ЛПР.</small>}
+                          </div>
+                          <div>
+                            <strong>Цели</strong>
+                            {linkedGoals.slice(0, 4).map((goal) => (
+                              <button key={goal.id} className="lpr-link-row" type="button" onClick={() => openGoalForLpr(lpr)}>
+                                <span>{goal.title}</span>
+                                <em>{goal.progress}%</em>
+                              </button>
+                            ))}
+                            {linkedGoals.length === 0 && <small>Добавьте цель из этого плана.</small>}
+                          </div>
+                        </div>
+
+                        {canEdit && (
+                          <div className="goal-actions">
+                            <button className="soft-button" type="button" onClick={() => openGoalForLpr(lpr)}>
+                              <Plus size={15} />
+                              Цель
+                            </button>
+                            {lpr.status !== "active" && (
+                              <button className="soft-button" type="button" onClick={() => setLprStatus(lpr.id, "active")}>
+                                <RotateCcw size={15} />
+                                В работу
+                              </button>
+                            )}
+                            {lpr.status !== "paused" && (
+                              <button className="soft-button" type="button" onClick={() => setLprStatus(lpr.id, "paused")}>
+                                <CircleDashed size={15} />
+                                Пауза
+                              </button>
+                            )}
+                            {lpr.status !== "done" && (
+                              <button className="soft-button" type="button" onClick={() => setLprStatus(lpr.id, "done")}>
+                                <Check size={15} />
+                                Завершить
+                              </button>
+                            )}
+                            <button className="soft-button danger-button" type="button" onClick={() => deleteLpr(lpr.id)}>
+                              <Trash2 size={15} />
+                              Удалить
+                            </button>
+                          </div>
+                        )}
+                      </article>
+                    );
+                  })
+                )}
+              </div>
+
+              <aside className="goal-compose" aria-label="Новый ЛПР">
+                <form className="compose-form" onSubmit={addLpr}>
+                  <div className="section-heading compact">
+                    <div>
+                      <p className="eyebrow">Новый ЛПР</p>
+                      <h3>Добавить план</h3>
+                    </div>
+                    <button className="icon-button" type="submit" title="Добавить ЛПР">
+                      <Plus size={18} />
+                    </button>
+                  </div>
+
+                  {isAdmin && (
+                    <label>
+                      Участник
+                      <select
+                        value={newLpr.personId}
+                        onChange={(event) => setNewLpr((current) => ({ ...current, personId: event.target.value }))}
+                      >
+                        <option value="">Выберите участника</option>
+                        {workspace.people.map((person) => (
+                          <option key={person.id} value={person.id}>
+                            {person.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+
+                  <label>
+                    Название
+                    <input
+                      value={newLpr.title}
+                      onChange={(event) => setNewLpr((current) => ({ ...current, title: event.target.value }))}
+                      placeholder="Например: ЛПР: ownership направления"
+                    />
+                  </label>
+
+                  <label>
+                    Фокус
+                    <textarea
+                      value={newLpr.focus}
+                      onChange={(event) => setNewLpr((current) => ({ ...current, focus: event.target.value }))}
+                      placeholder="Какие темы из 1:1 превращаем в цели и практику"
+                      rows={4}
+                    />
+                  </label>
+
+                  {lprTargetPersonId && (
+                    <div className="goal-side-context">
+                      <p className="eyebrow">Активные ЛПР</p>
+                      {allLprs
+                        .filter((lpr) => lpr.personId === lprTargetPersonId && lpr.status === "active")
+                        .slice(0, 3)
+                        .map((lpr) => (
+                          <div className="goal-side-row" key={lpr.id}>
+                            <strong>{lpr.title}</strong>
+                            <span>{allGoals.filter((goal) => goal.lprId === lpr.id).length}</span>
+                          </div>
+                        ))}
+                    </div>
+                  )}
+                </form>
+              </aside>
+            </div>
+          </section>
         )}
 
         {activeSection === "goals" && (
@@ -3688,8 +4660,10 @@ export default function App() {
                 ) : (
                   filteredGoals.map((goal) => {
                     const goalPerson = workspace.people.find((person) => person.id === goal.personId);
+                    const goalLpr = goal.lprId ? lprById.get(goal.lprId) : null;
                     const dueLabel = goal.dueDate || goal.horizon;
                     const isOwner = isAdmin || user?.personId === goal.personId;
+                    const progressValue = goalProgressValue(goal);
                     return (
                       <article className={`goal-card status-${goal.status}`} key={goal.id}>
                         <div className="goal-topline">
@@ -3703,29 +4677,47 @@ export default function App() {
                           {dueLabel && goal.dueDate && goal.dueDate !== goal.horizon && (
                             <span className="goal-chip muted">до {goal.dueDate}</span>
                           )}
+                          {goalLpr && <span className="goal-chip muted">ЛПР · {goalLpr.title}</span>}
                           <span className={`goal-status status-${goal.status}`}>{goalStatusLabel[goal.status]}</span>
                         </div>
                         <h4>{goal.title}</h4>
                         {goal.description && <p>{goal.description}</p>}
 
+                        <div className="workflow-trace compact" aria-label="Связь цели">
+                          <span>1:1</span>
+                          <ChevronRight size={13} />
+                          <span className={!goalLpr ? "muted" : ""}>{goalLpr ? "ЛПР" : "без ЛПР"}</span>
+                          <ChevronRight size={13} />
+                          <span>Цель</span>
+                          <ChevronRight size={13} />
+                          <span>{progressValue}%</span>
+                        </div>
+
                         <div className="goal-progress">
                           <div className="goal-progress-meta">
-                            <strong>{goal.progress}%</strong>
+                            <strong>{progressValue}%</strong>
                             {isOwner && goal.status !== "abandoned" ? (
                               <input
                                 className="goal-progress-range"
-                                style={{ "--progress": `${goal.progress}%` }}
+                                style={{ "--progress": `${progressValue}%` }}
                                 type="range"
                                 min="0"
                                 max="100"
                                 step="5"
-                                value={goal.progress}
-                                onChange={(event) => updateGoalProgress(goal.id, event.target.value)}
+                                value={progressValue}
+                                onChange={(event) => updateGoalProgressDraft(goal.id, event.target.value)}
+                                onPointerDown={(event) => event.currentTarget.setPointerCapture?.(event.pointerId)}
+                                onPointerUp={(event) => {
+                                  event.currentTarget.releasePointerCapture?.(event.pointerId);
+                                  commitGoalProgressValue(goal.id, event.currentTarget.value);
+                                }}
+                                onKeyUp={(event) => commitGoalProgressValue(goal.id, event.currentTarget.value)}
+                                onBlur={(event) => commitGoalProgressValue(goal.id, event.currentTarget.value)}
                                 aria-label="Прогресс цели"
                               />
                             ) : (
                               <div className="goal-progress-line" aria-hidden="true">
-                                <span style={{ width: `${goal.progress}%` }} />
+                                <span style={{ width: `${progressValue}%` }} />
                               </div>
                             )}
                           </div>
@@ -3784,12 +4776,29 @@ export default function App() {
                       Участник
                       <select
                         value={newGoal.personId}
-                        onChange={(event) => setNewGoal((current) => ({ ...current, personId: event.target.value }))}
+                        onChange={(event) => setNewGoal((current) => ({ ...current, personId: event.target.value, lprId: "" }))}
                       >
                         <option value="">Выберите участника</option>
                         {workspace.people.map((person) => (
                           <option key={person.id} value={person.id}>
                             {person.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+
+                  {goalAvailableLprs.length > 0 && (
+                    <label>
+                      ЛПР
+                      <select
+                        value={newGoal.lprId}
+                        onChange={(event) => setNewGoal((current) => ({ ...current, lprId: event.target.value }))}
+                      >
+                        <option value="">Без ЛПР</option>
+                        {goalAvailableLprs.map((lpr) => (
+                          <option key={lpr.id} value={lpr.id}>
+                            {lpr.title}
                           </option>
                         ))}
                       </select>
@@ -3852,24 +4861,6 @@ export default function App() {
 
         {activeSection === "surveys" && (
           <section className="surveys-view">
-            <div className="surveys-header">
-              <p>
-                {isAdmin
-                  ? "Создавайте опросы для команды и смотрите агрегированные ответы. Анонимные опросы не показывают, кто ответил."
-                  : "Заполните доступные опросы — это поможет лиду подготовиться к встрече."}
-              </p>
-              {isAdmin && (
-                <button
-                  className="primary-button"
-                  type="button"
-                  onClick={() => setShowSurveyComposer((v) => !v)}
-                >
-                  <Plus size={16} />
-                  {showSurveyComposer ? "Скрыть форму" : "Создать опрос"}
-                </button>
-              )}
-            </div>
-
             {isAdmin && showSurveyComposer && (
               <form className="survey-composer dashboard-panel" onSubmit={submitNewSurvey}>
                 <div className="section-heading compact">
@@ -3884,7 +4875,7 @@ export default function App() {
                   <input
                     value={surveyComposer.title}
                     onChange={(event) => setSurveyComposer((c) => ({ ...c, title: event.target.value }))}
-                    placeholder="Например: Пульс on-call за неделю"
+                    placeholder="Например: Пульс команды за неделю"
                   />
                 </label>
                 <label>
@@ -4105,6 +5096,9 @@ export default function App() {
                 const draft = surveyDrafts[survey.id] || {};
                 const myResponse = survey.myResponse;
                 const aggregate = survey.aggregate;
+                const participationPct = workspace.people.length
+                  ? Math.min(100, Math.round((survey.responseCount / workspace.people.length) * 100))
+                  : 0;
                 return (
                   <article className={`survey-card ${isExpanded ? "expanded" : ""}`} key={survey.id}>
                     <header className="survey-head">
@@ -4120,6 +5114,16 @@ export default function App() {
                           {!isAdmin && myResponse && <span className="goal-chip">Вы ответили</span>}
                         </div>
                         {survey.description && <p>{survey.description}</p>}
+                        {isAdmin && (
+                          <div className="survey-participation" aria-label="Участие в опросе">
+                            <div className="survey-participation-line" aria-hidden="true">
+                              <span style={{ width: `${participationPct}%` }} />
+                            </div>
+                            <small>
+                              {participationPct}% участия · {survey.responseCount} из {workspace.people.length}
+                            </small>
+                          </div>
+                        )}
                       </div>
                       <div className="survey-head-actions">
                         <button
@@ -4212,6 +5216,26 @@ export default function App() {
                             </section>
                           );
                         })}
+                        <section className="survey-next-actions" aria-label="Действия после опроса">
+                          <div>
+                            <p className="eyebrow">После опроса</p>
+                            <strong>Превратите сигнал в следующий шаг</strong>
+                          </div>
+                          <div className="survey-next-actions-buttons">
+                            <button className="soft-button" type="button" onClick={() => openSection("reports")}>
+                              <BarChart3 size={15} />
+                              В отчёты
+                            </button>
+                            <button className="soft-button" type="button" onClick={() => duplicateSurvey(survey)}>
+                              <Pencil size={15} />
+                              Повторить
+                            </button>
+                            <button className="soft-button" type="button" onClick={() => setShowSurveyComposer(true)}>
+                              <Plus size={15} />
+                              Новый опрос
+                            </button>
+                          </div>
+                        </section>
                       </div>
                     )}
 
@@ -4409,6 +5433,75 @@ export default function App() {
               </article>
             </div>
 
+            <div className="report-insights-grid">
+              <section className="dashboard-panel report-panel heatmap-panel">
+                <div className="section-heading compact">
+                  <div>
+                    <p className="eyebrow">Heatmap</p>
+                    <h3>Где проседает команда</h3>
+                  </div>
+                  <BarChart3 size={18} />
+                </div>
+                <div className="heatmap-table" role="table" aria-label="Heatmap команды">
+                  <div className="heatmap-row heatmap-head" role="row">
+                    <span>Участник</span>
+                    <span>Эн.</span>
+                    <span>Нагр.</span>
+                    <span>Ясн.</span>
+                    <span>Довер.</span>
+                    <span>Шаги</span>
+                  </div>
+                  {teamHeatmapRows.map((row) => (
+                    <button className="heatmap-row" type="button" key={row.person.id} onClick={() => selectPerson(row.person.id)}>
+                      <span className="heatmap-person">
+                        <span className={`health-dot ${row.score < 64 ? "risk" : row.score < 76 ? "watch" : "good"}`}>{row.score}</span>
+                        <strong>{row.person.name}</strong>
+                      </span>
+                      {["energy", "load", "clarity", "trust"].map((metric) => (
+                        <span className={`heatmap-cell ${heatmapTone(metric, row[metric])}`} key={metric}>
+                          {row[metric] || "—"}
+                        </span>
+                      ))}
+                      <span className="heatmap-actions">{row.openActions}</span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              <section className="dashboard-panel report-panel recommendations-panel">
+                <div className="section-heading compact">
+                  <div>
+                    <p className="eyebrow">Рекомендации</p>
+                    <h3>Куда вложить усилие</h3>
+                  </div>
+                  <ClipboardCheck size={18} />
+                </div>
+                <div className="recommendation-list">
+                  {reportRecommendations.map((item) => (
+                    <button
+                      className={`recommendation-row tone-${item.tone}`}
+                      key={item.id}
+                      type="button"
+                      onClick={() => (item.personId ? selectPerson(item.personId) : openSection(item.section || "reports"))}
+                    >
+                      <span className={`alert-dot severity-${item.tone === "risk" ? "high" : "medium"}`} />
+                      <span>
+                        <strong>{item.title}</strong>
+                        <small>{item.action}</small>
+                      </span>
+                      <ChevronRight size={14} />
+                    </button>
+                  ))}
+                  {reportRecommendations.length === 0 && (
+                    <div className="empty-state compact-empty">
+                      <CheckCircle2 size={20} />
+                      <span>Критичных рекомендаций сейчас нет.</span>
+                    </div>
+                  )}
+                </div>
+              </section>
+            </div>
+
             <section className="dashboard-panel report-panel">
               <div className="section-heading compact">
                 <div>
@@ -4540,19 +5633,34 @@ export default function App() {
               <span className="count-pill">{countLabel(workspace.people.length, ["участник", "участника", "участников"])}</span>
             </div>
 
+            <div className="team-overview-grid" aria-label="Состояние команды">
+              {teamOverviewStats.map(([Icon, label, value, detail, tone]) => (
+                <article className={`kpi-card ${tone}`} key={label}>
+                  <span className="kpi-icon">
+                    <Icon size={18} />
+                  </span>
+                  <div>
+                    <span>{label}</span>
+                    <strong>{value}</strong>
+                    <small>{detail}</small>
+                  </div>
+                </article>
+              ))}
+            </div>
+
             <div className="team-admin-grid">
               <div className={`team-directory ${sectionStaggerClass("team")}`}>
                 {workspace.people.length === 0 && (
                   <div className="empty-state">
                     <UsersRound size={22} />
-                    <span>В рабочей команде пока нет участников 1:1. Добавьте первого участника через форму ниже.</span>
+                    <span>В рабочей команде пока нет участников 1:1.</span>
                   </div>
                 )}
                 {workspace.people.map((person) => {
                   const score = scorePulse(workspace.pulse[person.id]);
                   const linkedUsers = workspace.users.filter((item) => item.personId === person.id);
                   const openCards = workspace.cards.filter((card) => card.personId === person.id && card.status !== "done").length;
-                  const isEditing = editingPersonId === person.id;
+                  const isEditing = isPlatformAdmin && editingPersonId === person.id;
                   return (
                     <article className={`team-member-card ${person.id === selectedPerson?.id ? "active" : ""} ${isEditing ? "editing" : ""}`} key={person.id}>
                       {isEditing ? (
@@ -4718,51 +5826,55 @@ export default function App() {
                             <span className={`health-dot ${score < 64 ? "risk" : score < 76 ? "watch" : "good"}`}>{score}</span>
                             <span>{openCards} открытых тем</span>
                             <span>{linkedUsers.length ? `доступ: ${linkedUsers.map((item) => item.username).join(", ")}` : "доступ не выдан"}</span>
-                            <button
-                              className="soft-button"
-                              type="button"
-                              onClick={() => {
-                                setEditingPersonId(person.id);
-                                setPersonEditDraft({
-                                  name: person.name,
-                                  role: person.role,
-                                  team: person.team,
-                                  cadence: person.cadence,
-                                  nextMeeting: person.nextMeeting,
-                                  managerFocus: person.managerFocus,
-                                  meetingType: person.meetingType || "regular",
-                                  mentorshipMode: person.mentorshipMode || "coach",
-                                  growthNarrative: person.growthNarrative || "",
-                                  performanceNarrative: person.performanceNarrative || ""
-                                });
-                              }}
-                            >
-                              <Pencil size={15} />
-                              Изменить
-                            </button>
-                            {pendingDeletePersonId === person.id ? (
-                              <span className="confirm-actions">
-                                <button className="soft-button danger-button" type="button" onClick={() => deleteEmployeePerson(person)}>
-                                  <Trash2 size={15} />
-                                  Подтвердить удаление
-                                </button>
+                            {isPlatformAdmin && (
+                              <>
                                 <button
                                   className="soft-button"
                                   type="button"
                                   onClick={() => {
-                                    setPendingDeletePersonId("");
-                                    setUserMessage("");
+                                    setEditingPersonId(person.id);
+                                    setPersonEditDraft({
+                                      name: person.name,
+                                      role: person.role,
+                                      team: person.team,
+                                      cadence: person.cadence,
+                                      nextMeeting: person.nextMeeting,
+                                      managerFocus: person.managerFocus,
+                                      meetingType: person.meetingType || "regular",
+                                      mentorshipMode: person.mentorshipMode || "coach",
+                                      growthNarrative: person.growthNarrative || "",
+                                      performanceNarrative: person.performanceNarrative || ""
+                                    });
                                   }}
                                 >
-                                  <X size={15} />
-                                  Отмена
+                                  <Pencil size={15} />
+                                  Изменить
                                 </button>
-                              </span>
-                            ) : (
-                              <button className="soft-button danger-button" type="button" onClick={() => deleteEmployeePerson(person)}>
-                                <Trash2 size={15} />
-                                Удалить участника
-                              </button>
+                                {pendingDeletePersonId === person.id ? (
+                                  <span className="confirm-actions">
+                                    <button className="soft-button danger-button" type="button" onClick={() => deleteEmployeePerson(person)}>
+                                      <Trash2 size={15} />
+                                      Подтвердить удаление
+                                    </button>
+                                    <button
+                                      className="soft-button"
+                                      type="button"
+                                      onClick={() => {
+                                        setPendingDeletePersonId("");
+                                        setUserMessage("");
+                                      }}
+                                    >
+                                      <X size={15} />
+                                      Отмена
+                                    </button>
+                                  </span>
+                                ) : (
+                                  <button className="soft-button danger-button" type="button" onClick={() => deleteEmployeePerson(person)}>
+                                    <Trash2 size={15} />
+                                    Удалить участника
+                                  </button>
+                                )}
+                              </>
                             )}
                           </div>
                         </>
@@ -4773,7 +5885,7 @@ export default function App() {
               </div>
             </div>
 
-            {(workspace.archivedPeople || []).length > 0 && (
+            {isPlatformAdmin && (workspace.archivedPeople || []).length > 0 && (
               <section className="team-archive">
                 <div className="section-heading compact">
                   <div>
@@ -4824,42 +5936,113 @@ export default function App() {
 
         {activeSection === "admin" && isPlatformAdminRole(user) && (
           <section className="admin-view">
+            <article className="settings-card role-model-card">
+              <div className="settings-card-head">
+                <div>
+                  <p className="eyebrow">Ролевая модель</p>
+                  <h3>Кто что видит</h3>
+                  <p>Доступы разведены по зонам: платформа, команда лида и личный 1:1 участника.</p>
+                </div>
+              </div>
+              <div className="role-model-grid">
+                {[
+                  ["Админ платформы", "Пользователи, команды, демо-данные, все отчёты"],
+                  ["Тимлид", "Своя команда, 1:1, ЛПР, цели, опросы и отчёты"],
+                  ["Участник", "Личный 1:1, свои темы, пульс, шаги и ответы на опросы"]
+                ].map(([role, scope]) => (
+                  <div className="role-model-row" key={role}>
+                    <ShieldCheck size={16} />
+                    <span>
+                      <strong>{role}</strong>
+                      <small>{scope}</small>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </article>
+
             <article className="settings-card">
               <div className="settings-card-head">
                 <div>
                   <p className="eyebrow">Пользователи</p>
                   <h3>Создать логин</h3>
-                  <p>Создаёт профиль и логин. Лиды видят свою команду, участники — только свой 1:1.</p>
+                  <p>Тимлид получает доступ к своей команде, участник — только к своему 1:1.</p>
                 </div>
               </div>
               <form className="settings-inline-form admin-inline" onSubmit={createEmployeeUser}>
                 <label>
-                  Имя
+                  Тип доступа
+                  <select
+                    value={newUser.role}
+                    onChange={(event) =>
+                      setNewUser((current) => ({
+                        ...current,
+                        role: event.target.value,
+                        leadUserId: event.target.value === "lead" ? "" : current.leadUserId
+                      }))
+                    }
+                  >
+                    <option value="employee">Участник команды</option>
+                    <option value="lead">Тимлид</option>
+                  </select>
+                </label>
+                <label>
+                  {newUser.role === "lead" ? "Имя тимлида" : "Имя участника"}
                   <input
                     value={newUser.personName}
                     onChange={(event) => setNewUser((current) => ({ ...current, personName: event.target.value }))}
-                    placeholder="Например: Иван Петров"
+                    placeholder={newUser.role === "lead" ? "Например: Мария Лидова" : "Например: Иван Петров"}
                     autoComplete="name"
                   />
                 </label>
                 <div className="two-field-grid">
-                  <label>
-                    Роль в команде
-                    <input
-                      value={newUser.personRole}
-                      onChange={(event) => setNewUser((current) => ({ ...current, personRole: event.target.value }))}
-                      placeholder="SRE Engineer"
-                    />
-                  </label>
+                  {newUser.role === "employee" ? (
+                    <label>
+                      Роль в команде
+                      <input
+                        value={newUser.personRole}
+                        onChange={(event) => setNewUser((current) => ({ ...current, personRole: event.target.value }))}
+                        placeholder="Product Manager"
+                      />
+                    </label>
+                  ) : (
+                    <label>
+                      Роль в системе
+                      <input value="Тимлид" readOnly />
+                    </label>
+                  )}
                   <label>
                     Команда
                     <input
                       value={newUser.personTeam}
                       onChange={(event) => setNewUser((current) => ({ ...current, personTeam: event.target.value }))}
-                      placeholder="Reliability"
+                      placeholder="Product Growth"
                     />
                   </label>
                 </div>
+                {newUser.role === "employee" && teamLeadUsers.length > 0 && (
+                  <label>
+                    Тимлид
+                    <select
+                      value={newUser.leadUserId}
+                      onChange={(event) => {
+                        const lead = teamLeadUsers.find((item) => item.id === event.target.value);
+                        setNewUser((current) => ({
+                          ...current,
+                          leadUserId: event.target.value,
+                          personTeam: lead?.teamLabel || current.personTeam
+                        }));
+                      }}
+                    >
+                      <option value="">По названию команды</option>
+                      {teamLeadUsers.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.name} — {item.teamLabel || "команда не задана"}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
                 <div className="two-field-grid">
                   <label>
                     Логин
@@ -4942,7 +6125,10 @@ export default function App() {
                     <article key={item.id} className="access-row">
                       <div>
                         <strong>{isPlatformAdminRole(item) ? item.name : person?.name || item.name || "Без имени"}</strong>
-                        <span className="login-secondary">{item.username}</span>
+                        <span className="login-secondary">
+                          {item.username}
+                          {item.teamLabel ? ` · ${item.teamLabel}` : ""}
+                        </span>
                       </div>
                       <span>{roleLabel[item.role] || item.role}</span>
                       <div className="access-actions">
@@ -5038,7 +6224,14 @@ export default function App() {
                     role="radio"
                     aria-checked={theme === value}
                     className={theme === value ? "active" : ""}
-                    onClick={() => setTheme(value)}
+                    onClick={() => {
+                      try {
+                        window.localStorage.setItem(themeExplicitStorageKey, "1");
+                      } catch {
+                        // Theme still applies for this session.
+                      }
+                      setTheme(value);
+                    }}
                   >
                     <Icon size={16} />
                     <span>{label}</span>
@@ -5047,7 +6240,7 @@ export default function App() {
               </div>
             </article>
 
-            {isAdmin && (
+            {isPlatformAdmin && (
               <article className="settings-card">
                 <div className="settings-card-head">
                   <div>
@@ -5110,6 +6303,13 @@ export default function App() {
                 <h3>Заметки лида</h3>
               </div>
               <LockKeyhole size={18} />
+            </div>
+            <div className="privacy-strip compact">
+              <span className="visibility-chip private">
+                <LockKeyhole size={12} />
+                Не видно участнику
+              </span>
+              <span className="visibility-chip muted">Для подготовки и review</span>
             </div>
             <textarea
               className="private-notes"

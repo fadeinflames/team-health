@@ -1,23 +1,29 @@
 import { expect, request as playwrightRequest, test } from "@playwright/test";
 
-const baseURL = "http://127.0.0.1:4173";
+const baseURL = process.env.BASE_URL || "http://127.0.0.1:4173";
+const adminUsername = process.env.ADMIN_USERNAME || "mgusev";
+const adminPassword = process.env.ADMIN_PASSWORD || "passwb121";
+const demoUsername = process.env.DEMO_USERNAME || "demo";
+const demoPassword = process.env.DEMO_PASSWORD || "demo";
 
 test("auth, admin workflow, and employee data isolation work", async ({ page, request }) => {
+  test.setTimeout(120_000);
+
   const unauthenticated = await request.get(`${baseURL}/api/workspace`);
   expect(unauthenticated.status()).toBe(401);
 
   const resetContext = await playwrightRequest.newContext({ baseURL });
   await resetContext.post("/api/login", {
-    data: { username: "mgusev", password: "passwb121" }
+    data: { username: adminUsername, password: adminPassword }
   });
   await resetContext.post("/api/reset");
   await resetContext.dispose();
 
-  await page.goto("http://127.0.0.1:4173");
+  await page.goto(baseURL);
   await expect(page.getByRole("heading", { name: "Войти в Team Health 1:1" })).toBeVisible();
 
-  await page.getByLabel("Логин").fill("mgusev");
-  await page.getByLabel("Пароль").fill("passwb121");
+  await page.getByLabel("Логин").fill(adminUsername);
+  await page.getByLabel("Пароль").fill(adminPassword);
   await page.getByRole("button", { name: "Войти", exact: true }).click();
 
   await expect(page.getByRole("heading", { name: "Дашборд команды" })).toBeVisible();
@@ -25,14 +31,14 @@ test("auth, admin workflow, and employee data isolation work", async ({ page, re
   await expect(page.getByRole("heading", { name: "Состояние участников" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Ближайшие 1:1" })).toBeVisible();
   await expect(page.getByText("Как этим пользоваться")).not.toBeVisible();
-  await expect(page.getByText("Демо SRE-инженер")).not.toBeVisible();
+  await expect(page.getByText("Демо участник команды")).not.toBeVisible();
   await expect(page.getByText("Анна Морозова")).not.toBeVisible();
   await expect(page.getByRole("button", { name: "Сбросить демо-данные" })).not.toBeVisible();
   await page.getByRole("button", { name: "Настройки", exact: true }).click();
   await page.getByRole("button", { name: "Сбросить демо-данные" }).click();
-  await expect(page.getByText("Демо-данные сброшены. Вы остались в аккаунте лида")).toBeVisible();
+  await expect(page.getByText("Демо-данные сброшены. Вы остались в аккаунте админа")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Команда", exact: true })).toBeVisible();
-  await expect(page.getByText("Демо SRE-инженер")).not.toBeVisible();
+  await expect(page.getByText("Демо участник команды")).not.toBeVisible();
   await expect(page.getByRole("heading", { name: "Войти в Team Health 1:1" })).not.toBeVisible();
 
   await expect(page.getByRole("button", { name: "Люди", exact: true })).not.toBeVisible();
@@ -60,34 +66,41 @@ test("auth, admin workflow, and employee data isolation work", async ({ page, re
   await expect(page.getByRole("heading", { name: "Создать логин" })).toBeVisible();
 
   const accessForm = page.locator(".settings-card").filter({ hasText: "Создать логин" });
-  await accessForm.getByLabel("Имя", { exact: true }).fill(employeeName);
-  await accessForm.getByLabel(/Роль в команде/).fill("Platform SRE");
-  await accessForm.getByLabel("Команда").fill("Core Infrastructure");
+  await accessForm.getByLabel("Имя участника").fill(employeeName);
+  await accessForm.getByLabel(/Роль в команде/).fill("Product Manager");
+  await accessForm.getByLabel("Команда").fill("Product Growth");
   await accessForm.getByLabel("Логин").fill(employeeUsername);
   await accessForm.getByLabel("Пароль").fill(employeePassword);
   await accessForm.getByRole("button", { name: "Создать логин" }).click();
   await expect(page.getByText(`Логин ${employeeUsername} создан`)).toBeVisible();
   await page.getByRole("button", { name: "Команда", exact: true }).click();
   await expect(page.locator(".team-member-card", { hasText: employeeName })).toBeVisible();
-  await expect(page.getByText("Демо SRE-инженер")).not.toBeVisible();
+  await expect(page.getByText("Демо участник команды")).not.toBeVisible();
 
   await page.locator(".team-member-card", { hasText: employeeName }).locator(".team-member-main").click();
   await expect(page.getByRole("heading", { name: `1:1 с ${employeeName}` })).toBeVisible();
   await expect(page.getByText("Чек-лист подготовки")).toBeVisible();
 
-  await page.getByPlaceholder("Например: шумят алерты после деплоя").fill("Проверить баланс on-call фокуса");
-  await page.getByPlaceholder("Что важно не забыть обсудить?").fill("Сколько deep work блоков реально остается после incident review?");
+  await page.getByPlaceholder("Например: слишком много срочных запросов").fill("Проверить баланс фокуса и срочных запросов");
+  await page.getByPlaceholder("Что важно не забыть обсудить?").fill("Сколько deep work блоков реально остается после встреч и переключений?");
   await page.getByTitle("Добавить тему").click();
-  await expect(page.getByRole("heading", { name: "Проверить баланс on-call фокуса" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Проверить баланс фокуса и срочных запросов" })).toBeVisible();
+  const createdAgendaCard = page.locator(".agenda-card", { hasText: "Проверить баланс фокуса и срочных запросов" });
+  await createdAgendaCard.getByRole("button", { name: "Добавить в шаги" }).click();
+  await expect(createdAgendaCard.getByRole("button", { name: "Уже в шагах" })).toBeDisabled();
 
   await page.getByRole("tab", { name: /Встреча/ }).click();
   await expect(page.getByRole("heading", { name: "Сигналы между встречами" })).toBeVisible();
   await page.locator(".signal-control").filter({ hasText: "Нагрузка" }).locator("input").fill("8");
 
   await page.getByRole("tab", { name: /Итоги/ }).click();
-  await page.getByPlaceholder("Что нужно сделать?").fill("Забронировать два окна фокуса после on-call смены");
+  await expect(page.locator(".action-row strong", { hasText: "Проверить баланс фокуса и срочных запросов" })).toHaveCount(1);
+  await page.getByPlaceholder("Что нужно сделать?").fill("Проверить баланс фокуса и срочных запросов");
+  await expect(page.getByRole("button", { name: "Добавить шаг" })).toBeDisabled();
+  await page.getByPlaceholder("Что нужно сделать?").fill("Забронировать два окна фокуса после блока встреч");
+  await expect(page.getByRole("button", { name: "Добавить шаг" })).toBeEnabled();
   await page.getByRole("button", { name: "Добавить шаг" }).click();
-  await expect(page.locator(".action-row strong", { hasText: "Забронировать два окна фокуса после on-call смены" })).toBeVisible();
+  await expect(page.locator(".action-row strong", { hasText: "Забронировать два окна фокуса после блока встреч" })).toBeVisible();
 
   await page.getByRole("tab", { name: /Подготовка/ }).click();
   await page.getByRole("button", { name: "Итоги встречи" }).click();
@@ -125,14 +138,16 @@ test("auth, admin workflow, and employee data isolation work", async ({ page, re
 
   const demoApi = await playwrightRequest.newContext({ baseURL });
   const demoLogin = await demoApi.post("/api/login", {
-    data: { username: "demo", password: "demo" }
+    data: { username: demoUsername, password: demoPassword }
   });
   expect(demoLogin.status()).toBe(200);
   const demoWorkspace = await demoApi.get("/api/workspace");
   const demoScoped = await demoWorkspace.json();
   expect(demoScoped.people).toHaveLength(1);
   expect(demoScoped.people[0].id).toBe("demo-sre");
+  expect(demoScoped.lprs).toEqual([expect.objectContaining({ id: "lpr-demo-1", personId: "demo-sre" })]);
   expect(demoScoped.cards.every((card) => card.personId === "demo-sre")).toBeTruthy();
+  expect(demoScoped.goals.filter((goal) => goal.id.startsWith("g-demo-")).every((goal) => goal.lprId === "lpr-demo-1")).toBeTruthy();
   const tamperedDemoWorkspace = await demoApi.post("/api/workspace", {
     data: {
       ...demoScoped,
@@ -185,4 +200,124 @@ test("auth, admin workflow, and employee data isolation work", async ({ page, re
   });
   expect(deletedEmployeeLogin.status()).toBe(401);
   await deletedEmployeeApi.dispose();
+
+  const adminApi = await playwrightRequest.newContext({ baseURL });
+  await adminApi.post("/api/login", {
+    data: { username: adminUsername, password: adminPassword }
+  });
+
+  const suffix = Date.now();
+  const leadAPassword = "TeamPass121";
+  const leadAResponse = await adminApi.post("/api/users", {
+    data: {
+      role: "lead",
+      name: "Лид Core",
+      personName: "Лид Core",
+      personTeam: "Core Platform",
+      teamLabel: "Core Platform",
+      username: `lead_core_${suffix}`,
+      password: leadAPassword
+    }
+  });
+  expect(leadAResponse.status()).toBe(201);
+  const leadA = (await leadAResponse.json()).user;
+
+  const memberAResponse = await adminApi.post("/api/users", {
+    data: {
+      role: "employee",
+      personName: "Участник Core",
+      personRole: "Product Manager",
+      personTeam: "Core Platform",
+      leadUserId: leadA.id,
+      username: `member_core_${suffix}`,
+      password: "TeamPass121"
+    }
+  });
+  expect(memberAResponse.status()).toBe(201);
+  const memberA = (await memberAResponse.json()).user;
+
+  const leadBResponse = await adminApi.post("/api/users", {
+    data: {
+      role: "lead",
+      name: "Лид Data",
+      personName: "Лид Data",
+      personTeam: "Data Platform",
+      teamLabel: "Data Platform",
+      username: `lead_data_${suffix}`,
+      password: "TeamPass121"
+    }
+  });
+  expect(leadBResponse.status()).toBe(201);
+  const leadB = (await leadBResponse.json()).user;
+
+  const memberBResponse = await adminApi.post("/api/users", {
+    data: {
+      role: "employee",
+      personName: "Участник Data",
+      personRole: "Support Specialist",
+      personTeam: "Data Platform",
+      leadUserId: leadB.id,
+      username: `member_data_${suffix}`,
+      password: "TeamPass121"
+    }
+  });
+  expect(memberBResponse.status()).toBe(201);
+  const memberB = (await memberBResponse.json()).user;
+  await adminApi.dispose();
+
+  const leadApi = await playwrightRequest.newContext({ baseURL });
+  const leadLogin = await leadApi.post("/api/login", {
+    data: { username: leadA.username, password: leadAPassword }
+  });
+  expect(leadLogin.status()).toBe(200);
+  const leadWorkspaceResponse = await leadApi.get("/api/workspace");
+  expect(leadWorkspaceResponse.status()).toBe(200);
+  const leadWorkspace = await leadWorkspaceResponse.json();
+  expect(leadWorkspace.people.map((person) => person.name)).toEqual(["Участник Core"]);
+  expect(leadWorkspace.users.map((item) => item.username).sort()).toEqual([leadA.username, `member_core_${suffix}`].sort());
+  expect(leadWorkspace.people.some((person) => person.id === memberB.personId)).toBeFalsy();
+
+  const lpr = {
+    id: `lpr-${suffix}`,
+    personId: memberA.personId,
+    title: "ЛПР: ownership",
+    focus: "Связать темы 1:1 с измеримой целью",
+    status: "active",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  const goal = {
+    id: `goal-${suffix}`,
+    personId: memberA.personId,
+    lprId: lpr.id,
+    title: "Закрыть ownership gap",
+    description: "Сформулировано из ЛПР",
+    horizon: "2026-Q2",
+    progress: 10,
+    status: "active",
+    createdAt: new Date().toISOString(),
+    dueDate: ""
+  };
+  const saveLeadWorkspace = await leadApi.post("/api/workspace", {
+    data: {
+      ...leadWorkspace,
+      lprs: [lpr],
+      goals: [goal]
+    }
+  });
+  expect(saveLeadWorkspace.status()).toBe(200);
+  const savedLeadWorkspace = await saveLeadWorkspace.json();
+  expect(savedLeadWorkspace.lprs).toEqual([expect.objectContaining({ id: lpr.id, personId: memberA.personId })]);
+  expect(savedLeadWorkspace.goals).toEqual([expect.objectContaining({ id: goal.id, lprId: lpr.id })]);
+  await leadApi.dispose();
+
+  const otherMemberApi = await playwrightRequest.newContext({ baseURL });
+  await otherMemberApi.post("/api/login", {
+    data: { username: memberB.username, password: "TeamPass121" }
+  });
+  const otherMemberWorkspace = await (await otherMemberApi.get("/api/workspace")).json();
+  expect(otherMemberWorkspace.people).toHaveLength(1);
+  expect(otherMemberWorkspace.people[0].id).toBe(memberB.personId);
+  expect(otherMemberWorkspace.lprs).toEqual([]);
+  await otherMemberApi.dispose();
 });

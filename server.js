@@ -69,15 +69,15 @@ const contentTypes = {
 const people = [
   {
     id: "demo-sre",
-    name: "Демо SRE-инженер",
-    meetingName: "демо SRE-инженером",
-    role: "SRE Engineer",
-    team: "Reliability",
-    initials: "DE",
+    name: "Демо участник команды",
+    meetingName: "демо участником",
+    role: "Product Manager",
+    team: "Product Growth",
+    initials: "ДУ",
     nextMeeting: "10 мая, 11:30",
     cadence: "каждую неделю",
-    managerFocus: "снизить alert fatigue и вернуть предсказуемость on-call",
-    lastSummary: "Договорились убрать шумные алерты по latency p95 и обновить runbook для incident commander.",
+    managerFocus: "собрать фокус недели, риски и ближайшие договоренности",
+    lastSummary: "Договорились сузить фокус квартала, убрать лишние параллельные инициативы и зафиксировать критерии успеха.",
     trend: "+4",
     energy: 6,
     load: 8,
@@ -88,13 +88,13 @@ const people = [
     id: "anna",
     name: "Анна Морозова",
     meetingName: "Анной Морозовой",
-    role: "Senior SRE",
-    team: "Platform Reliability",
+    role: "Senior Product Manager",
+    team: "Product",
     initials: "АМ",
     nextMeeting: "10 мая, 14:00",
     cadence: "каждую неделю",
-    managerFocus: "разгрузить on-call после серии ночных инцидентов",
-    lastSummary: "Договорились сократить ручные проверки Kubernetes rollout и вынести повторяющиеся действия в runbook.",
+    managerFocus: "снять перегруз от параллельных инициатив и укрепить ownership направления",
+    lastSummary: "Договорились сузить roadmap до трех приоритетов и заранее подсветить зависимости для запуска.",
     trend: "+5",
     energy: 7,
     load: 7,
@@ -105,13 +105,13 @@ const people = [
     id: "danila",
     name: "Данила Ким",
     meetingName: "Данилой Кимом",
-    role: "DevOps Engineer",
-    team: "Infrastructure",
+    role: "Product Designer",
+    team: "Design",
     initials: "ДК",
     nextMeeting: "11 мая, 15:00",
     cadence: "раз в 2 недели",
-    managerFocus: "поддержать рост в Terraform и ownership за CI/CD",
-    lastSummary: "Нужно больше раннего контекста по миграции stateful workloads и rollback-плану.",
+    managerFocus: "поддержать рост в discovery и самостоятельность в исследовательском цикле",
+    lastSummary: "Нужно больше раннего контекста по целям исследования и критериям успешного решения.",
     trend: "-3",
     energy: 6,
     load: 8,
@@ -122,13 +122,13 @@ const people = [
     id: "mila",
     name: "Мила Варламова",
     meetingName: "Милой Варламовой",
-    role: "Observability Engineer",
-    team: "Telemetry",
+    role: "Customer Success Lead",
+    team: "Customer Success",
     initials: "МВ",
     nextMeeting: "12 мая, 12:00",
     cadence: "каждую неделю",
-    managerFocus: "сохранить темп внедрения tracing без перегруза команды",
-    lastSummary: "Хочет больше обратной связи по качеству dashboards и SLO burn-rate алертов.",
+    managerFocus: "сохранить качество работы с клиентами без перегруза команды",
+    lastSummary: "Хочет больше обратной связи по качеству customer handoff и приоритизации эскалаций.",
     trend: "+2",
     energy: 8,
     load: 5,
@@ -139,13 +139,13 @@ const people = [
     id: "timur",
     name: "Тимур Абашев",
     meetingName: "Тимуром Абашевым",
-    role: "Incident Manager",
+    role: "Operations Manager",
     team: "Operations",
     initials: "ТА",
     nextMeeting: "13 мая, 17:00",
     cadence: "каждую неделю",
-    managerFocus: "вернуть ощущение контроля над incident review циклом",
-    lastSummary: "Поднял риск поздних postmortem action items и ручной координации дежурств.",
+    managerFocus: "вернуть ощущение контроля над межкомандными follow-up и нагрузкой",
+    lastSummary: "Поднял риск поздних follow-up после ретро и ручной координации между командами.",
     trend: "-7",
     energy: 5,
     load: 9,
@@ -160,22 +160,24 @@ const initialCards = [
   {
     id: "c-demo-1",
     personId: "demo-sre",
+    lprId: "lpr-demo-1",
     source: "employee",
     category: "blocker",
     priority: "high",
     status: "todo",
-    title: "Слишком много шумных алертов в on-call",
-    body: "Требуется определить алерты для page, ticket или удаления и обновить threshold."
+    title: "Слишком много параллельных приоритетов",
+    body: "Требуется выбрать 2-3 главных фокуса и явно отложить остальное до следующего цикла."
   },
   {
     id: "c-demo-2",
     personId: "demo-sre",
+    lprId: "lpr-demo-1",
     source: "manager",
     category: "growth",
     priority: "medium",
     status: "todo",
-    title: "Следующий шаг в роли incident commander",
-    body: "Определить типы инцидентов для самостоятельного ведения в следующем месяце."
+    title: "Следующий шаг в роли владельца направления",
+    body: "Определить решения, которые участник сможет вести самостоятельно в следующем месяце."
   },
   {
     id: "c-demo-3",
@@ -184,28 +186,30 @@ const initialCards = [
     category: "checkin",
     priority: "medium",
     status: "discussing",
-    title: "Энергия проседает после ночных pages",
-    body: "Требуется окно восстановления после on-call и ограничение переключений после инцидента."
+    title: "Энергия проседает после плотной недели",
+    body: "Требуется окно восстановления и ограничение переключений между срочными задачами."
   },
   {
     id: "c-1",
     personId: "anna",
+    lprId: "lpr-anna-1",
     source: "employee",
     category: "blocker",
     priority: "high",
     status: "todo",
-    title: "Много ручных шагов в Kubernetes rollout",
-    body: "Требуется определить первый этап автоматизации и перечень ручных проверок."
+    title: "Много ручных согласований перед запуском",
+    body: "Требуется определить первый этап упрощения процесса и список обязательных проверок."
   },
   {
     id: "c-2",
     personId: "anna",
+    lprId: "lpr-anna-1",
     source: "manager",
     category: "growth",
     priority: "medium",
     status: "todo",
-    title: "Следующий шаг в роли reliability lead",
-    body: "Определить SLO-решения, которые можно передать Анне в следующем спринте."
+    title: "Следующий шаг в роли product lead",
+    body: "Определить решения по roadmap, которые можно передать Анне в следующем цикле."
   },
   {
     id: "c-3",
@@ -215,7 +219,7 @@ const initialCards = [
     priority: "medium",
     status: "discussing",
     title: "Энергия держится, но фокус проседает",
-    body: "Много переключений между incident review, Terraform и срочными runbook-правками."
+    body: "Много переключений между customer feedback, roadmap и срочными уточнениями от стейкхолдеров."
   },
   {
     id: "c-4",
@@ -224,8 +228,8 @@ const initialCards = [
     category: "feedback",
     priority: "high",
     status: "todo",
-    title: "Не хватает раннего контекста по миграции stateful workloads",
-    body: "Нужен список обязательных требований для rollback и отложенных задач."
+    title: "Не хватает раннего контекста по изменению приоритетов",
+    body: "Нужен список критериев решения и отложенных задач до старта работы."
   },
   {
     id: "c-5",
@@ -234,8 +238,8 @@ const initialCards = [
     category: "thanks",
     priority: "low",
     status: "todo",
-    title: "Отметить вклад в burn-rate dashboards",
-    body: "Новые панели помогли дежурным быстрее отличать реальный риск от шума."
+    title: "Отметить вклад в улучшение customer handoff",
+    body: "Новые материалы помогли команде быстрее понимать контекст клиента и следующий шаг."
   },
   {
     id: "c-6",
@@ -244,7 +248,7 @@ const initialCards = [
     category: "blocker",
     priority: "high",
     status: "todo",
-    title: "Postmortem action items закрываются слишком поздно",
+    title: "Follow-up после ретро закрываются слишком поздно",
     body: "Нужен явный владелец каждого follow-up и короткий контрольный цикл."
   }
 ];
@@ -254,7 +258,7 @@ const initialActions = [
     id: "a-demo-1",
     personId: "demo-sre",
     owner: "manager",
-    title: "Выбрать 5 самых шумных алертов и решить: page, ticket или удалить",
+    title: "Выбрать 3 приоритета квартала и зафиксировать owner/критерий успеха",
     due: "до пятницы",
     done: false
   },
@@ -262,7 +266,7 @@ const initialActions = [
     id: "a-demo-2",
     personId: "demo-sre",
     owner: "employee",
-    title: "Обновить runbook для incident commander по latency p95",
+    title: "Собрать входные данные для решения по onboarding",
     due: "к следующему 1:1",
     done: false
   },
@@ -270,7 +274,7 @@ const initialActions = [
     id: "a-1",
     personId: "anna",
     owner: "manager",
-    title: "Согласовать правило triage для noisy alerts",
+    title: "Согласовать правило triage для срочных запросов",
     due: "до пятницы",
     done: false
   },
@@ -278,7 +282,7 @@ const initialActions = [
     id: "a-2",
     personId: "anna",
     owner: "employee",
-    title: "Выбрать одну reliability-тему для самостоятельного решения",
+    title: "Выбрать одну зону ответственности для самостоятельного решения",
     due: "к следующему 1:1",
     done: false
   },
@@ -286,9 +290,30 @@ const initialActions = [
     id: "a-3",
     personId: "timur",
     owner: "manager",
-    title: "Зафиксировать SLA для postmortem follow-up в календаре дежурств",
+    title: "Зафиксировать SLA для follow-up после ретро",
     due: "сегодня",
     done: false
+  }
+];
+
+const initialLprs = [
+  {
+    id: "lpr-demo-1",
+    personId: "demo-sre",
+    title: "ЛПР: фокус квартала и ownership",
+    focus: "Собрать повторяющиеся темы из 1:1, превратить их в план развития и связать с измеримыми целями.",
+    status: "active",
+    createdAt: "2026-04-01T00:00:00.000Z",
+    updatedAt: "2026-04-01T00:00:00.000Z"
+  },
+  {
+    id: "lpr-anna-1",
+    personId: "anna",
+    title: "ЛПР: ownership направления",
+    focus: "Снять лишние согласования и постепенно передать Анне самостоятельные продуктовые решения.",
+    status: "active",
+    createdAt: "2026-03-15T00:00:00.000Z",
+    updatedAt: "2026-03-15T00:00:00.000Z"
   }
 ];
 
@@ -296,8 +321,9 @@ const initialGoals = [
   {
     id: "g-demo-1",
     personId: "demo-sre",
-    title: "Снизить alert fatigue в on-call rotation на 30%",
-    description: "Через ревизию шумных алертов и обновление SLO definitions",
+    lprId: "lpr-demo-1",
+    title: "Сократить количество параллельных приоритетов до 3",
+    description: "Через ревизию инициатив и явное правило, что откладываем",
     horizon: "2026-Q2",
     progress: 25,
     status: "active",
@@ -307,8 +333,9 @@ const initialGoals = [
   {
     id: "g-demo-2",
     personId: "demo-sre",
-    title: "Стать самостоятельным incident commander",
-    description: "Провести 5 incidents без эскалации к senior",
+    lprId: "lpr-demo-1",
+    title: "Вести ключевое направление без постоянной эскалации",
+    description: "Провести 5 решений по направлению с понятными критериями и обратной связью",
     horizon: "2026-Q2",
     progress: 40,
     status: "active",
@@ -318,8 +345,9 @@ const initialGoals = [
   {
     id: "g-anna-1",
     personId: "anna",
-    title: "Запустить автоматизацию Kubernetes rollouts",
-    description: "Покрыть 80% staging-окружений автоматическим rollback по SLO burn-rate",
+    lprId: "lpr-anna-1",
+    title: "Запустить регулярный цикл customer feedback",
+    description: "Закрыть 80% discovery-решений через проверку гипотез с клиентами",
     horizon: "2026-Q2",
     progress: 55,
     status: "active",
@@ -328,6 +356,7 @@ const initialGoals = [
   }
 ];
 
+const lprStatuses = ["active", "paused", "done"];
 const goalStatuses = ["active", "achieved", "abandoned"];
 
 const meetingTypes = ["regular", "career", "performance", "post-incident", "first-1on1", "skip-level"];
@@ -363,19 +392,7 @@ function buildSeedPulseHistory() {
 }
 
 function buildSeedOncallLoad() {
-  // 4 last weeks; rotated so different people look different
-  const rows = [];
-  const today = new Date();
-  for (let weeksBack = 0; weeksBack < 4; weeksBack++) {
-    const monday = new Date(today.getTime() - (weeksBack * 7 + today.getUTCDay()) * 24 * 60 * 60 * 1000);
-    const weekStart = monday.toISOString().slice(0, 10);
-    rows.push(
-      { personId: "demo-sre", weekStart, pagesTotal: 9 - weeksBack, afterHoursPages: 4 - weeksBack, incidentsLed: 1, sleepDisruptedNights: 2 - Math.floor(weeksBack / 2) },
-      { personId: "anna", weekStart, pagesTotal: 6, afterHoursPages: 2, incidentsLed: 2, sleepDisruptedNights: 1 },
-      { personId: "timur", weekStart, pagesTotal: 12, afterHoursPages: 7, incidentsLed: 3, sleepDisruptedNights: 3 }
-    );
-  }
-  return rows;
+  return [];
 }
 
 const surveyQuestionTypes = ["scale", "single", "multi", "text", "date"];
@@ -383,8 +400,8 @@ const surveyQuestionTypes = ["scale", "single", "multi", "text", "date"];
 const initialSurveys = [
   {
     id: "s-demo-weekly",
-    title: "Еженедельный пульс on-call",
-    description: "Помоги лиду понять, как ты прожил эту неделю в дежурстве.",
+    title: "Еженедельный пульс команды",
+    description: "Помоги лиду понять состояние команды, фокус и риски недели.",
     anonymous: false,
     status: "active",
     isDemoSeed: true,
@@ -393,23 +410,23 @@ const initialSurveys = [
       {
         id: "q1",
         type: "scale",
-        prompt: "Насколько шумным был on-call на этой неделе? (1 — тишина, 10 — горело всё)",
+        prompt: "Насколько понятен фокус недели? (1 — неясно, 10 — полностью понятно)",
         required: true,
         options: []
       },
       {
         id: "q2",
         type: "single",
-        prompt: "Сколько ночных pages было?",
+        prompt: "Насколько перегружен(а) сейчас?",
         required: true,
-        options: ["0", "1–2", "3–5", "Больше 5"]
+        options: ["Спокойно", "Нормально", "На пределе", "Нужна помощь"]
       },
       {
         id: "q3",
         type: "multi",
         prompt: "Что съедало фокус?",
         required: false,
-        options: ["Шумные алерты", "Релизы", "Инциденты", "Постмортемы", "Координация"]
+        options: ["Срочные запросы", "Встречи", "Переключения контекста", "Нехватка информации", "Зависимости"]
       },
       {
         id: "q4",
@@ -449,9 +466,9 @@ const initialPulse = Object.fromEntries(
 );
 
 const initialNotes = {
-  "demo-sre": "Проверить, не накопилась ли усталость после on-call. Спросить про восстановление и качество handoff.",
-  anna: "Проверить объем координации между noisy alerts и платформенной командой.",
-  timur: "Риск выгорания: спросить про восстановление после ночного incident bridge."
+  "demo-sre": "Проверить, не накопилась ли усталость от параллельных инициатив. Спросить про восстановление и фокус.",
+  anna: "Проверить объем координации между roadmap, customer feedback и стейкхолдерами.",
+  timur: "Риск выгорания: спросить про восстановление после плотного цикла ретро и follow-up."
 };
 
 const prepKeys = ["employeeAgenda", "managerAgenda", "pulse", "lastActions", "growth", "commitments"];
@@ -492,10 +509,11 @@ function seedUser({ username, password, name, role, personId = null, leadUserId 
 
 function createSeedDb() {
   return normalizeDb({
-    version: 4,
+    version: 5,
     people,
     cards: initialCards,
     actions: initialActions,
+    lprs: initialLprs,
     goals: initialGoals,
     surveys: initialSurveys,
     surveyResponses: [],
@@ -509,13 +527,12 @@ function createSeedDb() {
         username: adminUsername,
         password: adminPassword,
         name: "Максим Гусев",
-        role: "platform_admin",
-        teamLabel: "Reliability"
+        role: "platform_admin"
       });
       const demo = seedUser({
         username: demoUsername,
         password: demoPassword,
-        name: "Демо SRE-инженер",
+        name: "Демо участник команды",
         role: "employee",
         personId: "demo-sre",
         leadUserId: admin.id
@@ -552,8 +569,8 @@ function normalizeDb(rawDb = {}) {
       id: String(person.id),
       name: String(person.name || "Новый участник"),
       meetingName: String(person.meetingName || person.name || "новым участником"),
-      role: String(person.role || "SRE Engineer"),
-      team: String(person.team || "Reliability"),
+      role: String(person.role || "Team Member"),
+      team: String(person.team || "Product"),
       initials: String(person.initials || makeInitials(person.name || "НС")),
       nextMeeting: String(person.nextMeeting || "нужно запланировать"),
       cadence: String(person.cadence || "каждую неделю"),
@@ -568,6 +585,7 @@ function normalizeDb(rawDb = {}) {
     }))
   ];
   const personIds = new Set(allPeople.map((person) => person.id));
+  const peopleById = new Map(allPeople.map((person) => [person.id, person]));
   const removedUserIds = new Set();
   const rawUsers = Array.isArray(rawDb.users)
     ? rawDb.users.filter((user) => {
@@ -580,33 +598,60 @@ function normalizeDb(rawDb = {}) {
       })
     : [];
 
-  // Normalise role + new hierarchy fields. Legacy 'admin' becomes
-  // 'platform_admin'. Existing employees without a lead get attached to the
-  // first platform admin so the lead-chain is never broken.
-  const firstPlatformAdmin = rawUsers.find(
-    (u) => u.role === "admin" || u.role === "platform_admin"
-  );
+  // Normalise role + team fields. Legacy 'admin' becomes 'platform_admin'.
+  // Team membership is stored as a label on users and people so leads can be
+  // scoped by team even when a direct lead_user_id is missing.
   const users = rawUsers.map((user) => {
     const role = user.role === "admin" ? "platform_admin" : user.role;
+    const safeRole = ["platform_admin", "lead", "employee"].includes(role) ? role : "employee";
+    const personId = user.personId && personIds.has(String(user.personId)) ? String(user.personId) : null;
+    const person = personId ? peopleById.get(personId) : null;
+    const teamLabel = String(user.teamLabel || person?.team || "").slice(0, 120);
+    const matchingLead = rawUsers.find((candidate) => {
+      if (candidate.id === user.id) return false;
+      const candidateRole = candidate.role === "admin" ? "platform_admin" : candidate.role;
+      if (candidateRole !== "lead") return false;
+      const candidatePerson = candidate.personId ? peopleById.get(String(candidate.personId)) : null;
+      return normalizeTeamName(candidate.teamLabel || candidatePerson?.team || "") === normalizeTeamName(teamLabel);
+    });
     const leadUserId =
-      user.leadUserId != null
+      safeRole !== "employee"
+        ? null
+        : user.leadUserId != null
         ? String(user.leadUserId)
-        : role === "employee" && firstPlatformAdmin
-          ? firstPlatformAdmin.id
+        : matchingLead
+          ? String(matchingLead.id)
           : null;
     return {
       ...user,
-      role,
-      leadUserId,
-      teamLabel: String(user.teamLabel || "").slice(0, 120)
+      role: safeRole,
+      personId,
+      leadUserId: leadUserId === user.id ? null : leadUserId,
+      teamLabel
     };
   });
-  const cards = Array.isArray(rawDb.cards) ? rawDb.cards.filter((card) => personIds.has(card.personId)) : [];
+  const lprs = Array.isArray(rawDb.lprs)
+    ? rawDb.lprs
+        .filter((lpr) => personIds.has(lpr.personId))
+        .map((lpr) => sanitizeLpr(lpr, lpr.personId))
+    : [];
+  const seedLprIds = new Set(initialLprs.map((lpr) => lpr.id));
+  const lprsById = new Map(lprs.map((lpr) => [lpr.id, lpr]));
+  const allLprs = [
+    ...initialLprs.map((lpr) => lprsById.get(lpr.id) || lpr),
+    ...lprs.filter((lpr) => !seedLprIds.has(lpr.id))
+  ];
+  const lprIds = new Set(allLprs.map((lpr) => lpr.id));
+  const cards = Array.isArray(rawDb.cards)
+    ? rawDb.cards
+        .filter((card) => personIds.has(card.personId))
+        .map((card) => sanitizeCard(card, card.personId, null, lprIds))
+    : [];
   const actions = Array.isArray(rawDb.actions) ? rawDb.actions.filter((action) => personIds.has(action.personId)) : [];
   const goals = Array.isArray(rawDb.goals)
     ? rawDb.goals
         .filter((goal) => personIds.has(goal.personId))
-        .map((goal) => sanitizeGoal(goal, goal.personId))
+        .map((goal) => sanitizeGoal(goal, goal.personId, lprIds))
     : [];
   const seedCardIds = new Set(initialCards.map((card) => card.id));
   const seedActionIds = new Set(initialActions.map((action) => action.id));
@@ -616,14 +661,16 @@ function normalizeDb(rawDb = {}) {
   const goalsById = new Map(goals.map((goal) => [goal.id, goal]));
 
   const db = {
-    version: 3,
+    version: 5,
     people: allPeople,
+    lprs: allLprs,
     cards: [
       ...initialCards.map((card) => {
         const existing = cardsById.get(card.id);
         return {
           ...card,
-          status: existing?.status || card.status
+          status: existing?.status || card.status,
+          lprId: existing?.lprId || card.lprId || ""
         };
       }),
       ...cards.filter((card) => !seedCardIds.has(card.id) && !hasLegacyBusinessText(card.title, card.body))
@@ -639,7 +686,15 @@ function normalizeDb(rawDb = {}) {
       ...actions.filter((action) => !seedActionIds.has(action.id) && !hasLegacyBusinessText(action.title, action.due))
     ],
     goals: [
-      ...initialGoals.map((goal) => goalsById.get(goal.id) || goal),
+      ...initialGoals.map((goal) => {
+        const existing = goalsById.get(goal.id);
+        return existing
+          ? {
+              ...existing,
+              lprId: existing.lprId || goal.lprId || ""
+            }
+          : goal;
+      }),
       ...goals.filter((goal) => !seedGoalIds.has(goal.id))
     ],
     prep: { ...initialPrep, ...(rawDb.prep || {}) },
@@ -664,7 +719,10 @@ function normalizeDb(rawDb = {}) {
           .filter(Boolean)
       : [],
     oncallLoad: Array.isArray(rawDb.oncallLoad)
-      ? rawDb.oncallLoad.map((entry) => sanitizeOncallEntry(entry, personIds)).filter(Boolean)
+      ? rawDb.oncallLoad
+          .map((entry) => sanitizeOncallEntry(entry, personIds))
+          .filter(Boolean)
+          .filter((entry) => !isDemoOnlyPersonId(entry.personId))
       : [],
     meetingLog: Array.isArray(rawDb.meetingLog)
       ? rawDb.meetingLog.map((entry) => sanitizeMeetingLog(entry, personIds)).filter(Boolean)
@@ -692,6 +750,10 @@ function normalizeDb(rawDb = {}) {
   }
 
   return db;
+}
+
+function normalizeTeamName(value) {
+  return String(value || "").trim().toLowerCase();
 }
 
 function makeInitials(name) {
@@ -764,7 +826,7 @@ function mergeNotesUpdate(currentNotes = {}, incomingNotes = {}, personIds) {
 }
 
 function hasLegacyBusinessText(...parts) {
-  const legacyWords = ["прод" + "аж", "sa" + "les", "билл" + "инг", "onboarding flow", "product designer", "frontend", "backend", "qa lead"];
+  const legacyWords = ["прод" + "аж", "sa" + "les", "билл" + "инг"];
   const haystack = parts.filter(Boolean).join(" ").toLowerCase();
   return legacyWords.some((word) => haystack.includes(word));
 }
@@ -910,6 +972,19 @@ async function migratePostgres() {
     -- or platform_admin. Allows the team to be named without a separate table.
     alter table users add column if not exists team_label text not null default '';
 
+    create table if not exists lprs (
+      id text primary key,
+      person_id text not null references people(id) on delete cascade,
+      title text not null,
+      focus text not null default '',
+      status text not null check (status in ('active', 'paused', 'done')),
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+
+    create index if not exists lprs_person_id_idx on lprs(person_id);
+    create index if not exists lprs_status_idx on lprs(status);
+
     create table if not exists sessions (
       id text primary key,
       user_id text not null references users(id) on delete cascade,
@@ -946,6 +1021,7 @@ async function migratePostgres() {
     create table if not exists cards (
       id text primary key,
       person_id text not null references people(id) on delete cascade,
+      lpr_id text references lprs(id) on delete set null,
       source text not null check (source in ('manager', 'employee')),
       category text not null check (category in ('checkin', 'blocker', 'growth', 'feedback', 'decision', 'thanks')),
       priority text not null check (priority in ('high', 'medium', 'low')),
@@ -956,7 +1032,10 @@ async function migratePostgres() {
       updated_at timestamptz not null default now()
     );
 
+    alter table cards add column if not exists lpr_id text references lprs(id) on delete set null;
+
     create index if not exists cards_person_id_idx on cards(person_id);
+    create index if not exists cards_lpr_id_idx on cards(lpr_id);
     create index if not exists cards_status_idx on cards(status);
 
     create table if not exists actions (
@@ -981,6 +1060,7 @@ async function migratePostgres() {
     create table if not exists goals (
       id text primary key,
       person_id text not null references people(id) on delete cascade,
+      lpr_id text references lprs(id) on delete set null,
       title text not null,
       description text not null default '',
       horizon text not null default '',
@@ -990,7 +1070,10 @@ async function migratePostgres() {
       due_date text not null default ''
     );
 
+    alter table goals add column if not exists lpr_id text references lprs(id) on delete set null;
+
     create index if not exists goals_person_id_idx on goals(person_id);
+    create index if not exists goals_lpr_id_idx on goals(lpr_id);
     create index if not exists goals_status_idx on goals(status);
 
     create table if not exists pulse_history (
@@ -1080,24 +1163,25 @@ async function seedPostgres() {
     await upsertPulse(client, initialPulse);
     await upsertPrep(client, initialPrep);
     await upsertNotes(client, initialNotes);
+    await insertSeedLprs(client);
     await insertSeedCards(client);
     await insertSeedActions(client);
     await insertSeedGoals(client);
     await insertSeedPulseHistory(client);
     await insertSeedSurveys(client);
+    await clearSeedOncallLoad(client);
     const adminId = await upsertSeedUser(client, {
       username: adminUsername,
       password: adminPassword,
       name: "Максим Гусев",
       role: "platform_admin",
-      personId: null,
-      teamLabel: "Reliability"
+      personId: null
     });
     if (shouldSeedDemoLogin) {
       await upsertSeedUser(client, {
         username: demoUsername,
         password: demoPassword,
-        name: "Демо SRE-инженер",
+        name: "Демо участник команды",
         role: "employee",
         personId: "demo-sre",
         leadUserId: adminId
@@ -1204,9 +1288,36 @@ async function upsertNotes(client, notes) {
       `
         insert into notes (person_id, body)
         values ($1, $2)
-        on conflict (person_id) do nothing
+        on conflict (person_id) do update set
+          body = excluded.body
       `,
       [personId, body]
+    );
+  }
+}
+
+async function insertSeedLprs(client) {
+  for (const lpr of initialLprs) {
+    await client.query(
+      `
+        insert into lprs (id, person_id, title, focus, status, created_at, updated_at)
+        values ($1, $2, $3, $4, $5, $6::timestamptz, $7::timestamptz)
+        on conflict (id) do update set
+          person_id = excluded.person_id,
+          title = excluded.title,
+          focus = excluded.focus,
+          status = excluded.status,
+          updated_at = now()
+      `,
+      [
+        lpr.id,
+        lpr.personId,
+        lpr.title,
+        lpr.focus,
+        lpr.status,
+        lpr.createdAt,
+        lpr.updatedAt
+      ]
     );
   }
 }
@@ -1215,10 +1326,11 @@ async function insertSeedCards(client) {
   for (const card of initialCards) {
     await client.query(
       `
-        insert into cards (id, person_id, source, category, priority, status, title, body)
-        values ($1, $2, $3, $4, $5, $6, $7, $8)
+        insert into cards (id, person_id, lpr_id, source, category, priority, status, title, body)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         on conflict (id) do update set
           person_id = excluded.person_id,
+          lpr_id = excluded.lpr_id,
           source = excluded.source,
           category = excluded.category,
           priority = excluded.priority,
@@ -1227,7 +1339,7 @@ async function insertSeedCards(client) {
           body = excluded.body,
           updated_at = now()
       `,
-      [card.id, card.personId, card.source, card.category, card.priority, card.status, card.title, card.body]
+      [card.id, card.personId, card.lprId || null, card.source, card.category, card.priority, card.status, card.title, card.body]
     );
   }
 }
@@ -1256,11 +1368,17 @@ async function insertSeedGoals(client) {
   for (const goal of initialGoals) {
     await client.query(
       `
-        insert into goals (id, person_id, title, description, horizon, progress, status, due_date)
-        values ($1, $2, $3, $4, $5, $6, $7, $8)
-        on conflict (id) do nothing
+        insert into goals (id, person_id, lpr_id, title, description, horizon, progress, status, due_date)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        on conflict (id) do update set
+          person_id = excluded.person_id,
+          lpr_id = coalesce(goals.lpr_id, excluded.lpr_id),
+          title = excluded.title,
+          description = excluded.description,
+          horizon = excluded.horizon,
+          due_date = excluded.due_date
       `,
-      [goal.id, goal.personId, goal.title, goal.description, goal.horizon, goal.progress, goal.status, goal.dueDate]
+      [goal.id, goal.personId, goal.lprId || null, goal.title, goal.description, goal.horizon, goal.progress, goal.status, goal.dueDate]
     );
   }
 }
@@ -1284,7 +1402,13 @@ async function insertSeedSurveys(client) {
       `
         insert into surveys (id, title, description, anonymous, status, questions_json, is_demo_seed, created_at)
         values ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::timestamptz)
-        on conflict (id) do nothing
+        on conflict (id) do update set
+          title = excluded.title,
+          description = excluded.description,
+          anonymous = excluded.anonymous,
+          status = excluded.status,
+          questions_json = excluded.questions_json,
+          is_demo_seed = excluded.is_demo_seed
       `,
       [
         survey.id,
@@ -1297,6 +1421,12 @@ async function insertSeedSurveys(client) {
         survey.createdAt
       ]
     );
+  }
+}
+
+async function clearSeedOncallLoad(client) {
+  for (const person of people) {
+    await client.query("delete from oncall_load where person_id = $1", [person.id]);
   }
 }
 
@@ -1359,6 +1489,7 @@ async function readDb() {
   if (storageMode === "postgres") {
     const [
       peopleResult,
+      lprsResult,
       cardsResult,
       actionsResult,
       goalsResult,
@@ -1400,6 +1531,19 @@ async function readDb() {
           select
             id,
             person_id as "personId",
+            title,
+            focus,
+            status,
+            created_at as "createdAt",
+            updated_at as "updatedAt"
+          from lprs
+          order by created_at asc, id asc
+        `),
+        pgPool.query(`
+          select
+            id,
+            person_id as "personId",
+            lpr_id as "lprId",
             source,
             category,
             priority,
@@ -1425,6 +1569,7 @@ async function readDb() {
           select
             id,
             person_id as "personId",
+            lpr_id as "lprId",
             title,
             description,
             horizon,
@@ -1532,6 +1677,11 @@ async function readDb() {
 
     return normalizeDb({
       people: peopleResult.rows,
+      lprs: lprsResult.rows.map((row) => ({
+        ...row,
+        createdAt: row.createdAt?.toISOString?.() || row.createdAt,
+        updatedAt: row.updatedAt?.toISOString?.() || row.updatedAt
+      })),
       cards: cardsResult.rows,
       actions: actionsResult.rows,
       goals: goalsResult.rows.map((row) => ({
@@ -1605,6 +1755,7 @@ async function writeDb(db) {
     try {
       await client.query("BEGIN");
       await upsertPeople(client, normalized.people);
+      await replaceLprs(client, normalized.lprs);
       await replaceCards(client, normalized.cards);
       await replaceActions(client, normalized.actions);
       await replaceGoals(client, normalized.goals);
@@ -1652,10 +1803,31 @@ async function replaceCards(client, cards) {
   for (const card of cards) {
     await client.query(
       `
-        insert into cards (id, person_id, source, category, priority, status, title, body)
-        values ($1, $2, $3, $4, $5, $6, $7, $8)
+        insert into cards (id, person_id, lpr_id, source, category, priority, status, title, body)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       `,
-      [card.id, card.personId, card.source, card.category, card.priority, card.status, card.title, card.body]
+      [card.id, card.personId, card.lprId || null, card.source, card.category, card.priority, card.status, card.title, card.body]
+    );
+  }
+}
+
+async function replaceLprs(client, lprs) {
+  await client.query("delete from lprs");
+  for (const lpr of lprs || []) {
+    await client.query(
+      `
+        insert into lprs (id, person_id, title, focus, status, created_at, updated_at)
+        values ($1, $2, $3, $4, $5, coalesce($6::timestamptz, now()), coalesce($7::timestamptz, now()))
+      `,
+      [
+        lpr.id,
+        lpr.personId,
+        lpr.title,
+        lpr.focus,
+        lpr.status,
+        lpr.createdAt || null,
+        lpr.updatedAt || null
+      ]
     );
   }
 }
@@ -1686,12 +1858,13 @@ async function replaceGoals(client, goals) {
   for (const goal of goals || []) {
     await client.query(
       `
-        insert into goals (id, person_id, title, description, horizon, progress, status, created_at, due_date)
-        values ($1, $2, $3, $4, $5, $6, $7, coalesce($8::timestamptz, now()), $9)
+        insert into goals (id, person_id, lpr_id, title, description, horizon, progress, status, created_at, due_date)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, coalesce($9::timestamptz, now()), $10)
       `,
       [
         goal.id,
         goal.personId,
+        goal.lprId || null,
         goal.title,
         goal.description,
         goal.horizon,
@@ -1927,6 +2100,7 @@ async function deletePersonById(personId) {
   const db = await readDb();
   const removedUserIds = new Set(db.users.filter((user) => user.personId === personId).map((user) => user.id));
   db.people = db.people.filter((person) => person.id !== personId);
+  db.lprs = (db.lprs || []).filter((lpr) => lpr.personId !== personId);
   db.cards = db.cards.filter((card) => card.personId !== personId);
   db.actions = db.actions.filter((action) => action.personId !== personId);
   db.goals = (db.goals || []).filter((goal) => goal.personId !== personId);
@@ -2128,9 +2302,9 @@ function isPlainLead(user) {
 }
 
 // Legacy alias kept so all existing call-sites keep working. Treat "admin" as
-// platform_admin everywhere.
+// "can manage the visible team workspace" everywhere.
 function isAdmin(user) {
-  return isPlatformAdmin(user);
+  return isLead(user);
 }
 
 function isProtectedUser(user) {
@@ -2154,6 +2328,34 @@ function isStaleDemoLinkedAccess(user) {
   return !isDemoUser(user) && user?.role === "employee" && isDemoOnlyPersonId(user.personId);
 }
 
+function teamLabelForUser(db, user) {
+  if (!user) return "";
+  if (user.teamLabel) return user.teamLabel;
+  const person = user.personId ? db.people.find((item) => item.id === user.personId) : null;
+  return person?.team || "";
+}
+
+function personInLeadTeam(db, lead, person) {
+  if (!lead || !person) return false;
+  if (lead.personId && lead.personId === person.id) return true;
+  const leadTeam = normalizeTeamName(teamLabelForUser(db, lead));
+  const personTeam = normalizeTeamName(person.team);
+  const linkedUser = db.users.find((user) => user.personId === person.id);
+  return (
+    (leadTeam && personTeam && leadTeam === personTeam) ||
+    linkedUser?.leadUserId === lead.id
+  );
+}
+
+function userInLeadTeam(db, lead, user) {
+  if (!lead || !user) return false;
+  if (user.id === lead.id) return true;
+  if (user.leadUserId === lead.id) return true;
+  const leadTeam = normalizeTeamName(teamLabelForUser(db, lead));
+  const userTeam = normalizeTeamName(teamLabelForUser(db, user));
+  return Boolean(leadTeam && userTeam && leadTeam === userTeam);
+}
+
 function scopedPersonIds(db, user) {
   if (isPlatformAdmin(user)) {
     return new Set(
@@ -2166,20 +2368,12 @@ function scopedPersonIds(db, user) {
   if (isDemoUser(user)) return new Set(["demo-sre"]);
 
   if (isPlainLead(user)) {
-    // A lead sees:
-    //   1) the people of users that directly report to them (lead_user_id == user.id)
-    //   2) their own 1:1 profile (they can be on someone else's agenda)
-    const ids = new Set();
-    if (user.personId) ids.add(user.personId);
-    for (const u of db.users) {
-      if (u.leadUserId === user.id && u.personId) ids.add(u.personId);
-    }
-    // Drop archived
     return new Set(
-      Array.from(ids).filter((id) => {
-        const p = db.people.find((person) => person.id === id);
-        return p && !p.archivedAt;
-      })
+      db.people
+        .filter((person) => !isDemoOnlyPersonId(person.id))
+        .filter((person) => !person.archivedAt)
+        .filter((person) => personInLeadTeam(db, user, person))
+        .map((person) => person.id)
     );
   }
 
@@ -2197,16 +2391,10 @@ function scopedUsers(db, user) {
     return db.users.filter((item) => !isDemoOnlyAccess(item)).map(publicUser);
   }
   if (isPlainLead(user)) {
-    // Lead sees: themselves + direct reports + other leads (cross-team directory)
+    // Lead sees only their own team directory.
     return db.users
       .filter((item) => !isDemoOnlyAccess(item))
-      .filter(
-        (item) =>
-          item.id === user.id ||
-          item.leadUserId === user.id ||
-          isPlainLead(item) ||
-          isPlatformAdmin(item)
-      )
+      .filter((item) => userInLeadTeam(db, user, item))
       .map(publicUser);
   }
   return [];
@@ -2234,15 +2422,17 @@ function scopeWorkspace(db, user) {
   const allResponses = db.surveyResponses || [];
   const scopedSurveys = visibleSurveys.map((survey) => {
     const responsesForSurvey = allResponses.filter((response) => response.surveyId === survey.id);
+    const scopedResponsesForSurvey = responsesForSurvey.filter((response) => {
+      if (isPlatformAdmin(user) || isDemoUser(user)) return true;
+      return response.personId ? ids.has(response.personId) : false;
+    });
     const myResponse = !isAdmin(user) && user.personId
-      ? responsesForSurvey.find((response) => response.personId === user.personId) || null
+      ? scopedResponsesForSurvey.find((response) => response.personId === user.personId) || null
       : null;
-    const aggregate = isAdmin(user) ? buildSurveyAggregate(survey, responsesForSurvey) : null;
+    const aggregate = isAdmin(user) ? buildSurveyAggregate(survey, scopedResponsesForSurvey) : null;
     const responseList =
       isAdmin(user) && !survey.anonymous
-        ? responsesForSurvey
-            .filter((response) => !response.personId || ids.has(response.personId))
-            .map((response) => ({
+        ? scopedResponsesForSurvey.map((response) => ({
               id: response.id,
               personId: response.personId,
               submittedAt: response.submittedAt,
@@ -2251,7 +2441,7 @@ function scopeWorkspace(db, user) {
         : null;
     return {
       ...survey,
-      responseCount: responsesForSurvey.length,
+      responseCount: scopedResponsesForSurvey.length,
       myResponse: myResponse
         ? { id: myResponse.id, submittedAt: myResponse.submittedAt, answers: myResponse.answers }
         : null,
@@ -2262,6 +2452,7 @@ function scopeWorkspace(db, user) {
 
   return {
     people: db.people.filter((person) => ids.has(person.id)),
+    lprs: (db.lprs || []).filter((lpr) => ids.has(lpr.personId)),
     cards: db.cards.filter((card) => ids.has(card.personId)),
     actions: db.actions.filter((action) => ids.has(action.personId)),
     goals: (db.goals || []).filter((goal) => ids.has(goal.personId)),
@@ -2366,10 +2557,12 @@ function buildSurveyAggregate(survey, responses) {
   return totals;
 }
 
-function sanitizeCard(card, personId, forcedSource = null) {
+function sanitizeCard(card, personId, forcedSource = null, lprIds = new Set()) {
+  const lprId = String(card.lprId || "").trim();
   return {
     id: String(card.id || makeId("card")),
     personId,
+    lprId: lprIds.has(lprId) ? lprId : "",
     source: forcedSource || (card.source === "manager" ? "manager" : "employee"),
     category: ["checkin", "blocker", "growth", "feedback", "decision", "thanks"].includes(card.category)
       ? card.category
@@ -2571,10 +2764,24 @@ function snapshotPulse(db) {
     .sort((a, b) => a.capturedAt.localeCompare(b.capturedAt));
 }
 
-function sanitizeGoal(goal, personId) {
+function sanitizeLpr(lpr, personId) {
+  return {
+    id: String(lpr.id || makeId("lpr")),
+    personId,
+    title: String(lpr.title || "").slice(0, 200),
+    focus: String(lpr.focus || "").slice(0, 2000),
+    status: lprStatuses.includes(lpr.status) ? lpr.status : "active",
+    createdAt: typeof lpr.createdAt === "string" && lpr.createdAt ? lpr.createdAt : new Date().toISOString(),
+    updatedAt: typeof lpr.updatedAt === "string" && lpr.updatedAt ? lpr.updatedAt : new Date().toISOString()
+  };
+}
+
+function sanitizeGoal(goal, personId, lprIds = new Set()) {
+  const lprId = String(goal.lprId || "").trim();
   return {
     id: String(goal.id || makeId("goal")),
     personId,
+    lprId: lprIds.has(lprId) ? lprId : "",
     title: String(goal.title || "").slice(0, 200),
     description: String(goal.description || "").slice(0, 1500),
     horizon: String(goal.horizon || "").slice(0, 32),
@@ -2587,17 +2794,25 @@ function sanitizeGoal(goal, personId) {
 
 function mergeWorkspaceUpdate(db, user, incoming) {
   const ids = scopedPersonIds(db, user);
+  const incomingHasLprs = Array.isArray(incoming.lprs);
+  const incomingLprs = incomingHasLprs ? incoming.lprs : [];
   const incomingCards = Array.isArray(incoming.cards) ? incoming.cards : [];
   const incomingActions = Array.isArray(incoming.actions) ? incoming.actions : [];
   const incomingGoals = Array.isArray(incoming.goals) ? incoming.goals : [];
 
   if (isAdmin(user)) {
+    const hiddenLprs = (db.lprs || []).filter((lpr) => !ids.has(lpr.personId));
+    const visibleLprs = (incomingHasLprs ? incomingLprs : (db.lprs || []).filter((lpr) => ids.has(lpr.personId)))
+      .filter((lpr) => ids.has(lpr.personId))
+      .map((lpr) => sanitizeLpr(lpr, lpr.personId));
+    const visibleLprIds = new Set(visibleLprs.map((lpr) => lpr.id));
     const hiddenCards = db.cards.filter((card) => !ids.has(card.personId));
     const hiddenActions = db.actions.filter((action) => !ids.has(action.personId));
     const hiddenGoals = (db.goals || []).filter((goal) => !ids.has(goal.personId));
+    db.lprs = [...hiddenLprs, ...visibleLprs];
     db.cards = incomingCards
       .filter((card) => ids.has(card.personId))
-      .map((card) => sanitizeCard(card, card.personId));
+      .map((card) => sanitizeCard(card, card.personId, null, visibleLprIds));
     db.cards = [...hiddenCards, ...db.cards];
     db.actions = incomingActions
       .filter((action) => ids.has(action.personId))
@@ -2607,7 +2822,7 @@ function mergeWorkspaceUpdate(db, user, incoming) {
       ...hiddenGoals,
       ...incomingGoals
         .filter((goal) => ids.has(goal.personId))
-        .map((goal) => sanitizeGoal(goal, goal.personId))
+        .map((goal) => sanitizeGoal(goal, goal.personId, visibleLprIds))
     ];
     db.prep = mergePrepUpdate(db.prep, incoming.prep, ids, adminWritablePrepKeys);
     db.pulse = mergePulseUpdate(db.pulse, incoming.pulse, ids);
@@ -2618,6 +2833,13 @@ function mergeWorkspaceUpdate(db, user, incoming) {
 
   const personId = user.personId;
   if (!personId) return db;
+
+  const otherLprs = (db.lprs || []).filter((lpr) => lpr.personId !== personId);
+  const personLprs = (incomingHasLprs ? incomingLprs : (db.lprs || []).filter((lpr) => lpr.personId === personId))
+    .filter((lpr) => lpr.personId === personId)
+    .map((lpr) => sanitizeLpr(lpr, personId));
+  const personLprIds = new Set(personLprs.map((lpr) => lpr.id));
+  db.lprs = [...otherLprs, ...personLprs];
 
   const nextCardsById = new Map(incomingCards.filter((card) => card.personId === personId).map((card) => [String(card.id), card]));
   const preservedCards = [];
@@ -2640,13 +2862,13 @@ function mergeWorkspaceUpdate(db, user, incoming) {
 
     if (incomingCard) {
       employeeCardIds.add(String(card.id));
-      preservedCards.push(sanitizeCard(incomingCard, personId, "employee"));
+      preservedCards.push(sanitizeCard(incomingCard, personId, "employee", personLprIds));
     }
   }
 
   const newEmployeeCards = incomingCards
     .filter((card) => card.personId === personId && card.source === "employee" && !employeeCardIds.has(String(card.id)))
-    .map((card) => sanitizeCard(card, personId, "employee"));
+    .map((card) => sanitizeCard(card, personId, "employee", personLprIds));
 
   const nextActionsById = new Map(incomingActions.filter((action) => action.personId === personId).map((action) => [String(action.id), action]));
   const preservedActions = [];
@@ -2683,7 +2905,7 @@ function mergeWorkspaceUpdate(db, user, incoming) {
   const otherGoals = (db.goals || []).filter((goal) => goal.personId !== personId);
   const personGoals = incomingGoals
     .filter((goal) => goal.personId === personId)
-    .map((goal) => sanitizeGoal(goal, personId));
+    .map((goal) => sanitizeGoal(goal, personId, personLprIds));
   db.goals = [...otherGoals, ...personGoals];
 
   db.prep[personId] = sanitizePrepPatch(db.prep[personId] || {}, incoming.prep?.[personId] || {}, employeeWritablePrepKeys);
@@ -2813,8 +3035,8 @@ async function handleApi(request, response) {
   if (request.method === "POST" && url.pathname === "/api/users") {
     const context = await requireAuth(request, response);
     if (!context) return;
-    if (!isLead(context.user)) {
-      sendJson(response, 403, { error: "Только лид или администратор может создавать логины" });
+    if (!isPlatformAdmin(context.user)) {
+      sendJson(response, 403, { error: "Только администратор платформы может создавать логины" });
       return;
     }
 
@@ -2824,25 +3046,12 @@ async function handleApi(request, response) {
     const personId = String(body.personId || "");
     // Requested role from the client; only platform admins can create leads.
     const requestedRole = ["lead", "employee"].includes(body.role) ? body.role : "employee";
-    if (requestedRole === "lead" && !isPlatformAdmin(context.user)) {
-      sendJson(response, 403, { error: "Только администратор платформы может создавать лидов" });
-      return;
-    }
-    // Lead-chain: platform admins can re-parent to any user; a regular lead can
-    // only attach new employees to themselves.
     let leadUserId = null;
     if (requestedRole === "employee") {
-      if (isPlatformAdmin(context.user) && body.leadUserId) {
-        const proposed = context.db.users.find((u) => u.id === body.leadUserId);
-        if (proposed && isLead(proposed)) leadUserId = proposed.id;
-      }
-      if (!leadUserId) leadUserId = context.user.id;
-    } else if (requestedRole === "lead") {
       if (body.leadUserId) {
         const proposed = context.db.users.find((u) => u.id === body.leadUserId);
-        if (proposed && isPlatformAdmin(proposed)) leadUserId = proposed.id;
+        if (proposed && isPlainLead(proposed)) leadUserId = proposed.id;
       }
-      if (!leadUserId) leadUserId = context.user.id;
     }
     let person = personId ? context.db.people.find((item) => item.id === personId) : null;
 
@@ -2872,10 +3081,44 @@ async function handleApi(request, response) {
       return;
     }
 
+    if (requestedRole === "lead") {
+      const name = String(body.name || body.personName || "").trim();
+      const teamLabel = String(body.teamLabel || body.personTeam || body.team || "").trim();
+      if (name.length < 2) {
+        sendJson(response, 400, { error: "Укажите имя тимлида" });
+        return;
+      }
+      if (teamLabel.length < 2) {
+        sendJson(response, 400, { error: "Укажите команду тимлида" });
+        return;
+      }
+      const user = {
+        id: makeId("user"),
+        username,
+        name: name.slice(0, 120),
+        role: "lead",
+        personId: person?.id || null,
+        leadUserId: null,
+        teamLabel: teamLabel.slice(0, 120),
+        createdAt: new Date().toISOString(),
+        ...hashPassword(password)
+      };
+
+      context.db.users.push(user);
+      await writeDb(context.db);
+      sendJson(response, 201, {
+        user: publicUser(user),
+        person: person || null,
+        workspace: scopeWorkspace(context.db, context.user)
+      });
+      return;
+    }
+
     if (!person) {
       const name = String(body.personName || body.name || "").trim();
-      const role = String(body.personRole || body.role || "SRE Engineer").trim();
-      const team = String(body.personTeam || body.team || "Reliability").trim();
+      const role = String(body.personRole || body.role || "Team Member").trim();
+      const leadUser = leadUserId ? context.db.users.find((u) => u.id === leadUserId) : null;
+      const team = String(body.personTeam || body.team || leadUser?.teamLabel || "Product").trim();
 
       if (name.length < 2) {
         sendJson(response, 400, { error: "Укажите имя участника" });
@@ -2935,7 +3178,7 @@ async function handleApi(request, response) {
       role: requestedRole,
       personId: person.id,
       leadUserId,
-      teamLabel: requestedRole === "lead" ? String(body.teamLabel || person.team || "").slice(0, 120) : "",
+      teamLabel: String(body.teamLabel || body.personTeam || person.team || "").slice(0, 120),
       createdAt: new Date().toISOString(),
       ...hashPassword(password)
     };
@@ -2957,8 +3200,8 @@ async function handleApi(request, response) {
   if (request.method === "POST" && userPasswordMatch) {
     const context = await requireAuth(request, response);
     if (!context) return;
-    if (!isAdmin(context.user)) {
-      sendJson(response, 403, { error: "Только администратор может менять пароли" });
+    if (!isPlatformAdmin(context.user)) {
+      sendJson(response, 403, { error: "Только администратор платформы может менять пароли" });
       return;
     }
 
@@ -3017,7 +3260,7 @@ async function handleApi(request, response) {
       target.leadUserId = null;
     } else if (typeof body.leadUserId === "string" && body.leadUserId) {
       const proposed = context.db.users.find((u) => u.id === body.leadUserId);
-      if (proposed && isLead(proposed) && proposed.id !== target.id) {
+      if (proposed && isPlainLead(proposed) && proposed.id !== target.id) {
         target.leadUserId = proposed.id;
       }
     }
@@ -3037,8 +3280,8 @@ async function handleApi(request, response) {
   if (request.method === "DELETE" && userMatch) {
     const context = await requireAuth(request, response);
     if (!context) return;
-    if (!isAdmin(context.user)) {
-      sendJson(response, 403, { error: "Только администратор может удалять логины" });
+    if (!isPlatformAdmin(context.user)) {
+      sendJson(response, 403, { error: "Только администратор платформы может удалять логины" });
       return;
     }
 
@@ -3068,15 +3311,15 @@ async function handleApi(request, response) {
   if (request.method === "POST" && url.pathname === "/api/people") {
     const context = await requireAuth(request, response);
     if (!context) return;
-    if (!isAdmin(context.user)) {
-      sendJson(response, 403, { error: "Только администратор может управлять командой" });
+    if (!isPlatformAdmin(context.user)) {
+      sendJson(response, 403, { error: "Только администратор платформы может управлять командой" });
       return;
     }
 
     const body = await readJson(request);
     const name = String(body.name || "").trim();
-    const role = String(body.role || "SRE Engineer").trim();
-    const team = String(body.team || "Reliability").trim();
+    const role = String(body.role || "Team Member").trim();
+    const team = String(body.team || "Product").trim();
 
     if (name.length < 2) {
       sendJson(response, 400, { error: "Укажите имя участника" });
@@ -3122,8 +3365,8 @@ async function handleApi(request, response) {
   if (request.method === "PATCH" && personMatch) {
     const context = await requireAuth(request, response);
     if (!context) return;
-    if (!isAdmin(context.user)) {
-      sendJson(response, 403, { error: "Только администратор может изменять участников" });
+    if (!isPlatformAdmin(context.user)) {
+      sendJson(response, 403, { error: "Только администратор платформы может изменять участников" });
       return;
     }
     const personId = decodeURIComponent(personMatch[1]);
@@ -3190,8 +3433,8 @@ async function handleApi(request, response) {
   if (request.method === "DELETE" && personMatch) {
     const context = await requireAuth(request, response);
     if (!context) return;
-    if (!isAdmin(context.user)) {
-      sendJson(response, 403, { error: "Только администратор может удалять участников" });
+    if (!isPlatformAdmin(context.user)) {
+      sendJson(response, 403, { error: "Только администратор платформы может удалять участников" });
       return;
     }
 
@@ -3229,8 +3472,8 @@ async function handleApi(request, response) {
   if (request.method === "POST" && personRestoreMatch) {
     const context = await requireAuth(request, response);
     if (!context) return;
-    if (!isAdmin(context.user)) {
-      sendJson(response, 403, { error: "Только администратор может восстанавливать участников" });
+    if (!isPlatformAdmin(context.user)) {
+      sendJson(response, 403, { error: "Только администратор платформы может восстанавливать участников" });
       return;
     }
     const personId = decodeURIComponent(personRestoreMatch[1]);
@@ -3250,7 +3493,7 @@ async function handleApi(request, response) {
     const context = await requireAuth(request, response);
     if (!context) return;
     if (!isAdmin(context.user)) {
-      sendJson(response, 403, { error: "Лог встреч ведёт администратор" });
+      sendJson(response, 403, { error: "Лог встреч ведёт лид команды" });
       return;
     }
     const body = await readJson(request);
@@ -3280,7 +3523,7 @@ async function handleApi(request, response) {
     const context = await requireAuth(request, response);
     if (!context) return;
     if (!isAdmin(context.user)) {
-      sendJson(response, 403, { error: "On-call ingest доступен только администратору" });
+      sendJson(response, 403, { error: "On-call ingest доступен только лиду команды" });
       return;
     }
     const body = await readJson(request);
@@ -3302,7 +3545,7 @@ async function handleApi(request, response) {
     const context = await requireAuth(request, response);
     if (!context) return;
     if (!isAdmin(context.user)) {
-      sendJson(response, 403, { error: "Заметки лида доступны только администратору" });
+      sendJson(response, 403, { error: "Заметки лида доступны только лиду команды" });
       return;
     }
     const body = await readJson(request);
@@ -3332,10 +3575,16 @@ async function handleApi(request, response) {
     const context = await requireAuth(request, response);
     if (!context) return;
     if (!isAdmin(context.user)) {
-      sendJson(response, 403, { error: "Заметки лида доступны только администратору" });
+      sendJson(response, 403, { error: "Заметки лида доступны только лиду команды" });
       return;
     }
     const noteId = decodeURIComponent(managerNoteMatch[1]);
+    const ids = scopedPersonIds(context.db, context.user);
+    const note = (context.db.managerNotes || []).find((item) => item.id === noteId);
+    if (!note || !ids.has(note.personId)) {
+      sendJson(response, 404, { error: "Заметка не найдена" });
+      return;
+    }
     context.db.managerNotes = (context.db.managerNotes || []).filter((note) => note.id !== noteId);
     await writeDb(context.db);
     const refreshed = await readDb();
@@ -3347,7 +3596,7 @@ async function handleApi(request, response) {
     const context = await requireAuth(request, response);
     if (!context) return;
     if (!isAdmin(context.user)) {
-      sendJson(response, 403, { error: "Только администратор может создавать опросы" });
+      sendJson(response, 403, { error: "Только лид команды может создавать опросы" });
       return;
     }
     const body = await readJson(request);
@@ -3403,7 +3652,7 @@ async function handleApi(request, response) {
     const context = await requireAuth(request, response);
     if (!context) return;
     if (!isAdmin(context.user)) {
-      sendJson(response, 403, { error: "Только администратор может удалять опросы" });
+      sendJson(response, 403, { error: "Только лид команды может удалять опросы" });
       return;
     }
     const surveyId = decodeURIComponent(surveyDeleteMatch[1]);
@@ -3491,8 +3740,8 @@ async function handleApi(request, response) {
   if (request.method === "POST" && url.pathname === "/api/reset") {
     const context = await requireAuth(request, response);
     if (!context) return;
-    if (!isAdmin(context.user)) {
-      sendJson(response, 403, { error: "Только администратор может сбросить демо" });
+    if (!isPlatformAdmin(context.user)) {
+      sendJson(response, 403, { error: "Только администратор платформы может сбросить демо" });
       return;
     }
 
