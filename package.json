@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Team health platform for collaborative one-to-one meetings.",
+  "description": "Team management platform for 1:1 meetings, development plans, goals, surveys, reports, and competency mapping.",
   "engines": {
     "node": ">=20"
   },

@@ -45,8 +45,10 @@ const emptyWorkspace = {
   cards: [],
   actions: [],
   goals: [],
+  competencyAssessments: [],
   prep: {},
   pulse: {},
+  meetingDrafts: {},
   notes: {},
   managerNotes: [],
   archivedPeople: [],
@@ -69,6 +71,19 @@ const lprStatusLabel = {
 };
 
 const lprStatusOrder = { active: 0, paused: 1, done: 2 };
+
+const competencyGradeLabel = {
+  junior: "Junior",
+  middle: "Middle",
+  senior: "Senior",
+  "lead-ready": "Lead-ready"
+};
+
+const competencySourceLabel = {
+  "case-ai": "AI case interview",
+  manual: "Ручная оценка",
+  review: "Review"
+};
 
 function todayISODate() {
   return new Date().toISOString().slice(0, 10);
@@ -101,6 +116,88 @@ function clampRangeValue(value, min, max, fallback) {
   const number = Number(value);
   const safeNumber = Number.isFinite(number) ? number : fallback;
   return Math.max(min, Math.min(max, Math.round(safeNumber)));
+}
+
+function parseScoreValue(value, fallback = 0) {
+  const number = Number(String(value ?? "").replace(",", ".").trim());
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(0, Math.min(5, Math.round(number * 10) / 10));
+}
+
+function formatScoreValue(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "0";
+  return Number.isInteger(number) ? String(number) : number.toFixed(1);
+}
+
+function competencyGradeFromScores(scores) {
+  const validScores = scores.map(Number).filter(Number.isFinite);
+  if (!validScores.length) return { averageScore: 0, minScore: 0, grade: "junior" };
+  const averageScore = Math.round((validScores.reduce((sum, score) => sum + score, 0) / validScores.length) * 10) / 10;
+  const minScore = Math.round(Math.min(...validScores) * 10) / 10;
+  const byAverage =
+    averageScore >= 4.5 ? "lead-ready" :
+    averageScore >= 3.5 ? "senior" :
+    averageScore >= 2.5 ? "middle" :
+    "junior";
+  const byThreshold =
+    minScore >= 4 ? "lead-ready" :
+    minScore >= 3 ? "senior" :
+    minScore >= 2 ? "middle" :
+    "junior";
+  const order = { junior: 0, middle: 1, senior: 2, "lead-ready": 3 };
+  return {
+    averageScore,
+    minScore,
+    grade: order[byAverage] <= order[byThreshold] ? byAverage : byThreshold
+  };
+}
+
+function competencyKey(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase()
+    .replace(/ё/g, "е");
+}
+
+function competencyTone(score, targetScore = 3) {
+  if (!Number.isFinite(Number(score))) return "empty";
+  if (score >= Math.max(targetScore, 4)) return "good";
+  if (score >= Math.max(2.5, targetScore - 0.5)) return "watch";
+  return "risk";
+}
+
+function parseCompetencyRows(rawText) {
+  return String(rawText || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line, index) => {
+      const parts = line.includes("|")
+        ? line.split("|").map((part) => part.trim())
+        : line.split("\t").map((part) => part.trim());
+      if (parts.length < 3 || /компетенц|балл/i.test(parts.join(" "))) return null;
+      const hasCategory = parts.length >= 5;
+      const category = hasCategory ? parts[0] : "";
+      const name = hasCategory ? parts[1] : parts[0];
+      const score = parseScoreValue(hasCategory ? parts[2] : parts[1], 0);
+      const targetScore = parseScoreValue(hasCategory ? parts[3] : parts[2], Math.max(score, 3));
+      const evidence = hasCategory ? parts[4] || "" : parts[3] || "";
+      const recommendation = hasCategory ? parts.slice(5).join(" | ") : parts.slice(4).join(" | ");
+      if (!name) return null;
+      return {
+        id: `competency-${Date.now().toString(16)}-${index}`,
+        name,
+        category,
+        score,
+        targetScore,
+        evidence,
+        recommendation
+      };
+    })
+    .filter(Boolean);
 }
 
 function buildMonthGrid(year, month /* 0-11 */) {
@@ -578,8 +675,8 @@ function sectionDescriptionFor(sectionId, { isAdmin, selectedPerson }) {
       ? "Создавайте опросы для команды и смотрите агрегированные ответы. Анонимные опросы не показывают, кто ответил."
       : "Заполните доступные опросы — это поможет лиду подготовиться к встрече и увидеть командный контекст.",
     reports: isAdmin
-      ? "Смотрите тренды по пульсу, темам, целям, действиям и балансу авторства повестки."
-      : "Смотрите свои тренды по пульсу, темам, целям и договорённостям между встречами.",
+      ? "Смотрите тренды по пульсу, темам, целям, действиям, авторству повестки и карте компетенций."
+      : "Смотрите свои тренды по пульсу, темам, целям, компетенциям и договорённостям между встречами.",
     team: "Ведите состав команды, профили участников, роли, фокус менеджера и статус рабочих 1:1.",
     admin: "Управляйте доступами, ролями, логинами и паролями без смешивания демо и рабочей команды.",
     settings: "Настройте имя профиля, пароль, тему интерфейса и безопасные действия с демо-данными."
@@ -1042,6 +1139,7 @@ export default function App() {
   const [userMessage, setUserMessage] = useState("");
   const [formErrors, setFormErrors] = useState({});
   const [profileName, setProfileName] = useState("");
+  const [showCreateLoginForm, setShowCreateLoginForm] = useState(false);
 
   const setFormError = (formId, message) =>
     setFormErrors((current) => ({ ...current, [formId]: message }));
@@ -1068,6 +1166,12 @@ export default function App() {
     title: "",
     focus: ""
   });
+  const [competencyDraft, setCompetencyDraft] = useState({
+    personId: "",
+    title: "Кейс-интервью по компетенциям",
+    roleContext: "",
+    rows: ""
+  });
   const [lprFilter, setLprFilter] = useState({ personId: "all", status: "active" });
   const [surveyDrafts, setSurveyDrafts] = useState({});
   const [expandedSurveyId, setExpandedSurveyId] = useState("");
@@ -1089,6 +1193,7 @@ export default function App() {
   const [pulseDrafts, setPulseDrafts] = useState({});
   const [goalProgressDrafts, setGoalProgressDrafts] = useState({});
   const [editingPersonId, setEditingPersonId] = useState("");
+  const createLoginPanelRef = useRef(null);
   const [personEditDraft, setPersonEditDraft] = useState({
     name: "",
     role: "",
@@ -1133,6 +1238,8 @@ export default function App() {
   const summaryPanelRef = useRef(null);
   const dirtyRef = useRef(false);
   const retrySaveTimerRef = useRef(null);
+  const meetingStateSaveTimerRef = useRef(null);
+  const meetingStateSaveQueueRef = useRef({});
   const pendingCardTitleKeysRef = useRef(new Set());
   const pendingActionTitleKeysRef = useRef(new Set());
 
@@ -1140,6 +1247,8 @@ export default function App() {
   // platform admin sections still check the exact role.
   const isPlatformAdmin = isPlatformAdminRole(user);
   const isAdmin = isLeadRole(user);
+  const canCreateLeadLogin = isPlatformAdminRole(user);
+  const canResetDemo = Boolean(user?.canResetDemo);
   const displayName = user?.name || user?.username || "";
 
   useEffect(() => {
@@ -1161,6 +1270,9 @@ export default function App() {
     return () => {
       if (retrySaveTimerRef.current) {
         window.clearTimeout(retrySaveTimerRef.current);
+      }
+      if (meetingStateSaveTimerRef.current) {
+        window.clearTimeout(meetingStateSaveTimerRef.current);
       }
     };
   }, []);
@@ -1193,6 +1305,10 @@ export default function App() {
     setNewLpr((current) => ({
       ...current,
       personId: isAdmin ? "" : user?.personId || ""
+    }));
+    setCompetencyDraft((current) => ({
+      ...current,
+      personId: isAdmin ? current.personId : user?.personId || ""
     }));
   }, [isAdmin, user?.personId]);
 
@@ -1258,6 +1374,7 @@ export default function App() {
       });
       setUser(response.user);
       setActiveSection("home");
+      setShowCreateLoginForm(false);
       const responseCanManageTeam = isLeadRole(response.user);
       setNewCard((current) => ({ ...current, source: responseCanManageTeam ? current.source : "employee" }));
       setNewAction((current) => ({ ...current, owner: responseCanManageTeam ? current.owner : "employee" }));
@@ -1273,10 +1390,18 @@ export default function App() {
     setWorkspace(null);
     setSummaryText("");
     setActiveSection("home");
+    setShowCreateLoginForm(false);
   }
 
   function commitWorkspace(updater) {
     dirtyRef.current = true;
+    setWorkspace((current) => {
+      if (!current) return current;
+      return typeof updater === "function" ? updater(current) : updater;
+    });
+  }
+
+  function patchWorkspaceLocally(updater) {
     setWorkspace((current) => {
       if (!current) return current;
       return typeof updater === "function" ? updater(current) : updater;
@@ -1318,12 +1443,91 @@ export default function App() {
     }
   }
 
+  function mergeMeetingStatePatch(existing = {}, patch = {}) {
+    const next = { ...existing };
+    if (patch.prep) {
+      next.prep = { ...(existing.prep || {}), ...patch.prep };
+    }
+    if (patch.pulse) {
+      next.pulse = { ...(existing.pulse || {}), ...patch.pulse };
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "meetingDraft")) {
+      next.meetingDraft = patch.meetingDraft;
+    }
+    return next;
+  }
+
+  function queueMeetingStateSave(personId, patch) {
+    meetingStateSaveQueueRef.current = {
+      ...meetingStateSaveQueueRef.current,
+      [personId]: mergeMeetingStatePatch(meetingStateSaveQueueRef.current[personId], patch)
+    };
+    if (meetingStateSaveTimerRef.current) {
+      window.clearTimeout(meetingStateSaveTimerRef.current);
+    }
+    meetingStateSaveTimerRef.current = window.setTimeout(() => {
+      void flushMeetingStateSaves();
+    }, 350);
+  }
+
+  async function flushMeetingStateSaves() {
+    const queued = meetingStateSaveQueueRef.current;
+    meetingStateSaveQueueRef.current = {};
+    meetingStateSaveTimerRef.current = null;
+    const entries = Object.entries(queued);
+    if (!entries.length) return;
+
+    try {
+      setSaveError("");
+      let latestWorkspace = null;
+      for (const [personId, patch] of entries) {
+        const response = await apiFetch(`/api/people/${encodeURIComponent(personId)}/meeting-state`, {
+          method: "PATCH",
+          body: JSON.stringify(patch)
+        });
+        latestWorkspace = response.workspace || latestWorkspace;
+      }
+      if (latestWorkspace) {
+        setWorkspace((current) =>
+          current
+            ? {
+                ...current,
+                prep: latestWorkspace.prep || current.prep,
+                pulse: latestWorkspace.pulse || current.pulse,
+                pulseHistory: latestWorkspace.pulseHistory || current.pulseHistory,
+                meetingDrafts: latestWorkspace.meetingDrafts || current.meetingDrafts
+              }
+            : current
+        );
+      }
+    } catch (error) {
+      setSaveError(error.message);
+      if (error.message.includes("авторизация")) {
+        setUser(null);
+        setWorkspace(null);
+        return;
+      }
+      for (const [personId, patch] of entries) {
+        meetingStateSaveQueueRef.current[personId] = mergeMeetingStatePatch(
+          patch,
+          meetingStateSaveQueueRef.current[personId]
+        );
+      }
+      if (!meetingStateSaveTimerRef.current) {
+        meetingStateSaveTimerRef.current = window.setTimeout(() => {
+          void flushMeetingStateSaves();
+        }, 1600);
+      }
+    }
+  }
+
   const selectedPerson =
     workspace?.people.find((person) => person.id === selectedPersonId) ||
     workspace?.people[0] ||
     null;
   const selectedPulse = selectedPerson ? workspace?.pulse[selectedPerson.id] || {} : {};
   const selectedPulseDraft = selectedPerson ? pulseDrafts[selectedPerson.id] || {} : {};
+  const selectedMeetingDraft = selectedPerson ? workspace?.meetingDrafts?.[selectedPerson.id] || "" : "";
   const selectedScore = selectedPerson ? scorePulse(selectedPulse) : 0;
   const personPrep = selectedPerson ? workspace?.prep[selectedPerson.id] || {} : {};
   const personActions = selectedPerson ? workspace?.actions.filter((action) => action.personId === selectedPerson.id) || [] : [];
@@ -1663,6 +1867,7 @@ export default function App() {
     const cards = workspace?.cards || [];
     const actions = workspace?.actions || [];
     const goals = workspace?.goals || [];
+    const assessments = workspace?.competencyAssessments || [];
     const peopleScope = workspace?.people || [];
 
     const grouped = new Map();
@@ -1749,6 +1954,54 @@ export default function App() {
       { label: "75–100%", value: activeGoals.filter((g) => g.progress >= 75).length, color: "#6c8f55" }
     ];
 
+    const latestCompetencyAssessments = peopleScope
+      .map((person) => {
+        const latest = assessments
+          .filter((assessment) => assessment.personId === person.id)
+          .sort((a, b) => (b.validatedAt || b.createdAt || "").localeCompare(a.validatedAt || a.createdAt || ""))[0];
+        return latest ? { person, assessment: latest } : null;
+      })
+      .filter(Boolean);
+    const competencyNames = [];
+    const competencyNameByKey = new Map();
+    for (const { assessment } of latestCompetencyAssessments) {
+      for (const competency of assessment.competencies || []) {
+        const key = competencyKey(competency.name);
+        if (!key || competencyNameByKey.has(key)) continue;
+        competencyNameByKey.set(key, competency.name);
+        competencyNames.push(key);
+      }
+    }
+    const competencyMatrixRows = competencyNames.map((key) => {
+      const cells = latestCompetencyAssessments.map(({ person, assessment }) => {
+        const competency = (assessment.competencies || []).find((item) => competencyKey(item.name) === key);
+        return {
+          person,
+          assessmentId: assessment.id,
+          score: competency ? Number(competency.score) : null,
+          targetScore: competency ? Number(competency.targetScore || 3) : null,
+          recommendation: competency?.recommendation || "",
+          evidence: competency?.evidence || ""
+        };
+      });
+      const scored = cells.filter((cell) => Number.isFinite(cell.score));
+      const avg = scored.length ? Math.round((scored.reduce((sum, cell) => sum + cell.score, 0) / scored.length) * 10) / 10 : 0;
+      const belowTarget = scored.filter((cell) => cell.score < (cell.targetScore || 3)).length;
+      const busFactor = scored.filter((cell) => cell.score >= 4).length;
+      return {
+        key,
+        name: competencyNameByKey.get(key),
+        cells,
+        avg,
+        coverage: scored.length,
+        belowTarget,
+        busFactor
+      };
+    }).sort((a, b) => b.belowTarget - a.belowTarget || a.avg - b.avg || a.name.localeCompare(b.name));
+    const competencyWeaknesses = competencyMatrixRows.filter((row) => row.coverage > 0 && (row.avg < 3 || row.belowTarget >= Math.ceil(row.coverage / 2)));
+    const competencyStrengths = competencyMatrixRows.filter((row) => row.coverage > 0 && row.avg >= 4 && row.belowTarget === 0);
+    const competencyBusFactorRisks = competencyMatrixRows.filter((row) => row.coverage >= 2 && row.busFactor <= 1);
+
     const latestDate = sortedDates[sortedDates.length - 1];
     const latestBucket = latestDate ? grouped.get(latestDate) : null;
     const latestAvg = latestBucket && latestBucket.count
@@ -1781,6 +2034,13 @@ export default function App() {
       completionPct,
       goalBuckets,
       activeGoalsCount: activeGoals.length,
+      assessments,
+      assessmentCount: assessments.length,
+      latestCompetencyAssessments,
+      competencyMatrixRows,
+      competencyWeaknesses,
+      competencyStrengths,
+      competencyBusFactorRisks,
       latestAvg,
       trendDelta,
       peopleCount: peopleScope.length,
@@ -1914,6 +2174,20 @@ export default function App() {
       title: `${goalsAggregate.atRisk} ${pluralizeRu(goalsAggregate.atRisk, ["цель", "цели", "целей"])} под риском`,
       action: "привязать к ЛПР и ближайшим шагам",
       section: "goals"
+    },
+    reportsData.competencyWeaknesses.length > 0 && {
+      id: "competency-weaknesses",
+      tone: "watch",
+      title: `${reportsData.competencyWeaknesses.length} ${pluralizeRu(reportsData.competencyWeaknesses.length, ["компетенция проседает", "компетенции проседают", "компетенций проседают"])}`,
+      action: "импортировать зоны роста в ЛПР",
+      section: "reports"
+    },
+    reportsData.competencyBusFactorRisks.length > 0 && {
+      id: "competency-bus-factor",
+      tone: "risk",
+      title: `${reportsData.competencyBusFactorRisks.length} ${pluralizeRu(reportsData.competencyBusFactorRisks.length, ["риск bus factor", "риска bus factor", "рисков bus factor"])}`,
+      action: "распределить критичные навыки в команде",
+      section: "reports"
     }
   ].filter(Boolean).slice(0, 6);
   const peopleWithoutAccess = (workspace?.people || []).filter(
@@ -1969,6 +2243,26 @@ export default function App() {
     }
   }
 
+  function openCreateLoginForm() {
+    setUserMessage("");
+    clearFormError("createUser");
+    setShowCreateLoginForm(true);
+    setNewUser((current) => ({
+      ...current,
+      role: canCreateLeadLogin ? current.role : "employee",
+      leadUserId: canCreateLeadLogin ? current.leadUserId : "",
+      personTeam: !canCreateLeadLogin && user?.teamLabel ? user.teamLabel : current.personTeam || "Product"
+    }));
+    window.requestAnimationFrame(() => {
+      createLoginPanelRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+    });
+  }
+
+  function closeCreateLoginForm() {
+    setShowCreateLoginForm(false);
+    clearFormError("createUser");
+  }
+
   function pulseValue(metric) {
     return selectedPulseDraft[metric] ?? selectedPulse[metric] ?? 5;
   }
@@ -2006,7 +2300,7 @@ export default function App() {
       clearPulseDraft(metric);
       return;
     }
-    commitWorkspace((current) => ({
+    patchWorkspaceLocally((current) => ({
       ...current,
       pulse: {
         ...current.pulse,
@@ -2016,6 +2310,7 @@ export default function App() {
         }
       }
     }));
+    queueMeetingStateSave(selectedPerson.id, { pulse: { [metric]: next } });
     clearPulseDraft(metric);
   }
 
@@ -2023,16 +2318,18 @@ export default function App() {
     if (!selectedPerson) return;
     const item = checklist.find((entry) => entry.id === itemId);
     if (!isAdmin && item?.owner === "manager") return;
-    commitWorkspace((current) => ({
+    const nextValue = !personPrep[itemId];
+    patchWorkspaceLocally((current) => ({
       ...current,
       prep: {
         ...current.prep,
         [selectedPerson.id]: {
           ...(current.prep[selectedPerson.id] || {}),
-          [itemId]: !current.prep[selectedPerson.id]?.[itemId]
+          [itemId]: nextValue
         }
       }
     }));
+    queueMeetingStateSave(selectedPerson.id, { prep: { [itemId]: nextValue } });
   }
 
   function addAgendaCard(event) {
@@ -2389,6 +2686,179 @@ export default function App() {
     setUserMessage("ЛПР удалён, связанные темы и цели сохранены");
   }
 
+  function submitCompetencyAssessment(event) {
+    event.preventDefault();
+    clearFormError("competency-report");
+    if (!isAdmin) return;
+    try {
+      const personId = competencyDraft.personId || selectedPersonId;
+      const person = workspace?.people.find((item) => item.id === personId);
+      if (!person) throw new Error("Выберите участника");
+      const competencies = parseCompetencyRows(competencyDraft.rows);
+      if (competencies.length === 0) {
+        throw new Error("Добавьте хотя бы одну строку компетенции");
+      }
+      const now = new Date().toISOString();
+      const grade = competencyGradeFromScores(competencies.map((competency) => competency.score));
+      const recommendations = competencies
+        .filter((competency) => competency.recommendation && competency.score < competency.targetScore)
+        .map((competency) => ({
+          id: makeId("competency-action"),
+          competencyName: competency.name,
+          action: competency.recommendation,
+          dueDate: ""
+        }));
+      const assessment = {
+        id: makeId("assessment"),
+        personId: person.id,
+        title: competencyDraft.title.trim() || "Кейс-интервью по компетенциям",
+        roleContext: competencyDraft.roleContext.trim() || `${person.role} · ${person.team}`,
+        source: "case-ai",
+        status: "validated",
+        scaleMax: 5,
+        ...grade,
+        competencies,
+        cases: [],
+        recommendations,
+        createdAt: now,
+        validatedAt: now
+      };
+      commitWorkspace((current) => ({
+        ...current,
+        competencyAssessments: [assessment, ...(current.competencyAssessments || [])]
+      }));
+      setCompetencyDraft({
+        personId: person.id,
+        title: "Кейс-интервью по компетенциям",
+        roleContext: "",
+        rows: ""
+      });
+      setUserMessage("Отчёт по компетенциям сохранён");
+    } catch (error) {
+      setFormError("competency-report", error.message);
+    }
+  }
+
+  function deleteCompetencyAssessment(assessmentId) {
+    if (!isAdmin) return;
+    commitWorkspace((current) => ({
+      ...current,
+      competencyAssessments: (current.competencyAssessments || []).filter((assessment) => assessment.id !== assessmentId)
+    }));
+    setUserMessage("Отчёт по компетенциям удалён");
+  }
+
+  function importAssessmentToLpr(assessment) {
+    if (!isAdmin || !assessment) return;
+    const person = workspace?.people.find((item) => item.id === assessment.personId);
+    if (!person) return;
+    const gaps = [...(assessment.competencies || [])]
+      .filter((competency) => Number(competency.score) < Number(competency.targetScore || 3))
+      .sort((a, b) => (b.targetScore - b.score) - (a.targetScore - a.score));
+    const selectedGaps = (gaps.length ? gaps : [...(assessment.competencies || [])].sort((a, b) => a.score - b.score)).slice(0, 4);
+    if (selectedGaps.length === 0) {
+      setUserMessage("В отчёте нет компетенций для ЛПР");
+      return;
+    }
+    const now = new Date().toISOString();
+    const lpr = {
+      id: makeId("lpr"),
+      personId: person.id,
+      title: `ЛПР: ${assessment.title}`,
+      focus: [
+        `${person.name}: ${competencyGradeLabel[assessment.grade] || assessment.grade}, средний балл ${formatScoreValue(assessment.averageScore)}, минимум ${formatScoreValue(assessment.minScore)}.`,
+        `Зоны роста: ${selectedGaps.map((competency) => `${competency.name} ${formatScoreValue(competency.score)}→${formatScoreValue(competency.targetScore)}`).join("; ")}.`,
+        "Источник: структурированный отчёт кейс-интервью по компетенциям."
+      ].join("\n"),
+      status: "active",
+      createdAt: now,
+      updatedAt: now
+    };
+    const goals = selectedGaps.slice(0, 3).map((competency) => {
+      const matchingAction = (assessment.recommendations || []).find(
+        (item) => competencyKey(item.competencyName) === competencyKey(competency.name)
+      );
+      return {
+        id: makeId("goal"),
+        personId: person.id,
+        lprId: lpr.id,
+        title: `${competency.name}: ${formatScoreValue(competency.score)} → ${formatScoreValue(competency.targetScore)}`,
+        description: matchingAction?.action || competency.recommendation || competency.evidence || "Уточнить практический шаг на ближайшем 1:1.",
+        horizon: "3 месяца",
+        progress: 0,
+        status: "active",
+        createdAt: now,
+        dueDate: matchingAction?.dueDate || ""
+      };
+    });
+    commitWorkspace((current) => ({
+      ...current,
+      lprs: [lpr, ...(current.lprs || [])],
+      goals: [...goals, ...(current.goals || [])]
+    }));
+    setLprFilter({ personId: isAdmin ? person.id : "all", status: "active" });
+    setUserMessage("Зоны роста импортированы в ЛПР");
+  }
+
+  function exportCompetencyCsv() {
+    const peopleMap = new Map((workspace?.people || []).map((person) => [person.id, person]));
+    const headers = [
+      "personName",
+      "personRole",
+      "team",
+      "assessmentTitle",
+      "reportDate",
+      "grade",
+      "averageScore",
+      "minScore",
+      "competency",
+      "category",
+      "score",
+      "targetScore",
+      "gap",
+      "evidence",
+      "recommendation"
+    ];
+    const escape = (value) => {
+      const s = String(value ?? "");
+      return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const rows = [headers.map(escape).join(",")];
+    for (const assessment of workspace?.competencyAssessments || []) {
+      const person = peopleMap.get(assessment.personId);
+      for (const competency of assessment.competencies || []) {
+        const gap = Math.round((Number(competency.targetScore || 0) - Number(competency.score || 0)) * 10) / 10;
+        rows.push([
+          person?.name || assessment.personId,
+          person?.role || "",
+          person?.team || "",
+          assessment.title,
+          String(assessment.validatedAt || assessment.createdAt || "").slice(0, 10),
+          competencyGradeLabel[assessment.grade] || assessment.grade,
+          assessment.averageScore,
+          assessment.minScore,
+          competency.name,
+          competency.category,
+          competency.score,
+          competency.targetScore,
+          gap,
+          competency.evidence,
+          competency.recommendation
+        ].map(escape).join(","));
+      }
+    }
+    const blob = new Blob(["﻿" + rows.join("\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `team-competency-matrix-${todayISODate()}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    setUserMessage("CSV по компетенциям скачан");
+  }
+
   function promoteCardToLpr(card) {
     if (!selectedPerson) return;
     const now = new Date().toISOString();
@@ -2600,8 +3070,12 @@ export default function App() {
             rows.push(escape(`${q.prompt} → ${item.label}`) + "," + item.value);
           }
         } else if (q.type === "text" || q.type === "date") {
-          for (const sample of stats.samples || []) {
-            rows.push(escape(`${q.prompt}`) + "," + escape(sample));
+          if (stats.redacted) {
+            rows.push(escape(`${q.prompt}: ответов ${stats.count}`));
+          } else {
+            for (const sample of stats.samples || []) {
+              rows.push(escape(`${q.prompt}`) + "," + escape(sample));
+            }
           }
         }
       }
@@ -2706,15 +3180,37 @@ export default function App() {
     }));
   }
 
+  function updateMeetingDraft(value) {
+    if (!selectedPerson) return;
+    patchWorkspaceLocally((current) => ({
+      ...current,
+      meetingDrafts: {
+        ...(current.meetingDrafts || {}),
+        [selectedPerson.id]: value
+      }
+    }));
+    queueMeetingStateSave(selectedPerson.id, { meetingDraft: value });
+  }
+
+  function clearMeetingDraft() {
+    if (!selectedPerson) return;
+    updateMeetingDraft("");
+    setUserMessage("Протокол очищен");
+  }
+
   function buildSummary() {
     if (!selectedPerson) return;
     const discussed = personCards.filter((card) => card.status === "done").map((card) => `- ${card.title}`);
     const open = personCards.filter((card) => card.status !== "done").map((card) => `- ${card.title}`);
     const actions = personActions.map((action) => `- ${ownerLabel(action.owner)}: ${action.title} (${action.due})`);
+    const transcript = selectedMeetingDraft.trim();
 
     const text = [
       `Итоги 1:1 с ${selectedPerson.meetingName}`,
       `Пульс: ${selectedScore}/100. Энергия ${selectedPulse.energy}/10, нагрузка ${selectedPulse.load}/10, ясность ${selectedPulse.clarity}/10, доверие ${selectedPulse.trust}/10.`,
+      "",
+      "Протокол встречи:",
+      transcript || "- Протокол не велся",
       "",
       "Обсудили:",
       discussed.length ? discussed.join("\n") : "- Пока нет закрытых тем",
@@ -2755,7 +3251,7 @@ export default function App() {
   }
 
   async function resetDemo() {
-    if (!isPlatformAdmin) return;
+    if (!canResetDemo) return;
     try {
       setSaveError("");
       setUserMessage("");
@@ -2775,6 +3271,7 @@ export default function App() {
       });
       setPasswordUpdate({ userId: "", password: "" });
       setActiveSection(nextWorkspace.people?.length ? "meetings" : "team");
+      setShowCreateLoginForm(false);
       setActiveView("agenda");
       setActiveFilter("all");
       setSummaryText("");
@@ -2792,6 +3289,7 @@ export default function App() {
     try {
       const username = newUser.username.trim();
       const password = newUser.password;
+      const effectiveRole = canCreateLeadLogin ? newUser.role : "employee";
 
       if (!/^[a-zA-Z0-9._-]{3,32}$/.test(username)) {
         throw new Error("Логин: 3-32 символа, латиница, цифры, точка, дефис или подчеркивание");
@@ -2801,7 +3299,7 @@ export default function App() {
         throw new Error("Пароль должен быть не короче 8 символов");
       }
 
-      const isLeadLogin = newUser.role === "lead";
+      const isLeadLogin = effectiveRole === "lead";
       if (newUser.personName.trim().length < 2) {
         throw new Error(isLeadLogin ? "Укажите имя тимлида" : "Укажите имя участника");
       }
@@ -2817,7 +3315,7 @@ export default function App() {
       const userResponse = await apiFetch("/api/users", {
         method: "POST",
         body: JSON.stringify({
-          role: newUser.role,
+          role: effectiveRole,
           username,
           password,
           name: newUser.personName,
@@ -2825,20 +3323,21 @@ export default function App() {
           personRole: newUser.personRole,
           personTeam: newUser.personTeam,
           teamLabel: newUser.personTeam,
-          leadUserId: newUser.role === "employee" ? newUser.leadUserId : ""
+          leadUserId: effectiveRole === "employee" ? newUser.leadUserId : ""
         })
       });
       const nextWorkspace = userResponse.workspace ? { ...emptyWorkspace, ...userResponse.workspace } : null;
       setWorkspace((current) => (nextWorkspace ? nextWorkspace : current));
       if (userResponse.user.personId) setSelectedPersonId(userResponse.user.personId);
       setUserMessage(`Логин ${userResponse.user.username} создан`);
+      setShowCreateLoginForm(false);
       setNewUser((current) => ({
         ...current,
         role: "employee",
         leadUserId: "",
         personName: "",
         personRole: "Team Member",
-        personTeam: "Product",
+        personTeam: !canCreateLeadLogin && user?.teamLabel ? user.teamLabel : "Product",
         username: "",
         password: ""
       }));
@@ -3092,6 +3591,134 @@ export default function App() {
     }
   }
 
+  function renderCreateLoginCard({
+    id = "create-login-panel",
+    description = "Тимлид получает доступ к своей команде, участник — только к своему 1:1.",
+    allowLeadCreation = canCreateLeadLogin,
+    showCancel = false
+  } = {}) {
+    const formRole = allowLeadCreation ? newUser.role : "employee";
+
+    return (
+      <article className="settings-card create-login-card" id={id} ref={createLoginPanelRef}>
+        <div className="settings-card-head">
+          <div>
+            <p className="eyebrow">Пользователи</p>
+            <h3>Создать логин</h3>
+            <p>{description}</p>
+          </div>
+          {showCancel && (
+            <button className="icon-button" type="button" onClick={closeCreateLoginForm} aria-label="Закрыть форму">
+              <X size={16} />
+            </button>
+          )}
+        </div>
+        <form className="settings-inline-form admin-inline" onSubmit={createEmployeeUser}>
+          {allowLeadCreation && (
+            <label>
+              Тип доступа
+              <select
+                value={newUser.role}
+                onChange={(event) =>
+                  setNewUser((current) => ({
+                    ...current,
+                    role: event.target.value,
+                    leadUserId: event.target.value === "lead" ? "" : current.leadUserId
+                  }))
+                }
+              >
+                <option value="employee">Участник команды</option>
+                <option value="lead">Тимлид</option>
+              </select>
+            </label>
+          )}
+          <label>
+            {formRole === "lead" ? "Имя тимлида" : "Имя участника"}
+            <input
+              value={newUser.personName}
+              onChange={(event) => setNewUser((current) => ({ ...current, personName: event.target.value }))}
+              placeholder={formRole === "lead" ? "Например: Мария Лидова" : "Например: Иван Петров"}
+              autoComplete="name"
+            />
+          </label>
+          <div className="two-field-grid">
+            {formRole === "employee" ? (
+              <label>
+                Роль в команде
+                <input
+                  value={newUser.personRole}
+                  onChange={(event) => setNewUser((current) => ({ ...current, personRole: event.target.value }))}
+                  placeholder="Product Manager"
+                />
+              </label>
+            ) : (
+              <label>
+                Роль в системе
+                <input value="Тимлид" readOnly />
+              </label>
+            )}
+            <label>
+              Команда
+              <input
+                value={newUser.personTeam}
+                onChange={(event) => setNewUser((current) => ({ ...current, personTeam: event.target.value }))}
+                placeholder="Product Growth"
+                readOnly={!allowLeadCreation && Boolean(user?.teamLabel)}
+              />
+            </label>
+          </div>
+          {formRole === "employee" && allowLeadCreation && teamLeadUsers.length > 0 && (
+            <label>
+              Тимлид
+              <select
+                value={newUser.leadUserId}
+                onChange={(event) => {
+                  const lead = teamLeadUsers.find((item) => item.id === event.target.value);
+                  setNewUser((current) => ({
+                    ...current,
+                    leadUserId: event.target.value,
+                    personTeam: lead?.teamLabel || current.personTeam
+                  }));
+                }}
+              >
+                <option value="">По названию команды</option>
+                {teamLeadUsers.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name} — {item.teamLabel || "команда не задана"}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <div className="two-field-grid">
+            <label>
+              Логин
+              <input
+                value={newUser.username}
+                onChange={(event) => setNewUser((current) => ({ ...current, username: event.target.value }))}
+                placeholder="ivan.sre"
+              />
+            </label>
+            <label>
+              Пароль
+              <input
+                type="password"
+                value={newUser.password}
+                onChange={(event) => setNewUser((current) => ({ ...current, password: event.target.value }))}
+                placeholder="минимум 8 символов"
+              />
+            </label>
+          </div>
+          {formErrors.createUser && <div className="form-error inline-form-error">{formErrors.createUser}</div>}
+          <button className="primary-button" type="submit">
+            <UserPlus size={16} />
+            Создать логин
+          </button>
+        </form>
+      </article>
+    );
+  }
+
   if (authState === "loading") {
     return (
       <div className="auth-screen">
@@ -3329,29 +3956,39 @@ export default function App() {
         {activeSection === "home" && (
           <section className="dashboard-view">
             {!hasDashboardPeople ? (
-              <section className="dashboard-empty-panel" aria-label="Пустая команда">
-                <div className="dashboard-empty-copy">
-                  <p className="eyebrow">{isAdmin ? "Старт" : "Мой профиль"}</p>
-                  <h3>{isAdmin ? "Команда пока пустая" : "Профиль 1:1 пока не настроен"}</h3>
-                  <p>
-                    {isAdmin
-                      ? "Добавьте участников и логины, после этого здесь появятся ближайшие 1:1, пульс, срочные темы и следующие шаги."
-                      : "Когда лидер добавит ваш профиль, здесь появятся темы, пульс, цели и договорённости."}
-                  </p>
-                </div>
-                {isAdmin && (
-                  <div className="dashboard-empty-actions">
-                    <button className="primary-button" type="button" onClick={() => openSection("admin")}>
-                      <UserPlus size={16} />
-                      Создать логин
-                    </button>
-                    <button className="soft-button" type="button" onClick={() => openSection("team")}>
-                      <UsersRound size={16} />
-                      Открыть команду
-                    </button>
+              <>
+                <section className="dashboard-empty-panel" aria-label="Пустая команда">
+                  <div className="dashboard-empty-copy">
+                    <p className="eyebrow">{isAdmin ? "Старт" : "Мой профиль"}</p>
+                    <h3>{isAdmin ? "Команда пока пустая" : "Профиль 1:1 пока не настроен"}</h3>
+                    <p>
+                      {isAdmin
+                        ? "Добавьте участников и логины, после этого здесь появятся ближайшие 1:1, пульс, срочные темы и следующие шаги."
+                        : "Когда лидер добавит ваш профиль, здесь появятся темы, пульс, цели и договорённости."}
+                    </p>
                   </div>
-                )}
-              </section>
+                  {isAdmin && (
+                    <div className="dashboard-empty-actions">
+                      <button className="primary-button" type="button" onClick={openCreateLoginForm}>
+                        <UserPlus size={16} />
+                        Создать логин
+                      </button>
+                      <button className="soft-button" type="button" onClick={() => openSection("team")}>
+                        <UsersRound size={16} />
+                        Открыть команду
+                      </button>
+                    </div>
+                  )}
+                </section>
+                {isAdmin && showCreateLoginForm && renderCreateLoginCard({
+                  id: "home-create-login-panel",
+                  description: canCreateLeadLogin
+                    ? "Создайте участника или тимлида, не уходя с главной."
+                    : "Добавьте участника в свою команду и сразу выдайте ему доступ.",
+                  allowLeadCreation: canCreateLeadLogin,
+                  showCancel: true
+                })}
+              </>
             ) : (
               <>
                 <section className="dashboard-hero" aria-label="Сводка команды">
@@ -4148,6 +4785,34 @@ export default function App() {
                   <li>Критичных сигналов нет: проверьте открытые действия и план развития.</li>
                 )}
               </ul>
+            </div>
+
+            <div className="meeting-transcript-panel">
+              <div className="section-heading compact">
+                <div>
+                  <p className="eyebrow">Стенография</p>
+                  <h3>Протокол встречи</h3>
+                </div>
+                <span className="visibility-chip shared">Видно участнику и лиду</span>
+              </div>
+              <textarea
+                value={selectedMeetingDraft}
+                onChange={(event) => updateMeetingDraft(event.target.value)}
+                placeholder="Ключевые цитаты, решения, контекст и открытые вопросы."
+                rows={10}
+              />
+              <div className="transcript-actions">
+                <span>{countLabel(selectedMeetingDraft.trim().length, ["символ", "символа", "символов"])}</span>
+                <button
+                  className="soft-button"
+                  type="button"
+                  onClick={clearMeetingDraft}
+                  disabled={!selectedMeetingDraft.trim()}
+                >
+                  <Trash2 size={15} />
+                  Очистить
+                </button>
+              </div>
             </div>
 
           </section>
@@ -5184,17 +5849,29 @@ export default function App() {
                               ) : question.type === "single" || question.type === "multi" ? (
                                 <BarChart data={stats.distribution} />
                               ) : question.type === "date" ? (
-                                <ul className="survey-text-list">
-                                  {stats.samples.map((d, i) => (
-                                    <li key={i}>{formatRuDate(d)}</li>
-                                  ))}
-                                </ul>
+                                stats.redacted ? (
+                                  <p className="survey-stat">
+                                    Ответов: <strong>{stats.count}</strong>. Ответы скрыты для анонимности.
+                                  </p>
+                                ) : (
+                                  <ul className="survey-text-list">
+                                    {stats.samples.map((d, i) => (
+                                      <li key={i}>{formatRuDate(d)}</li>
+                                    ))}
+                                  </ul>
+                                )
                               ) : (
-                                <ul className="survey-text-list">
-                                  {stats.samples.map((text, i) => (
-                                    <li key={i}>{text}</li>
-                                  ))}
-                                </ul>
+                                stats.redacted ? (
+                                  <p className="survey-stat">
+                                    Ответов: <strong>{stats.count}</strong>. Тексты скрыты для анонимности.
+                                  </p>
+                                ) : (
+                                  <ul className="survey-text-list">
+                                    {stats.samples.map((text, i) => (
+                                      <li key={i}>{text}</li>
+                                    ))}
+                                  </ul>
+                                )
                               )}
                             </section>
                           );
@@ -5414,7 +6091,203 @@ export default function App() {
                   <small>в работе</small>
                 </div>
               </article>
+              <article className="kpi-card slate">
+                <span className="kpi-icon"><ClipboardCheck size={18} /></span>
+                <div>
+                  <span>Отчётов навыков</span>
+                  <strong>{reportsData.assessmentCount}</strong>
+                  <small>{reportsData.competencyMatrixRows.length} компетенций</small>
+                </div>
+              </article>
             </div>
+
+            {(isAdmin || reportsData.competencyMatrixRows.length > 0) && (
+              <section className="dashboard-panel report-panel competency-panel">
+                <div className="section-heading compact">
+                  <div>
+                    <p className="eyebrow">Компетенции</p>
+                    <h3>Карта навыков команды</h3>
+                  </div>
+                  <div className="panel-actions">
+                    {isAdmin && reportsData.assessmentCount > 0 && (
+                      <button className="soft-button" type="button" onClick={exportCompetencyCsv}>
+                        <ArrowDown size={14} />
+                        CSV
+                      </button>
+                    )}
+                    <BarChart3 size={18} />
+                  </div>
+                </div>
+
+                {reportsData.competencyMatrixRows.length > 0 ? (
+                  <>
+                    <div className="competency-summary-grid">
+                      <div>
+                        <strong>{reportsData.competencyStrengths.length}</strong>
+                        <span>сильных зон</span>
+                      </div>
+                      <div>
+                        <strong>{reportsData.competencyWeaknesses.length}</strong>
+                        <span>зон роста</span>
+                      </div>
+                      <div>
+                        <strong>{reportsData.competencyBusFactorRisks.length}</strong>
+                        <span>bus factor рисков</span>
+                      </div>
+                    </div>
+                    <div className="competency-matrix-list" aria-label="Матрица компетенций">
+                      {reportsData.competencyMatrixRows.slice(0, 12).map((row) => (
+                        <article className="competency-row" key={row.key}>
+                          <div className="competency-row-head">
+                            <strong>{row.name}</strong>
+                            <small>
+                              среднее {formatScoreValue(row.avg)} · bus factor {row.busFactor} · {row.coverage} {pluralizeRu(row.coverage, ["оценка", "оценки", "оценок"])}
+                            </small>
+                          </div>
+                          <div className="competency-score-list">
+                            {row.cells.map((cell) => (
+                              <button
+                                className={`competency-score ${competencyTone(cell.score, cell.targetScore)}`}
+                                type="button"
+                                key={`${row.key}-${cell.person.id}`}
+                                onClick={() => selectPerson(cell.person.id)}
+                                title={cell.score == null ? "Нет оценки" : `${cell.person.name}: ${formatScoreValue(cell.score)} из ${formatScoreValue(cell.targetScore || 5)}`}
+                              >
+                                <span>{cell.person.initials || cell.person.name.slice(0, 2)}</span>
+                                <strong>{cell.score == null ? "—" : formatScoreValue(cell.score)}</strong>
+                              </button>
+                            ))}
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div className="empty-state compact-empty">
+                    <ClipboardCheck size={20} />
+                    <span>Отчёты по компетенциям появятся после кейс-интервью.</span>
+                  </div>
+                )}
+              </section>
+            )}
+
+            {isAdmin && (
+              <section className="dashboard-panel report-panel competency-intake-panel">
+                <div className="section-heading compact">
+                  <div>
+                    <p className="eyebrow">Case report</p>
+                    <h3>Добавить отчёт кейс-интервью</h3>
+                  </div>
+                  <ClipboardList size={18} />
+                </div>
+                <form className="competency-form" onSubmit={submitCompetencyAssessment}>
+                  <div className="two-field-grid">
+                    <label>
+                      <span>Участник</span>
+                      <select
+                        value={competencyDraft.personId}
+                        onChange={(event) => setCompetencyDraft((current) => ({ ...current, personId: event.target.value }))}
+                      >
+                        <option value="">Выберите участника</option>
+                        {workspace.people.map((person) => (
+                          <option value={person.id} key={person.id}>{person.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      <span>Роль / контекст</span>
+                      <input
+                        value={competencyDraft.roleContext}
+                        onChange={(event) => setCompetencyDraft((current) => ({ ...current, roleContext: event.target.value }))}
+                        placeholder="Например: Support L2 · CRM, база знаний, эскалации"
+                      />
+                    </label>
+                  </div>
+                  <label>
+                    <span>Название отчёта</span>
+                    <input
+                      value={competencyDraft.title}
+                      onChange={(event) => setCompetencyDraft((current) => ({ ...current, title: event.target.value }))}
+                    />
+                  </label>
+                  <label>
+                    <span>Компетенции</span>
+                    <textarea
+                      rows={6}
+                      value={competencyDraft.rows}
+                      onChange={(event) => setCompetencyDraft((current) => ({ ...current, rows: event.target.value }))}
+                      placeholder="Категория | Компетенция | Балл | Цель | Наблюдение | Следующий шаг"
+                    />
+                  </label>
+                  <p className="form-note">
+                    Одна строка на компетенцию, шкала 0–5. Этот формат затем уходит в матрицу, CSV и импорт ЛПР.
+                  </p>
+                  {formErrors["competency-report"] && (
+                    <p className="form-error">{formErrors["competency-report"]}</p>
+                  )}
+                  <div className="composer-actions">
+                    <button className="primary-button" type="submit" disabled={!workspace.people.length}>
+                      <Plus size={16} />
+                      Сохранить отчёт
+                    </button>
+                  </div>
+                </form>
+              </section>
+            )}
+
+            {reportsData.latestCompetencyAssessments.length > 0 && (
+              <section className="dashboard-panel report-panel competency-latest-panel">
+                <div className="section-heading compact">
+                  <div>
+                    <p className="eyebrow">Отчёты</p>
+                    <h3>Последние оценки по участникам</h3>
+                  </div>
+                  <UsersRound size={18} />
+                </div>
+                <div className="competency-report-list">
+                  {reportsData.latestCompetencyAssessments.map(({ person, assessment }) => {
+                    const gaps = (assessment.competencies || [])
+                      .filter((competency) => Number(competency.score) < Number(competency.targetScore || 3))
+                      .slice(0, 3);
+                    return (
+                      <article className="competency-report-row" key={assessment.id}>
+                        <div className="competency-report-main">
+                          <span className={`health-dot ${assessment.minScore < 2.5 ? "risk" : assessment.averageScore < 3.5 ? "watch" : "good"}`}>
+                            {formatScoreValue(assessment.averageScore)}
+                          </span>
+                          <span>
+                            <strong>{person.name}</strong>
+                            <small>
+                              {competencyGradeLabel[assessment.grade] || assessment.grade} · {competencySourceLabel[assessment.source] || assessment.source} · {assessment.title} · {String(assessment.validatedAt || assessment.createdAt || "").slice(0, 10)}
+                            </small>
+                          </span>
+                        </div>
+                        <div className="competency-gap-list">
+                          {gaps.length > 0
+                            ? gaps.map((gap) => (
+                                <span className="goal-chip muted" key={`${assessment.id}-${gap.id}`}>
+                                  {gap.name} {formatScoreValue(gap.score)}→{formatScoreValue(gap.targetScore)}
+                                </span>
+                              ))
+                            : <span className="goal-chip">без явных просадок</span>}
+                        </div>
+                        {isAdmin && (
+                          <div className="competency-report-actions">
+                            <button className="soft-button" type="button" onClick={() => importAssessmentToLpr(assessment)}>
+                              <ClipboardCheck size={14} />
+                              В ЛПР
+                            </button>
+                            <button className="icon-button" type="button" title="Удалить отчёт" onClick={() => deleteCompetencyAssessment(assessment.id)}>
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        )}
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
 
             <div className="report-insights-grid">
               <section className="dashboard-panel report-panel heatmap-panel">
@@ -5613,8 +6486,27 @@ export default function App() {
                 <p className="eyebrow">Команда</p>
                 <h3>Участники 1:1</h3>
               </div>
-              <span className="count-pill">{countLabel(workspace.people.length, ["участник", "участника", "участников"])}</span>
+              <div className="team-admin-header-actions">
+                <button
+                  className="primary-button"
+                  type="button"
+                  onClick={() => (showCreateLoginForm ? closeCreateLoginForm() : openCreateLoginForm())}
+                >
+                  <UserPlus size={16} />
+                  {showCreateLoginForm ? "Скрыть форму" : "Создать логин"}
+                </button>
+                <span className="count-pill">{countLabel(workspace.people.length, ["участник", "участника", "участников"])}</span>
+              </div>
             </div>
+
+            {showCreateLoginForm && renderCreateLoginCard({
+              id: "team-create-login-panel",
+              description: canCreateLeadLogin
+                ? "Создайте логин участника и при необходимости привяжите его к тимлиду."
+                : "Добавьте участника в свою команду и сразу выдайте ему доступ.",
+              allowLeadCreation: canCreateLeadLogin,
+              showCancel: true
+            })}
 
             <div className="team-overview-grid" aria-label="Состояние команды">
               {teamOverviewStats.map(([Icon, label, value, detail, tone]) => (
@@ -5906,7 +6798,7 @@ export default function App() {
               <div className="team-admin-hint">
                 <ShieldCheck size={18} />
                 <span>
-                  Управление пользователями (создание логинов, сброс паролей, удаление) —{" "}
+                  Сброс паролей и полный список логинов —{" "}
                   <button className="text-link" type="button" onClick={() => openSection("admin")}>
                     в Админке
                   </button>
@@ -5919,114 +6811,7 @@ export default function App() {
 
         {activeSection === "admin" && isPlatformAdminRole(user) && (
           <section className="admin-view">
-            <article className="settings-card">
-              <div className="settings-card-head">
-                <div>
-                  <p className="eyebrow">Пользователи</p>
-                  <h3>Создать логин</h3>
-                  <p>Тимлид получает доступ к своей команде, участник — только к своему 1:1.</p>
-                </div>
-              </div>
-              <form className="settings-inline-form admin-inline" onSubmit={createEmployeeUser}>
-                <label>
-                  Тип доступа
-                  <select
-                    value={newUser.role}
-                    onChange={(event) =>
-                      setNewUser((current) => ({
-                        ...current,
-                        role: event.target.value,
-                        leadUserId: event.target.value === "lead" ? "" : current.leadUserId
-                      }))
-                    }
-                  >
-                    <option value="employee">Участник команды</option>
-                    <option value="lead">Тимлид</option>
-                  </select>
-                </label>
-                <label>
-                  {newUser.role === "lead" ? "Имя тимлида" : "Имя участника"}
-                  <input
-                    value={newUser.personName}
-                    onChange={(event) => setNewUser((current) => ({ ...current, personName: event.target.value }))}
-                    placeholder={newUser.role === "lead" ? "Например: Мария Лидова" : "Например: Иван Петров"}
-                    autoComplete="name"
-                  />
-                </label>
-                <div className="two-field-grid">
-                  {newUser.role === "employee" ? (
-                    <label>
-                      Роль в команде
-                      <input
-                        value={newUser.personRole}
-                        onChange={(event) => setNewUser((current) => ({ ...current, personRole: event.target.value }))}
-                        placeholder="Product Manager"
-                      />
-                    </label>
-                  ) : (
-                    <label>
-                      Роль в системе
-                      <input value="Тимлид" readOnly />
-                    </label>
-                  )}
-                  <label>
-                    Команда
-                    <input
-                      value={newUser.personTeam}
-                      onChange={(event) => setNewUser((current) => ({ ...current, personTeam: event.target.value }))}
-                      placeholder="Product Growth"
-                    />
-                  </label>
-                </div>
-                {newUser.role === "employee" && teamLeadUsers.length > 0 && (
-                  <label>
-                    Тимлид
-                    <select
-                      value={newUser.leadUserId}
-                      onChange={(event) => {
-                        const lead = teamLeadUsers.find((item) => item.id === event.target.value);
-                        setNewUser((current) => ({
-                          ...current,
-                          leadUserId: event.target.value,
-                          personTeam: lead?.teamLabel || current.personTeam
-                        }));
-                      }}
-                    >
-                      <option value="">По названию команды</option>
-                      {teamLeadUsers.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.name} — {item.teamLabel || "команда не задана"}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                )}
-                <div className="two-field-grid">
-                  <label>
-                    Логин
-                    <input
-                      value={newUser.username}
-                      onChange={(event) => setNewUser((current) => ({ ...current, username: event.target.value }))}
-                      placeholder="ivan.sre"
-                    />
-                  </label>
-                  <label>
-                    Пароль
-                    <input
-                      type="password"
-                      value={newUser.password}
-                      onChange={(event) => setNewUser((current) => ({ ...current, password: event.target.value }))}
-                      placeholder="минимум 8 символов"
-                    />
-                  </label>
-                </div>
-                {formErrors.createUser && <div className="form-error inline-form-error">{formErrors.createUser}</div>}
-                <button className="primary-button" type="submit">
-                  <UserPlus size={16} />
-                  Создать логин
-                </button>
-              </form>
-            </article>
+            {renderCreateLoginCard({ id: "admin-create-login-panel", allowLeadCreation: true })}
 
             <article className="settings-card">
               <div className="settings-card-head">
@@ -6198,7 +6983,7 @@ export default function App() {
               </div>
             </article>
 
-            {isPlatformAdmin && (
+            {canResetDemo && (
               <article className="settings-card">
                 <div className="settings-card-head">
                   <div>

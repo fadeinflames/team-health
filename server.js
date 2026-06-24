@@ -25,6 +25,7 @@ const maxFailedLoginAttempts = 8;
 const maxFailedLoginAttemptsPerIp = 30;
 const trustProxy = Boolean(process.env.RAILWAY_ENVIRONMENT) || process.env.TRUST_PROXY === "1";
 const allowFileStorageInProduction = process.env.ALLOW_FILE_STORAGE === "1";
+const demoResetAllowed = !process.env.RAILWAY_ENVIRONMENT || process.env.ENABLE_DEMO_RESET === "1";
 
 const defaultAdminUsername = "mgusev";
 const defaultAdminPassword = "passwb121";
@@ -358,8 +359,75 @@ const initialGoals = [
   }
 ];
 
+const initialCompetencyAssessments = [
+  {
+    id: "ca-demo-1",
+    personId: "demo-sre",
+    title: "Кейс-интервью: Product Growth",
+    roleContext: "Product Manager · Product Growth",
+    source: "case-ai",
+    status: "validated",
+    scaleMax: 5,
+    competencies: [
+      {
+        id: "cac-demo-1",
+        name: "Приоритизация",
+        category: "Product execution",
+        score: 3,
+        targetScore: 4,
+        evidence: "Хорошо разделяет срочное и важное, но иногда держит слишком много инициатив в работе.",
+        recommendation: "Согласовать правило WIP и еженедельный triage инициатив."
+      },
+      {
+        id: "cac-demo-2",
+        name: "Системная диагностика",
+        category: "Problem solving",
+        score: 2.5,
+        targetScore: 3,
+        evidence: "Видит локальные причины, но не всегда переводит повторяющиеся сигналы в системную проблему.",
+        recommendation: "Раз в неделю собирать топ повторяющихся сигналов и формулировать гипотезу процесса."
+      },
+      {
+        id: "cac-demo-3",
+        name: "Коммуникация со стейкхолдерами",
+        category: "Collaboration",
+        score: 4,
+        targetScore: 4,
+        evidence: "Ясно проговаривает trade-off и ожидания по срокам.",
+        recommendation: "Удерживать текущую практику коротких письменных recap."
+      }
+    ],
+    cases: [
+      {
+        id: "case-demo-1",
+        title: "Три конкурирующих запуска в одну неделю",
+        summary: "Проверялись приоритизация, коммуникация и работа с зависимостями.",
+        checkedCompetencies: ["Приоритизация", "Коммуникация со стейкхолдерами"]
+      }
+    ],
+    recommendations: [
+      {
+        id: "car-demo-1",
+        competencyName: "Системная диагностика",
+        action: "Оформить 2 повторяющиеся проблемы из 1:1 в гипотезы улучшения процесса.",
+        dueDate: "2026-06-30"
+      },
+      {
+        id: "car-demo-2",
+        competencyName: "Приоритизация",
+        action: "Ввести лимит WIP на квартальные инициативы и проговорить исключения.",
+        dueDate: "2026-06-30"
+      }
+    ],
+    createdAt: "2026-04-15T00:00:00.000Z",
+    validatedAt: "2026-04-16T00:00:00.000Z"
+  }
+];
+
 const lprStatuses = ["active", "paused", "done"];
 const goalStatuses = ["active", "achieved", "abandoned"];
+const competencyAssessmentSources = ["case-ai", "manual", "review"];
+const competencyAssessmentStatuses = ["draft", "validated"];
 
 const meetingTypes = ["regular", "career", "performance", "post-incident", "first-1on1", "skip-level"];
 const mentorshipModes = ["mentor", "coach", "sponsor"];
@@ -518,12 +586,13 @@ function seedUser({ username, password, name, role, personId = null, leadUserId 
 
 function createSeedDb() {
   return normalizeDb({
-    version: 5,
+    version: 7,
     people,
     cards: initialCards,
     actions: initialActions,
     lprs: initialLprs,
     goals: initialGoals,
+    competencyAssessments: initialCompetencyAssessments,
     surveys: initialSurveys,
     surveyResponses: [],
     prep: initialPrep,
@@ -662,15 +731,22 @@ function normalizeDb(rawDb = {}) {
         .filter((goal) => personIds.has(goal.personId))
         .map((goal) => sanitizeGoal(goal, goal.personId, lprIds))
     : [];
+  const competencyAssessments = Array.isArray(rawDb.competencyAssessments)
+    ? rawDb.competencyAssessments
+        .filter((assessment) => assessment && personIds.has(assessment.personId))
+        .map((assessment) => sanitizeCompetencyAssessment(assessment, assessment.personId))
+    : [];
   const seedCardIds = new Set(initialCards.map((card) => card.id));
   const seedActionIds = new Set(initialActions.map((action) => action.id));
   const seedGoalIds = new Set(initialGoals.map((goal) => goal.id));
+  const seedAssessmentIds = new Set(initialCompetencyAssessments.map((assessment) => assessment.id));
   const cardsById = new Map(cards.map((card) => [card.id, card]));
   const actionsById = new Map(actions.map((action) => [action.id, action]));
   const goalsById = new Map(goals.map((goal) => [goal.id, goal]));
+  const assessmentsById = new Map(competencyAssessments.map((assessment) => [assessment.id, assessment]));
 
   const db = {
-    version: 5,
+    version: 7,
     people: allPeople,
     lprs: allLprs,
     cards: [
@@ -706,6 +782,10 @@ function normalizeDb(rawDb = {}) {
       }),
       ...goals.filter((goal) => !seedGoalIds.has(goal.id))
     ],
+    competencyAssessments: [
+      ...initialCompetencyAssessments.map((assessment) => assessmentsById.get(assessment.id) || sanitizeCompetencyAssessment(assessment, assessment.personId)),
+      ...competencyAssessments.filter((assessment) => !seedAssessmentIds.has(assessment.id))
+    ],
     prep: { ...initialPrep, ...(rawDb.prep || {}) },
     pulse: { ...initialPulse, ...(rawDb.pulse || {}) },
     pulseHistory: Array.isArray(rawDb.pulseHistory)
@@ -736,6 +816,7 @@ function normalizeDb(rawDb = {}) {
     meetingLog: Array.isArray(rawDb.meetingLog)
       ? rawDb.meetingLog.map((entry) => sanitizeMeetingLog(entry, personIds)).filter(Boolean)
       : [],
+    meetingDrafts: mergeMeetingDrafts(rawDb.meetingDrafts || {}, personIds),
     notes: mergeNotes(rawDb.notes || {}),
     users,
     sessions: Array.isArray(rawDb.sessions)
@@ -865,6 +946,26 @@ function mergeNotes(rawNotes) {
     merged[personId] = hasLegacyBusinessText(body) ? initialNotes[personId] || "" : body;
   }
   return merged;
+}
+
+function mergeMeetingDrafts(rawDrafts, personIds) {
+  const result = {};
+  for (const [personId, body] of Object.entries(rawDrafts || {})) {
+    if (personIds.has(personId)) {
+      result[personId] = String(body || "").slice(0, 12000);
+    }
+  }
+  return result;
+}
+
+function mergeMeetingDraftsUpdate(currentDrafts = {}, incomingDrafts = {}, personIds) {
+  const next = { ...currentDrafts };
+  for (const personId of personIds) {
+    if (Object.prototype.hasOwnProperty.call(incomingDrafts || {}, personId)) {
+      next[personId] = String(incomingDrafts[personId] || "").slice(0, 12000);
+    }
+  }
+  return next;
 }
 
 function ensureSeedLogin(db, config) {
@@ -1104,6 +1205,27 @@ async function migratePostgres() {
     create index if not exists goals_lpr_id_idx on goals(lpr_id);
     create index if not exists goals_status_idx on goals(status);
 
+    create table if not exists competency_assessments (
+      id text primary key,
+      person_id text not null references people(id) on delete cascade,
+      title text not null,
+      role_context text not null default '',
+      source text not null check (source in ('case-ai', 'manual', 'review')),
+      status text not null check (status in ('draft', 'validated')),
+      scale_max integer not null default 5,
+      average_score numeric(3,1) not null default 0,
+      min_score numeric(3,1) not null default 0,
+      grade text not null check (grade in ('junior', 'middle', 'senior', 'lead-ready')),
+      competencies_json jsonb not null default '[]'::jsonb,
+      cases_json jsonb not null default '[]'::jsonb,
+      recommendations_json jsonb not null default '[]'::jsonb,
+      created_at timestamptz not null default now(),
+      validated_at timestamptz
+    );
+
+    create index if not exists competency_assessments_person_idx on competency_assessments(person_id);
+    create index if not exists competency_assessments_created_idx on competency_assessments(created_at desc);
+
     create table if not exists pulse_history (
       person_id text not null references people(id) on delete cascade,
       captured_at date not null,
@@ -1188,6 +1310,12 @@ async function migratePostgres() {
     );
 
     create index if not exists meeting_log_person_held_idx on meeting_log(person_id, held_at desc);
+
+    create table if not exists meeting_drafts (
+      person_id text primary key references people(id) on delete cascade,
+      body text not null default '',
+      updated_at timestamptz not null default now()
+    );
   `);
 }
 
@@ -1205,6 +1333,7 @@ async function seedPostgres() {
     await insertSeedCards(client);
     await insertSeedActions(client);
     await insertSeedGoals(client);
+    await insertSeedCompetencyAssessments(client);
     await insertSeedPulseHistory(client);
     await insertSeedSurveys(client);
     await clearSeedOncallLoad(client);
@@ -1421,6 +1550,51 @@ async function insertSeedGoals(client) {
   }
 }
 
+async function insertSeedCompetencyAssessments(client) {
+  for (const assessment of initialCompetencyAssessments) {
+    const cleaned = sanitizeCompetencyAssessment(assessment, assessment.personId);
+    await client.query(
+      `
+        insert into competency_assessments
+          (id, person_id, title, role_context, source, status, scale_max, average_score, min_score, grade, competencies_json, cases_json, recommendations_json, created_at, validated_at)
+        values
+          ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13::jsonb, $14::timestamptz, $15::timestamptz)
+        on conflict (id) do update set
+          person_id = excluded.person_id,
+          title = excluded.title,
+          role_context = excluded.role_context,
+          source = excluded.source,
+          status = excluded.status,
+          scale_max = excluded.scale_max,
+          average_score = excluded.average_score,
+          min_score = excluded.min_score,
+          grade = excluded.grade,
+          competencies_json = excluded.competencies_json,
+          cases_json = excluded.cases_json,
+          recommendations_json = excluded.recommendations_json,
+          validated_at = excluded.validated_at
+      `,
+      [
+        cleaned.id,
+        cleaned.personId,
+        cleaned.title,
+        cleaned.roleContext,
+        cleaned.source,
+        cleaned.status,
+        cleaned.scaleMax,
+        cleaned.averageScore,
+        cleaned.minScore,
+        cleaned.grade,
+        JSON.stringify(cleaned.competencies),
+        JSON.stringify(cleaned.cases),
+        JSON.stringify(cleaned.recommendations),
+        cleaned.createdAt,
+        cleaned.validatedAt || null
+      ]
+    );
+  }
+}
+
 async function insertSeedPulseHistory(client) {
   for (const entry of buildSeedPulseHistory()) {
     await client.query(
@@ -1536,6 +1710,7 @@ async function readDb() {
       cardsResult,
       actionsResult,
       goalsResult,
+      competencyAssessmentsResult,
       prepResult,
       pulseResult,
       pulseHistoryResult,
@@ -1544,6 +1719,7 @@ async function readDb() {
       managerNotesResult,
       oncallLoadResult,
       meetingLogResult,
+      meetingDraftsResult,
       notesResult,
       usersResult,
       sessionsResult
@@ -1623,6 +1799,26 @@ async function readDb() {
           from goals
           order by created_at asc, id asc
         `),
+        pgPool.query(`
+          select
+            id,
+            person_id as "personId",
+            title,
+            role_context as "roleContext",
+            source,
+            status,
+            scale_max as "scaleMax",
+            average_score::float as "averageScore",
+            min_score::float as "minScore",
+            grade,
+            competencies_json as "competencies",
+            cases_json as "cases",
+            recommendations_json as "recommendations",
+            created_at as "createdAt",
+            validated_at as "validatedAt"
+          from competency_assessments
+          order by created_at asc, id asc
+        `),
         pgPool.query("select * from prep"),
         pgPool.query("select * from pulse"),
         pgPool.query(`
@@ -1695,6 +1891,7 @@ async function readDb() {
           from meeting_log
           order by held_at desc
         `),
+        pgPool.query("select person_id, body from meeting_drafts"),
         pgPool.query("select person_id, body from notes"),
         pgPool.query(`
           select
@@ -1733,6 +1930,14 @@ async function readDb() {
       goals: goalsResult.rows.map((row) => ({
         ...row,
         createdAt: row.createdAt?.toISOString?.() || row.createdAt
+      })),
+      competencyAssessments: competencyAssessmentsResult.rows.map((row) => ({
+        ...row,
+        competencies: Array.isArray(row.competencies) ? row.competencies : [],
+        cases: Array.isArray(row.cases) ? row.cases : [],
+        recommendations: Array.isArray(row.recommendations) ? row.recommendations : [],
+        createdAt: row.createdAt?.toISOString?.() || row.createdAt,
+        validatedAt: row.validatedAt?.toISOString?.() || row.validatedAt || ""
       })),
       prep: Object.fromEntries(
         prepResult.rows.map((row) => [
@@ -1779,6 +1984,7 @@ async function readDb() {
         ...row,
         heldAt: row.heldAt?.toISOString?.() || row.heldAt
       })),
+      meetingDrafts: Object.fromEntries(meetingDraftsResult.rows.map((row) => [row.person_id, row.body])),
       notes: Object.fromEntries(notesResult.rows.map((row) => [row.person_id, row.body])),
       users: usersResult.rows,
       sessions: sessionsResult.rows.map((session) => ({
@@ -1793,7 +1999,8 @@ async function readDb() {
   return normalizeDb(parsed);
 }
 
-async function writeDb(db) {
+async function writeDb(db, options = {}) {
+  const replaceAuth = options.replaceAuth !== false;
   const normalized = normalizeDb(db);
 
   if (storageMode === "postgres") {
@@ -1805,6 +2012,7 @@ async function writeDb(db) {
       await replaceCards(client, normalized.cards);
       await replaceActions(client, normalized.actions);
       await replaceGoals(client, normalized.goals);
+      await replaceCompetencyAssessments(client, normalized.competencyAssessments);
       await replacePrep(client, normalized.prep);
       await replacePulse(client, normalized.pulse);
       await replacePulseHistory(client, normalized.pulseHistory);
@@ -1813,10 +2021,13 @@ async function writeDb(db) {
       await replaceManagerNotes(client, normalized.managerNotes);
       await replaceOncallLoad(client, normalized.oncallLoad);
       await replaceMeetingLog(client, normalized.meetingLog);
+      await replaceMeetingDrafts(client, normalized.meetingDrafts);
       await replaceNotes(client, normalized.notes);
-      await replaceUsers(client, normalized.users);
-      await replaceSessions(client, normalized.sessions);
-      await deleteMissingPeople(client, normalized.people);
+      if (replaceAuth) {
+        await replaceUsers(client, normalized.users);
+        await replaceSessions(client, normalized.sessions);
+        await deleteMissingPeople(client, normalized.people);
+      }
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK");
@@ -1828,6 +2039,16 @@ async function writeDb(db) {
   }
 
   mkdirSync(dataDir, { recursive: true });
+  if (!replaceAuth && existsSync(dataFile)) {
+    try {
+      const current = normalizeDb(JSON.parse(readFileSync(dataFile, "utf8")));
+      normalized.users = current.users;
+      normalized.sessions = current.sessions;
+    } catch {
+      // If the local file cannot be read, fall back to writing the normalized
+      // snapshot so the app can recover rather than failing the data save.
+    }
+  }
   // Atomic write: a partially written file from a crashed process would corrupt
   // the database, so write into a sibling tmp file and rename it into place.
   const tmpFile = `${dataFile}.tmp-${randomBytes(6).toString("hex")}`;
@@ -1923,6 +2144,38 @@ async function replaceGoals(client, goals) {
   }
 }
 
+async function replaceCompetencyAssessments(client, assessments) {
+  await client.query("delete from competency_assessments");
+  for (const assessment of assessments || []) {
+    const cleaned = sanitizeCompetencyAssessment(assessment, assessment.personId);
+    await client.query(
+      `
+        insert into competency_assessments
+          (id, person_id, title, role_context, source, status, scale_max, average_score, min_score, grade, competencies_json, cases_json, recommendations_json, created_at, validated_at)
+        values
+          ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13::jsonb, coalesce($14::timestamptz, now()), $15::timestamptz)
+      `,
+      [
+        cleaned.id,
+        cleaned.personId,
+        cleaned.title,
+        cleaned.roleContext,
+        cleaned.source,
+        cleaned.status,
+        cleaned.scaleMax,
+        cleaned.averageScore,
+        cleaned.minScore,
+        cleaned.grade,
+        JSON.stringify(cleaned.competencies),
+        JSON.stringify(cleaned.cases),
+        JSON.stringify(cleaned.recommendations),
+        cleaned.createdAt || null,
+        cleaned.validatedAt || null
+      ]
+    );
+  }
+}
+
 async function replacePrep(client, prep) {
   await client.query("delete from prep");
   await upsertPrep(client, prep);
@@ -1974,6 +2227,92 @@ async function replaceMeetingLog(client, entries) {
       [entry.id, entry.personId, entry.heldAt, entry.meetingType, entry.summary, entry.attended]
     );
   }
+}
+
+async function replaceMeetingDrafts(client, drafts) {
+  await client.query("delete from meeting_drafts");
+  for (const [personId, body] of Object.entries(drafts || {})) {
+    await client.query(
+      `
+        insert into meeting_drafts (person_id, body, updated_at)
+        values ($1, $2, now())
+      `,
+      [personId, body]
+    );
+  }
+}
+
+async function upsertMeetingPrep(client, personId, prep) {
+  await client.query(
+    `
+      insert into prep (person_id, employee_agenda, manager_agenda, pulse, last_actions, growth, commitments)
+      values ($1, $2, $3, $4, $5, $6, $7)
+      on conflict (person_id) do update set
+        employee_agenda = excluded.employee_agenda,
+        manager_agenda = excluded.manager_agenda,
+        pulse = excluded.pulse,
+        last_actions = excluded.last_actions,
+        growth = excluded.growth,
+        commitments = excluded.commitments
+    `,
+    [
+      personId,
+      prep.employeeAgenda,
+      prep.managerAgenda,
+      prep.pulse,
+      prep.lastActions,
+      prep.growth,
+      prep.commitments
+    ]
+  );
+}
+
+async function upsertMeetingPulse(client, personId, pulse) {
+  await client.query(
+    `
+      insert into pulse (person_id, energy, load, clarity, trust)
+      values ($1, $2, $3, $4, $5)
+      on conflict (person_id) do update set
+        energy = excluded.energy,
+        load = excluded.load,
+        clarity = excluded.clarity,
+        trust = excluded.trust
+    `,
+    [personId, pulse.energy, pulse.load, pulse.clarity, pulse.trust]
+  );
+}
+
+async function upsertMeetingPulseHistory(client, personId, pulse) {
+  const today = new Date().toISOString().slice(0, 10);
+  const cutoff = new Date(Date.now() - pulseHistoryRetentionDays * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+  await client.query(
+    `
+      insert into pulse_history (person_id, captured_at, energy, load, clarity, trust)
+      values ($1, $2::date, $3, $4, $5, $6)
+      on conflict (person_id, captured_at) do update set
+        energy = excluded.energy,
+        load = excluded.load,
+        clarity = excluded.clarity,
+        trust = excluded.trust
+    `,
+    [personId, today, pulse.energy, pulse.load, pulse.clarity, pulse.trust]
+  );
+  await client.query("delete from pulse_history where captured_at < $1::date", [cutoff]);
+}
+
+async function upsertMeetingDraft(client, personId, body) {
+  await client.query(
+    `
+      insert into meeting_drafts (person_id, body, updated_at)
+      values ($1, $2, now())
+      on conflict (person_id) do update set
+        body = excluded.body,
+        updated_at = now()
+    `,
+    [personId, body]
+  );
 }
 
 async function replaceOncallLoad(client, entries) {
@@ -2153,11 +2492,13 @@ async function deletePersonById(personId) {
   db.cards = db.cards.filter((card) => card.personId !== personId);
   db.actions = db.actions.filter((action) => action.personId !== personId);
   db.goals = (db.goals || []).filter((goal) => goal.personId !== personId);
+  db.competencyAssessments = (db.competencyAssessments || []).filter((assessment) => assessment.personId !== personId);
   db.pulseHistory = (db.pulseHistory || []).filter((entry) => entry.personId !== personId);
   db.surveyResponses = (db.surveyResponses || []).filter((response) => response.personId !== personId);
   db.managerNotes = (db.managerNotes || []).filter((note) => note.personId !== personId);
   db.oncallLoad = (db.oncallLoad || []).filter((entry) => entry.personId !== personId);
   db.meetingLog = (db.meetingLog || []).filter((entry) => entry.personId !== personId);
+  delete db.meetingDrafts[personId];
   db.users = db.users.filter((user) => user.personId !== personId);
   db.sessions = db.sessions.filter((session) => !removedUserIds.has(session.userId));
   delete db.prep[personId];
@@ -2179,7 +2520,8 @@ function publicUser(user) {
     personId: user.personId || null,
     leadUserId: user.leadUserId || null,
     teamLabel: user.teamLabel || "",
-    createdAt: user.createdAt
+    createdAt: user.createdAt,
+    canResetDemo: isPlatformAdmin(user) && demoResetAllowed
   };
 }
 
@@ -2589,6 +2931,7 @@ function scopeWorkspace(db, user) {
     cards: db.cards.filter((card) => ids.has(card.personId)),
     actions: db.actions.filter((action) => ids.has(action.personId)),
     goals: (db.goals || []).filter((goal) => ids.has(goal.personId)),
+    competencyAssessments: (db.competencyAssessments || []).filter((assessment) => ids.has(assessment.personId)),
     prep: pickObject(db.prep),
     pulse: pickObject(db.pulse),
     pulseHistory: (db.pulseHistory || []).filter((entry) => ids.has(entry.personId)),
@@ -2607,6 +2950,7 @@ function scopeWorkspace(db, user) {
       : [],
     oncallLoad: (db.oncallLoad || []).filter((entry) => ids.has(entry.personId)),
     meetingLog: (db.meetingLog || []).filter((entry) => ids.has(entry.personId)),
+    meetingDrafts: pickObject(db.meetingDrafts),
     archivedPeople: isAdmin(user)
       ? db.people
           .filter((person) => person.archivedAt && !isDemoOnlyPersonId(person.id))
@@ -2682,7 +3026,8 @@ function buildSurveyAggregate(survey, responses) {
         .filter((value) => typeof value === "string" && value.length);
       totals.perQuestion[question.id] = {
         count: texts.length,
-        samples: survey.anonymous ? texts.slice(0, 30) : texts.slice(0, 30)
+        redacted: survey.anonymous,
+        samples: survey.anonymous ? [] : texts.slice(0, 30)
       };
     } else if (question.type === "date") {
       const dates = responses
@@ -2691,7 +3036,8 @@ function buildSurveyAggregate(survey, responses) {
         .sort();
       totals.perQuestion[question.id] = {
         count: dates.length,
-        samples: dates.slice(0, 30)
+        redacted: survey.anonymous,
+        samples: survey.anonymous ? [] : dates.slice(0, 30)
       };
     }
   }
@@ -2910,6 +3256,86 @@ function snapshotPulse(db) {
     .sort((a, b) => a.capturedAt.localeCompare(b.capturedAt));
 }
 
+function defaultPrepState() {
+  return Object.fromEntries(prepKeys.map((key) => [key, false]));
+}
+
+function defaultPulseState() {
+  return { energy: 6, load: 6, clarity: 6, trust: 7 };
+}
+
+function applyMeetingStatePatch(db, user, personId, body = {}) {
+  const ids = scopedPersonIds(db, user);
+  if (!ids.has(personId)) {
+    return { ok: false, status: 404, error: "Участник не найден" };
+  }
+
+  const person = db.people.find((item) => item.id === personId);
+  if (!person || person.archivedAt) {
+    return { ok: false, status: 404, error: "Участник не найден" };
+  }
+
+  const changed = { prep: false, pulse: false, meetingDraft: false };
+  const writablePrepKeys = isAdmin(user) ? adminWritablePrepKeys : employeeWritablePrepKeys;
+
+  if (body.prep && typeof body.prep === "object") {
+    const currentPrep = { ...defaultPrepState(), ...(db.prep?.[personId] || {}) };
+    db.prep[personId] = sanitizePrepPatch(currentPrep, body.prep, writablePrepKeys);
+    changed.prep = true;
+  }
+
+  if (body.pulse && typeof body.pulse === "object") {
+    const currentPulse = { ...defaultPulseState(), ...(db.pulse?.[personId] || {}) };
+    db.pulse[personId] = sanitizePulsePatch(currentPulse, body.pulse);
+    snapshotPulse(db);
+    changed.pulse = true;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, "meetingDraft")) {
+    db.meetingDrafts[personId] = String(body.meetingDraft || "").slice(0, 12000);
+    changed.meetingDraft = true;
+  }
+
+  return {
+    ok: true,
+    changed,
+    state: {
+      personId,
+      prep: { ...defaultPrepState(), ...(db.prep?.[personId] || {}) },
+      pulse: { ...defaultPulseState(), ...(db.pulse?.[personId] || {}) },
+      meetingDraft: db.meetingDrafts?.[personId] || ""
+    }
+  };
+}
+
+async function persistMeetingStatePatch(db, personId, state, changed) {
+  if (storageMode === "postgres") {
+    const client = await pgPool.connect();
+    try {
+      await client.query("BEGIN");
+      if (changed.prep) {
+        await upsertMeetingPrep(client, personId, state.prep);
+      }
+      if (changed.pulse) {
+        await upsertMeetingPulse(client, personId, state.pulse);
+        await upsertMeetingPulseHistory(client, personId, state.pulse);
+      }
+      if (changed.meetingDraft) {
+        await upsertMeetingDraft(client, personId, state.meetingDraft);
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+    return;
+  }
+
+  await writeDb(db, { replaceAuth: false });
+}
+
 function sanitizeLpr(lpr, personId) {
   return {
     id: String(lpr.id || makeId("lpr")),
@@ -2939,6 +3365,100 @@ function sanitizeGoal(goal, personId, lprIds = new Set()) {
   };
 }
 
+function clampScore(value, min, max, fallback) {
+  const number = Number(value);
+  const safe = Number.isFinite(number) ? number : fallback;
+  return Math.max(min, Math.min(max, Math.round(safe * 10) / 10));
+}
+
+function competencyGradeFromScores(scores) {
+  if (!scores.length) return { averageScore: 0, minScore: 0, grade: "junior" };
+  const averageScore = Math.round((scores.reduce((sum, score) => sum + score, 0) / scores.length) * 10) / 10;
+  const minScore = Math.round(Math.min(...scores) * 10) / 10;
+  const byAverage =
+    averageScore >= 4.5 ? "lead-ready" :
+    averageScore >= 3.5 ? "senior" :
+    averageScore >= 2.5 ? "middle" :
+    "junior";
+  const byThreshold =
+    minScore >= 4 ? "lead-ready" :
+    minScore >= 3 ? "senior" :
+    minScore >= 2 ? "middle" :
+    "junior";
+  const order = { junior: 0, middle: 1, senior: 2, "lead-ready": 3 };
+  const grade = order[byAverage] <= order[byThreshold] ? byAverage : byThreshold;
+  return { averageScore, minScore, grade };
+}
+
+function sanitizeCompetencyAssessment(assessment = {}, personId) {
+  const scaleMax = clampInt(assessment.scaleMax, 1, 10, 5);
+  const competencies = (Array.isArray(assessment.competencies) ? assessment.competencies : [])
+    .slice(0, 30)
+    .map((competency) => {
+      const name = String(competency?.name || "").trim().slice(0, 160);
+      if (!name) return null;
+      const score = clampScore(competency.score, 0, scaleMax, 0);
+      return {
+        id: String(competency.id || makeId("competency")),
+        name,
+        category: String(competency.category || "").trim().slice(0, 120),
+        score,
+        targetScore: clampScore(competency.targetScore, 0, scaleMax, Math.min(scaleMax, Math.max(score, 3))),
+        evidence: String(competency.evidence || "").trim().slice(0, 1200),
+        recommendation: String(competency.recommendation || "").trim().slice(0, 1200)
+      };
+    })
+    .filter(Boolean);
+  const grade = competencyGradeFromScores(competencies.map((competency) => competency.score));
+  const cases = (Array.isArray(assessment.cases) ? assessment.cases : [])
+    .slice(0, 12)
+    .map((item) => {
+      const title = String(item?.title || "").trim().slice(0, 180);
+      if (!title) return null;
+      return {
+        id: String(item.id || makeId("case")),
+        title,
+        summary: String(item.summary || "").trim().slice(0, 1200),
+        checkedCompetencies: Array.isArray(item.checkedCompetencies)
+          ? item.checkedCompetencies.map((value) => String(value || "").trim().slice(0, 160)).filter(Boolean).slice(0, 12)
+          : []
+      };
+    })
+    .filter(Boolean);
+  const recommendations = (Array.isArray(assessment.recommendations) ? assessment.recommendations : [])
+    .slice(0, 20)
+    .map((item) => {
+      const action = String(item?.action || "").trim().slice(0, 500);
+      if (!action) return null;
+      const dueDate = String(item.dueDate || "").trim();
+      return {
+        id: String(item.id || makeId("competency-action")),
+        competencyName: String(item.competencyName || "").trim().slice(0, 160),
+        action,
+        dueDate: isValidISODate(dueDate) ? dueDate : ""
+      };
+    })
+    .filter(Boolean);
+
+  return {
+    id: String(assessment.id || makeId("assessment")),
+    personId,
+    title: String(assessment.title || "Кейс-интервью по компетенциям").trim().slice(0, 200),
+    roleContext: String(assessment.roleContext || "").trim().slice(0, 200),
+    source: competencyAssessmentSources.includes(assessment.source) ? assessment.source : "case-ai",
+    status: competencyAssessmentStatuses.includes(assessment.status) ? assessment.status : "draft",
+    scaleMax,
+    averageScore: grade.averageScore,
+    minScore: grade.minScore,
+    grade: grade.grade,
+    competencies,
+    cases,
+    recommendations,
+    createdAt: typeof assessment.createdAt === "string" && assessment.createdAt ? assessment.createdAt : new Date().toISOString(),
+    validatedAt: typeof assessment.validatedAt === "string" && assessment.validatedAt ? assessment.validatedAt : ""
+  };
+}
+
 function mergeWorkspaceUpdate(db, user, incoming) {
   const ids = scopedPersonIds(db, user);
   const incomingHasLprs = Array.isArray(incoming.lprs);
@@ -2946,6 +3466,8 @@ function mergeWorkspaceUpdate(db, user, incoming) {
   const incomingCards = Array.isArray(incoming.cards) ? incoming.cards : [];
   const incomingActions = Array.isArray(incoming.actions) ? incoming.actions : [];
   const incomingGoals = Array.isArray(incoming.goals) ? incoming.goals : [];
+  const incomingHasAssessments = Array.isArray(incoming.competencyAssessments);
+  const incomingAssessments = incomingHasAssessments ? incoming.competencyAssessments : [];
 
   if (isAdmin(user)) {
     const hiddenLprs = (db.lprs || []).filter((lpr) => !ids.has(lpr.personId));
@@ -2956,6 +3478,7 @@ function mergeWorkspaceUpdate(db, user, incoming) {
     const hiddenCards = db.cards.filter((card) => !ids.has(card.personId));
     const hiddenActions = db.actions.filter((action) => !ids.has(action.personId));
     const hiddenGoals = (db.goals || []).filter((goal) => !ids.has(goal.personId));
+    const hiddenAssessments = (db.competencyAssessments || []).filter((assessment) => !ids.has(assessment.personId));
     db.lprs = [...hiddenLprs, ...visibleLprs];
     db.cards = incomingCards
       .filter((card) => ids.has(card.personId))
@@ -2971,9 +3494,18 @@ function mergeWorkspaceUpdate(db, user, incoming) {
         .filter((goal) => ids.has(goal.personId))
         .map((goal) => sanitizeGoal(goal, goal.personId, visibleLprIds))
     ];
+    db.competencyAssessments = [
+      ...hiddenAssessments,
+      ...(incomingHasAssessments
+        ? incomingAssessments
+        : (db.competencyAssessments || []).filter((assessment) => ids.has(assessment.personId)))
+        .filter((assessment) => assessment && ids.has(assessment.personId))
+        .map((assessment) => sanitizeCompetencyAssessment(assessment, assessment.personId))
+    ];
     db.prep = mergePrepUpdate(db.prep, incoming.prep, ids, adminWritablePrepKeys);
     db.pulse = mergePulseUpdate(db.pulse, incoming.pulse, ids);
     db.notes = mergeNotesUpdate(db.notes, incoming.notes, ids);
+    db.meetingDrafts = mergeMeetingDraftsUpdate(db.meetingDrafts, incoming.meetingDrafts, ids);
     snapshotPulse(db);
     return db;
   }
@@ -3057,6 +3589,7 @@ function mergeWorkspaceUpdate(db, user, incoming) {
 
   db.prep[personId] = sanitizePrepPatch(db.prep[personId] || {}, incoming.prep?.[personId] || {}, employeeWritablePrepKeys);
   db.pulse[personId] = sanitizePulsePatch(db.pulse[personId] || {}, incoming.pulse?.[personId] || {});
+  db.meetingDrafts = mergeMeetingDraftsUpdate(db.meetingDrafts, incoming.meetingDrafts, new Set([personId]));
   snapshotPulse(db);
   return db;
 }
@@ -3174,16 +3707,37 @@ async function handleApi(request, response) {
     if (!context) return;
     const body = await readJson(request);
     const nextDb = mergeWorkspaceUpdate(context.db, context.user, body);
-    await writeDb(nextDb);
+    await writeDb(nextDb, { replaceAuth: false });
     sendJson(response, 200, scopeWorkspace(nextDb, context.user));
+    return;
+  }
+
+  const meetingStateMatch = url.pathname.match(/^\/api\/people\/([^/]+)\/meeting-state$/);
+  if (request.method === "PATCH" && meetingStateMatch) {
+    const context = await requireAuth(request, response);
+    if (!context) return;
+    const personId = safeDecodeURIComponent(meetingStateMatch[1]);
+    const body = await readJson(request);
+    const patch = applyMeetingStatePatch(context.db, context.user, personId, body);
+    if (!patch.ok) {
+      sendJson(response, patch.status, { error: patch.error });
+      return;
+    }
+
+    await persistMeetingStatePatch(context.db, personId, patch.state, patch.changed);
+    const refreshed = await readDb();
+    sendJson(response, 200, {
+      meetingState: patch.state,
+      workspace: scopeWorkspace(refreshed, context.user)
+    });
     return;
   }
 
   if (request.method === "POST" && url.pathname === "/api/users") {
     const context = await requireAuth(request, response);
     if (!context) return;
-    if (!isPlatformAdmin(context.user)) {
-      sendJson(response, 403, { error: "Только администратор платформы может создавать логины" });
+    if (!isLead(context.user)) {
+      sendJson(response, 403, { error: "Только администратор платформы или тимлид может создавать логины" });
       return;
     }
 
@@ -3193,14 +3747,21 @@ async function handleApi(request, response) {
     const personId = String(body.personId || "");
     // Requested role from the client; only platform admins can create leads.
     const requestedRole = ["lead", "employee"].includes(body.role) ? body.role : "employee";
+    if (!isPlatformAdmin(context.user) && requestedRole === "lead") {
+      sendJson(response, 403, { error: "Только администратор платформы может создавать тимлидов" });
+      return;
+    }
     let leadUserId = null;
     if (requestedRole === "employee") {
-      if (body.leadUserId) {
+      if (isPlainLead(context.user)) {
+        leadUserId = context.user.id;
+      } else if (body.leadUserId) {
         const proposed = context.db.users.find((u) => u.id === body.leadUserId);
         if (proposed && isPlainLead(proposed)) leadUserId = proposed.id;
       }
     }
     let person = personId ? context.db.people.find((item) => item.id === personId) : null;
+    const callerTeamLabel = teamLabelForUser(context.db, context.user);
 
     if (!/^[a-zA-Z0-9._-]{3,32}$/.test(username)) {
       sendJson(response, 400, { error: "Логин: 3-32 символа, латиница, цифры, точка, дефис или подчеркивание" });
@@ -3225,6 +3786,11 @@ async function handleApi(request, response) {
 
     if (person && isDemoOnlyPersonId(person.id)) {
       sendJson(response, 400, { error: "Демо-профили недоступны в рабочей команде" });
+      return;
+    }
+
+    if (person && isPlainLead(context.user) && !personInLeadTeam(context.db, context.user, person)) {
+      sendJson(response, 403, { error: "Тимлид может выдавать логины только своей команде" });
       return;
     }
 
@@ -3265,10 +3831,15 @@ async function handleApi(request, response) {
       const name = String(body.personName || body.name || "").trim();
       const role = String(body.personRole || body.role || "Team Member").trim();
       const leadUser = leadUserId ? context.db.users.find((u) => u.id === leadUserId) : null;
-      const team = String(body.personTeam || body.team || leadUser?.teamLabel || "Product").trim();
+      const team = String(isPlainLead(context.user) ? callerTeamLabel : body.personTeam || body.team || leadUser?.teamLabel || "Product").trim();
 
       if (name.length < 2) {
         sendJson(response, 400, { error: "Укажите имя участника" });
+        return;
+      }
+
+      if (isPlainLead(context.user) && team.length < 2) {
+        sendJson(response, 400, { error: "У тимлида не задана команда" });
         return;
       }
 
@@ -3276,6 +3847,7 @@ async function handleApi(request, response) {
         (item) =>
           !isDemoOnlyPersonId(item.id) &&
           item.name.toLowerCase() === name.toLowerCase() &&
+          (!isPlainLead(context.user) || personInLeadTeam(context.db, context.user, item)) &&
           !context.db.users.some((user) => user.personId === item.id)
       );
 
@@ -3310,6 +3882,7 @@ async function handleApi(request, response) {
           trust: 7
         };
         context.db.notes[person.id] = "";
+        context.db.meetingDrafts[person.id] = "";
       }
     }
 
@@ -3325,7 +3898,7 @@ async function handleApi(request, response) {
       role: requestedRole,
       personId: person.id,
       leadUserId,
-      teamLabel: String(body.teamLabel || body.personTeam || person.team || "").slice(0, 120),
+      teamLabel: String(isPlainLead(context.user) ? callerTeamLabel || person.team : body.teamLabel || body.personTeam || person.team || "").slice(0, 120),
       createdAt: new Date().toISOString(),
       ...hashPassword(password)
     };
@@ -3503,7 +4076,8 @@ async function handleApi(request, response) {
       trust: 7
     };
     context.db.notes[person.id] = "";
-    await writeDb(context.db);
+    context.db.meetingDrafts[person.id] = "";
+    await writeDb(context.db, { replaceAuth: false });
     sendJson(response, 201, { person, workspace: scopeWorkspace(await readDb(), context.user) });
     return;
   }
@@ -3568,7 +4142,7 @@ async function handleApi(request, response) {
     }
 
     Object.assign(target, updates);
-    await writeDb(context.db);
+    await writeDb(context.db, { replaceAuth: false });
     const refreshed = await readDb();
     sendJson(response, 200, {
       person: refreshed.people.find((p) => p.id === personId),
@@ -3630,7 +4204,7 @@ async function handleApi(request, response) {
       return;
     }
     target.archivedAt = null;
-    await writeDb(context.db);
+    await writeDb(context.db, { replaceAuth: false });
     const refreshed = await readDb();
     sendJson(response, 200, { workspace: scopeWorkspace(refreshed, context.user) });
     return;
@@ -3660,7 +4234,7 @@ async function handleApi(request, response) {
       return;
     }
     context.db.meetingLog = [entry, ...(context.db.meetingLog || [])];
-    await writeDb(context.db);
+    await writeDb(context.db, { replaceAuth: false });
     const refreshed = await readDb();
     sendJson(response, 201, { workspace: scopeWorkspace(refreshed, context.user) });
     return;
@@ -3682,7 +4256,7 @@ async function handleApi(request, response) {
       (e) => !incomingKeys.has(`${e.personId}|${e.weekStart}`)
     );
     context.db.oncallLoad = [...preserved, ...cleaned];
-    await writeDb(context.db);
+    await writeDb(context.db, { replaceAuth: false });
     const refreshed = await readDb();
     sendJson(response, 200, { ingested: cleaned.length, workspace: scopeWorkspace(refreshed, context.user) });
     return;
@@ -3711,7 +4285,7 @@ async function handleApi(request, response) {
       return;
     }
     context.db.managerNotes = [note, ...(context.db.managerNotes || [])];
-    await writeDb(context.db);
+    await writeDb(context.db, { replaceAuth: false });
     const refreshed = await readDb();
     sendJson(response, 201, { workspace: scopeWorkspace(refreshed, context.user) });
     return;
@@ -3733,7 +4307,7 @@ async function handleApi(request, response) {
       return;
     }
     context.db.managerNotes = (context.db.managerNotes || []).filter((note) => note.id !== noteId);
-    await writeDb(context.db);
+    await writeDb(context.db, { replaceAuth: false });
     const refreshed = await readDb();
     sendJson(response, 200, { workspace: scopeWorkspace(refreshed, context.user) });
     return;
@@ -3761,7 +4335,7 @@ async function handleApi(request, response) {
       return;
     }
     context.db.surveys = [...(context.db.surveys || []), survey];
-    await writeDb(context.db);
+    await writeDb(context.db, { replaceAuth: false });
     const refreshed = await readDb();
     sendJson(response, 201, { workspace: scopeWorkspace(refreshed, context.user) });
     return;
@@ -3792,7 +4366,7 @@ async function handleApi(request, response) {
       questions: source.questions
     }, context.db.users);
     context.db.surveys = [...(context.db.surveys || []), template];
-    await writeDb(context.db);
+    await writeDb(context.db, { replaceAuth: false });
     const refreshed = await readDb();
     sendJson(response, 200, { workspace: scopeWorkspace(refreshed, context.user) });
     return;
@@ -3818,7 +4392,7 @@ async function handleApi(request, response) {
     context.db.surveyResponses = (context.db.surveyResponses || []).filter((response) => response.surveyId !== surveyId);
     // Block seed re-injection for this id by replacing initialSurveys clone in DB
     // is not needed here: createSeedDb is only called on explicit /api/reset.
-    await writeDb(context.db);
+    await writeDb(context.db, { replaceAuth: false });
     const refreshed = await readDb();
     sendJson(response, 200, { workspace: scopeWorkspace(refreshed, context.user) });
     return;
@@ -3897,7 +4471,7 @@ async function handleApi(request, response) {
       }
     }
 
-    await writeDb(context.db);
+    await writeDb(context.db, { replaceAuth: false });
     const refreshed = await readDb();
     sendJson(response, 200, { workspace: scopeWorkspace(refreshed, context.user) });
     return;
@@ -3908,6 +4482,10 @@ async function handleApi(request, response) {
     if (!context) return;
     if (!isPlatformAdmin(context.user)) {
       sendJson(response, 403, { error: "Только администратор платформы может сбросить демо" });
+      return;
+    }
+    if (!demoResetAllowed) {
+      sendJson(response, 403, { error: "Сброс демо-данных отключён в production" });
       return;
     }
 

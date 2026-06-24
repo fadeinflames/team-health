@@ -51,6 +51,10 @@ test("auth, admin workflow, and employee data isolation work", async ({ page, re
   await expect(page.getByRole("heading", { level: 2, name: "Команда" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Участники 1:1" })).toBeVisible();
   await expect(page.getByText("В рабочей команде пока нет участников 1:1")).toBeVisible();
+  await page.getByRole("button", { name: "Создать логин", exact: true }).click();
+  await expect(page.locator("#team-create-login-panel").getByRole("heading", { name: "Создать логин" })).toBeVisible();
+  await page.getByRole("button", { name: "Скрыть форму", exact: true }).click();
+  await expect(page.locator("#team-create-login-panel")).not.toBeVisible();
   await expect(page.getByText("seed")).not.toBeVisible();
 
   // Profile name editing moved to Настройки
@@ -65,11 +69,12 @@ test("auth, admin workflow, and employee data isolation work", async ({ page, re
   const employeePassword = "TeamPass121";
   const updatedEmployeePassword = "TeamPass122";
 
-  // User management moved to "Админка" section
-  await page.getByRole("button", { name: "Админка", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Создать логин" })).toBeVisible();
+  // Create login is available directly from the home empty state.
+  await page.getByRole("button", { name: "Главная", exact: true }).click();
+  await page.getByRole("button", { name: "Создать логин", exact: true }).click();
+  const accessForm = page.locator("#home-create-login-panel");
+  await expect(accessForm.getByRole("heading", { name: "Создать логин" })).toBeVisible();
 
-  const accessForm = page.locator(".settings-card").filter({ hasText: "Создать логин" });
   await accessForm.getByLabel("Имя участника").fill(employeeName);
   await accessForm.getByLabel(/Роль в команде/).fill("Product Manager");
   await accessForm.getByLabel("Команда").fill("Product Growth");
@@ -96,6 +101,8 @@ test("auth, admin workflow, and employee data isolation work", async ({ page, re
   await page.getByRole("tab", { name: /Встреча/ }).click();
   await expect(page.getByRole("heading", { name: "Сигналы между встречами" })).toBeVisible();
   await page.locator(".signal-control").filter({ hasText: "Нагрузка" }).locator("input").fill("8");
+  const meetingProtocolText = "Участник просит оставить только два главных приоритета до следующего 1:1.";
+  await page.getByPlaceholder("Ключевые цитаты, решения, контекст и открытые вопросы.").fill(meetingProtocolText);
 
   await page.getByRole("tab", { name: /Итоги/ }).click();
   await expect(page.locator(".action-row strong", { hasText: "Проверить баланс фокуса и срочных запросов" })).toHaveCount(1);
@@ -110,6 +117,7 @@ test("auth, admin workflow, and employee data isolation work", async ({ page, re
   await page.getByRole("button", { name: "Итоги встречи" }).click();
   await expect(page.getByRole("tab", { name: /Итоги/ })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByText(`Итоги 1:1 с ${employeeName}`)).toBeVisible();
+  await expect(page.locator(".summary-panel textarea")).toHaveValue(new RegExp(meetingProtocolText));
 
   // Password reset moved to Админка
   await page.getByRole("button", { name: "Админка", exact: true }).click();
@@ -138,6 +146,48 @@ test("auth, admin workflow, and employee data isolation work", async ({ page, re
   expect(scoped.cards.every((card) => card.personId === scoped.people[0].id)).toBeTruthy();
   expect(scoped.users).toEqual([]);
   expect(scoped.notes).toEqual({});
+  const employeeProtocol = "Мой протокол виден только моему 1:1.";
+  const protocolUpdate = await employeeApi.post("/api/workspace", {
+    data: {
+      ...scoped,
+      meetingDrafts: {
+        [scoped.people[0].id]: employeeProtocol,
+        "not-my-person": "не должно сохраниться"
+      }
+    }
+  });
+  expect(protocolUpdate.status()).toBe(200);
+  const protocolScoped = await protocolUpdate.json();
+  expect(protocolScoped.meetingDrafts).toEqual({ [scoped.people[0].id]: employeeProtocol });
+  const meetingStateProtocol = "Протокол сохранен через узкий meeting-state API.";
+  const meetingStateUpdate = await employeeApi.patch(`/api/people/${encodeURIComponent(scoped.people[0].id)}/meeting-state`, {
+    data: {
+      prep: {
+        employeeAgenda: true,
+        managerAgenda: true
+      },
+      pulse: {
+        load: 9,
+        trust: 8
+      },
+      meetingDraft: meetingStateProtocol
+    }
+  });
+  expect(meetingStateUpdate.status()).toBe(200);
+  const meetingStateScoped = await meetingStateUpdate.json();
+  expect(meetingStateScoped.workspace.prep[scoped.people[0].id]).toEqual(expect.objectContaining({
+    employeeAgenda: true,
+    managerAgenda: false
+  }));
+  expect(meetingStateScoped.workspace.pulse[scoped.people[0].id]).toEqual(expect.objectContaining({
+    load: 9,
+    trust: 8
+  }));
+  expect(meetingStateScoped.workspace.meetingDrafts).toEqual({ [scoped.people[0].id]: meetingStateProtocol });
+  const forbiddenMeetingState = await employeeApi.patch("/api/people/not-my-person/meeting-state", {
+    data: { meetingDraft: "чужой протокол" }
+  });
+  expect(forbiddenMeetingState.status()).toBe(404);
   await employeeApi.dispose();
 
   const demoApi = await playwrightRequest.newContext({ baseURL });
@@ -281,6 +331,33 @@ test("auth, admin workflow, and employee data isolation work", async ({ page, re
   expect(leadWorkspace.users.map((item) => item.username).sort()).toEqual([leadA.username, `member_core_${suffix}`].sort());
   expect(leadWorkspace.people.some((person) => person.id === memberB.personId)).toBeFalsy();
 
+  const leadCreatedUsername = `member_by_lead_${suffix}`;
+  const leadCreatedResponse = await leadApi.post("/api/users", {
+    data: {
+      role: "employee",
+      personName: "Участник от лида",
+      personRole: "QA Engineer",
+      personTeam: "Ignored Team",
+      username: leadCreatedUsername,
+      password: "TeamPass121"
+    }
+  });
+  expect(leadCreatedResponse.status()).toBe(201);
+  const leadCreated = (await leadCreatedResponse.json()).user;
+  const leadCreateLeadResponse = await leadApi.post("/api/users", {
+    data: {
+      role: "lead",
+      personName: "Нельзя создать лида",
+      personTeam: "Core Platform",
+      username: `lead_by_lead_${suffix}`,
+      password: "TeamPass121"
+    }
+  });
+  expect(leadCreateLeadResponse.status()).toBe(403);
+  const leadWorkspaceAfterCreate = await (await leadApi.get("/api/workspace")).json();
+  expect(leadWorkspaceAfterCreate.people.map((person) => person.name).sort()).toEqual(["Участник Core", "Участник от лида"].sort());
+  expect(leadWorkspaceAfterCreate.users.map((item) => item.username)).toContain(leadCreatedUsername);
+
   const lpr = {
     id: `lpr-${suffix}`,
     personId: memberA.personId,
@@ -304,7 +381,7 @@ test("auth, admin workflow, and employee data isolation work", async ({ page, re
   };
   const saveLeadWorkspace = await leadApi.post("/api/workspace", {
     data: {
-      ...leadWorkspace,
+      ...leadWorkspaceAfterCreate,
       lprs: [lpr],
       goals: [goal]
     }
@@ -314,17 +391,99 @@ test("auth, admin workflow, and employee data isolation work", async ({ page, re
   expect(savedLeadWorkspace.lprs).toEqual([expect.objectContaining({ id: lpr.id, personId: memberA.personId })]);
   expect(savedLeadWorkspace.goals).toEqual([expect.objectContaining({ id: goal.id, lprId: lpr.id })]);
 
+  const competencyAssessment = {
+    id: `assessment-${suffix}`,
+    personId: memberA.personId,
+    title: "Кейс-интервью Product Manager",
+    roleContext: "Product Manager · Core Platform",
+    source: "case-ai",
+    status: "validated",
+    scaleMax: 5,
+    competencies: [
+      {
+        id: "competency-priority",
+        name: "Приоритизация",
+        category: "Execution",
+        score: 4.5,
+        targetScore: 4,
+        evidence: "Сильный ответ по trade-off.",
+        recommendation: "Закрепить практику письменного recap."
+      },
+      {
+        id: "competency-diagnostics",
+        name: "Системная диагностика",
+        category: "Problem solving",
+        score: 4,
+        targetScore: 4,
+        evidence: "Находит причинно-следственные связи.",
+        recommendation: "Передавать подход коллегам."
+      },
+      {
+        id: "competency-escalation",
+        name: "Эскалация",
+        category: "Collaboration",
+        score: 2.5,
+        targetScore: 3,
+        evidence: "Не всегда прикладывает контекст решения.",
+        recommendation: "Описывать критерии эскалации до передачи."
+      }
+    ],
+    cases: [
+      {
+        id: "case-priority",
+        title: "Три срочных запроса утром",
+        summary: "Проверялись приоритизация и эскалация.",
+        checkedCompetencies: ["Приоритизация", "Эскалация"]
+      }
+    ],
+    recommendations: [
+      {
+        id: "recommendation-escalation",
+        competencyName: "Эскалация",
+        action: "Сформулировать чек-лист эскалации для команды.",
+        dueDate: "2026-06-30"
+      }
+    ],
+    createdAt: new Date().toISOString(),
+    validatedAt: new Date().toISOString()
+  };
+  const saveLeadCompetencies = await leadApi.post("/api/workspace", {
+    data: {
+      ...savedLeadWorkspace,
+      competencyAssessments: [competencyAssessment]
+    }
+  });
+  expect(saveLeadCompetencies.status()).toBe(200);
+  const savedCompetencyWorkspace = await saveLeadCompetencies.json();
+  expect(savedCompetencyWorkspace.competencyAssessments).toEqual([
+    expect.objectContaining({
+      id: competencyAssessment.id,
+      personId: memberA.personId,
+      averageScore: 3.7,
+      minScore: 2.5,
+      grade: "middle"
+    })
+  ]);
+
   const surveyCreate = await leadApi.post("/api/surveys", {
     data: {
       title: `Анонимный пульс Core ${suffix}`,
       description: "Проверка scoped surveys",
       anonymous: true,
+      anonymousMinResponses: 2,
       questions: [
         {
           id: "q1",
           type: "scale",
           prompt: "Насколько всё ок?",
           required: true,
+          options: []
+        },
+        {
+          id: "q2",
+          type: "text",
+          prompt: "Что важно знать?",
+          required: false,
           options: []
         }
       ]
@@ -341,6 +500,7 @@ test("auth, admin workflow, and employee data isolation work", async ({ page, re
   });
   const leadBWorkspace = await (await leadBApi.get("/api/workspace")).json();
   expect(leadBWorkspace.surveys.some((survey) => survey.id === coreSurvey.id)).toBeFalsy();
+  expect(leadBWorkspace.competencyAssessments.some((assessment) => assessment.id === competencyAssessment.id)).toBeFalsy();
   expect((await leadBApi.delete(`/api/surveys/${encodeURIComponent(coreSurvey.id)}`)).status()).toBe(404);
   await leadBApi.dispose();
 
@@ -359,20 +519,59 @@ test("auth, admin workflow, and employee data isolation work", async ({ page, re
     data: { username: memberA.username, password: "TeamPass121" }
   });
   const firstAnonymousResponse = await memberAApi.post(`/api/surveys/${encodeURIComponent(coreSurvey.id)}/respond`, {
-    data: { answers: { q1: { value: 7 } } }
+    data: { answers: { q1: { value: 7 }, q2: { value: "Первый чувствительный текстовый ответ" } } }
   });
   expect(firstAnonymousResponse.status()).toBe(200);
+  const memberAWorkspaceWithAssessment = await (await memberAApi.get("/api/workspace")).json();
+  expect(memberAWorkspaceWithAssessment.competencyAssessments).toEqual([
+    expect.objectContaining({ id: competencyAssessment.id, grade: "middle" })
+  ]);
+  const tamperedAssessmentWorkspace = await memberAApi.post("/api/workspace", {
+    data: {
+      ...memberAWorkspaceWithAssessment,
+      competencyAssessments: [
+        {
+          ...memberAWorkspaceWithAssessment.competencyAssessments[0],
+          competencies: [
+            {
+              ...memberAWorkspaceWithAssessment.competencyAssessments[0].competencies[0],
+              score: 0
+            }
+          ]
+        }
+      ]
+    }
+  });
+  expect(tamperedAssessmentWorkspace.status()).toBe(200);
+  const tamperedAssessmentScoped = await tamperedAssessmentWorkspace.json();
+  expect(tamperedAssessmentScoped.competencyAssessments[0].competencies[0].score).toBe(4.5);
   const secondAnonymousResponse = await memberAApi.post(`/api/surveys/${encodeURIComponent(coreSurvey.id)}/respond`, {
-    data: { answers: { q1: { value: 8 } } }
+    data: { answers: { q1: { value: 8 }, q2: { value: "Обновленный чувствительный текстовый ответ" } } }
   });
   expect(secondAnonymousResponse.status()).toBe(200);
   await memberAApi.dispose();
 
+  const leadCreatedMemberApi = await playwrightRequest.newContext({ baseURL });
+  await leadCreatedMemberApi.post("/api/login", {
+    data: { username: leadCreated.username, password: "TeamPass121" }
+  });
+  const thresholdAnonymousResponse = await leadCreatedMemberApi.post(`/api/surveys/${encodeURIComponent(coreSurvey.id)}/respond`, {
+    data: { answers: { q1: { value: 6 }, q2: { value: "Второй чувствительный текстовый ответ" } } }
+  });
+  expect(thresholdAnonymousResponse.status()).toBe(200);
+  await leadCreatedMemberApi.dispose();
+
   const refreshedLeadWorkspace = await (await leadApi.get("/api/workspace")).json();
   const refreshedSurvey = refreshedLeadWorkspace.surveys.find((survey) => survey.id === coreSurvey.id);
-  expect(refreshedSurvey.responseCount).toBe(1);
-  expect(refreshedSurvey.aggregate.hidden).toBe(true);
-  expect(refreshedSurvey.aggregate.minResponses).toBe(3);
+  expect(refreshedSurvey.responseCount).toBe(2);
+  expect(refreshedSurvey.aggregate.hidden).toBeFalsy();
+  expect(refreshedSurvey.aggregate.perQuestion.q2).toEqual(
+    expect.objectContaining({
+      count: 2,
+      redacted: true,
+      samples: []
+    })
+  );
   await leadApi.dispose();
 
   const otherMemberApi = await playwrightRequest.newContext({ baseURL });
@@ -383,5 +582,6 @@ test("auth, admin workflow, and employee data isolation work", async ({ page, re
   expect(otherMemberWorkspace.people).toHaveLength(1);
   expect(otherMemberWorkspace.people[0].id).toBe(memberB.personId);
   expect(otherMemberWorkspace.lprs).toEqual([]);
+  expect(otherMemberWorkspace.competencyAssessments).toEqual([]);
   await otherMemberApi.dispose();
 });

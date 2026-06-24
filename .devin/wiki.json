@@ -1,0 +1,50 @@
+{
+  "repo_notes": [
+    {
+      "content": "Team Health 1:1 is a Node.js + React product for recurring team-management workflows: 1:1 agendas, live meeting notes, pulse, action items, development plans, goals, surveys, competency assessments, reports, and role-scoped access. The main implementation lives in server.js, src/App.jsx, and src/styles.css. The generated wiki should explain product flows as well as code architecture."
+    },
+    {
+      "content": "server.js is intentionally a compact custom Node HTTP server. It owns auth, sessions, PostgreSQL schema migration, local file fallback, data normalization, role scoping, API routes, survey anonymity, meeting-state patches, and Railway production safety checks."
+    },
+    {
+      "content": "src/App.jsx is a single React application shell with sections for Home, 1:1 meetings, LPR, Goals, Surveys, Reports, Team, Admin, and Settings. The wiki should call out the live meeting protocol, competency matrix, lead-scoped team management, anonymous survey behavior, and production reset guard."
+    },
+    {
+      "content": "docs/product-handbook.md is the human-maintained product and architecture guide. Use it as the primary narrative source, then cross-check against server.js, src/App.jsx, tests/smoke.spec.js, and tests/ui-audit.spec.js."
+    }
+  ],
+  "pages": [
+    {
+      "title": "Product Overview",
+      "purpose": "Explain what Team Health 1:1 is, who uses it, and which team-management workflows it connects."
+    },
+    {
+      "title": "User Roles and Access Model",
+      "purpose": "Document platform admin, lead, employee, and demo access, including workspace scoping and deletion/reset rules."
+    },
+    {
+      "title": "Core 1:1 Workflow",
+      "purpose": "Describe agenda capture, preparation checklist, pulse, live meeting protocol, summary generation, meeting log, and action items."
+    },
+    {
+      "title": "Development, Goals, Surveys, and Competency Reports",
+      "purpose": "Document LPRs, goals, anonymous surveys, case-interview competency assessments, team matrix reports, CSV exports, and LPR import flows."
+    },
+    {
+      "title": "Backend Architecture and API",
+      "purpose": "Explain server.js modules, API routes, auth/session handling, validation, persistence, PostgreSQL migrations, and local file fallback."
+    },
+    {
+      "title": "Frontend Architecture",
+      "purpose": "Explain src/App.jsx state structure, section navigation, save model, scoped meeting-state updates, UI audit expectations, and CSS organization."
+    },
+    {
+      "title": "Data Model",
+      "purpose": "Document PostgreSQL tables, normalized workspace collections, seed data, survey response hashes, meeting drafts, and competency_assessments."
+    },
+    {
+      "title": "Deployment and Operations",
+      "purpose": "Document Railway deployment, environment variables, production safety guards, health checks, smoke/UI/audit commands, and known release risks."
+    }
+  ]
+}
