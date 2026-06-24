@@ -39,7 +39,6 @@
 - [Product Handbook](docs/product-handbook.md) - подробное описание продукта, ролей, процессов, архитектуры, данных, деплоя и релизных проверок.
 - [QA Brief](docs/qa-brief.md) - сценарии ручной и автоматизированной проверки.
 - [Product Notes](docs/product-notes.md) - продуктовая рамка и persisted data model.
-- [Telegram Draft](docs/telegram-post-youngmaxnotes.md) - черновик поста для @youngmaxnotes о 1:1 процессах и продукте.
 - `.devin/wiki.json` - конфиг для DeepWiki/Devin wiki generation.
 
 ## Локальный запуск
