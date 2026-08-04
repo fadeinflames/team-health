@@ -13,8 +13,9 @@
     "preview": "vite preview --host 0.0.0.0",
     "start": "node server.js",
     "check": "vite build",
-    "test:smoke": "playwright test tests/smoke.spec.js --browser=chromium --reporter=line --workers=1",
-    "test:ui": "playwright test tests/ui-audit.spec.js --browser=chromium --reporter=line --workers=1"
+    "test": "playwright test",
+    "test:smoke": "playwright test tests/smoke.spec.js",
+    "test:ui": "playwright test tests/ui-audit.spec.js"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.1.1",
