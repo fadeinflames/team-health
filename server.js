@@ -4544,7 +4544,7 @@ function safeResolve(pathname) {
 validateProductionSecrets();
 await initStorage();
 
-createServer((request, response) => {
+const server = createServer((request, response) => {
   if ((request.url || "").startsWith("/api/")) {
     handleApi(request, response).catch((error) => {
       console.error(error);
@@ -4572,6 +4572,39 @@ createServer((request, response) => {
       response.end("Not found");
     })
     .pipe(response);
-}).listen(port, "0.0.0.0", () => {
-  console.log(`Team Health 1:1 is listening on ${port}`);
 });
+
+server.listen(port, "0.0.0.0", () => {
+  console.log(`Team Health 1:1 is listening on ${port} (${appEnv})`);
+});
+
+const shutdownTimeoutMs = Number(process.env.SHUTDOWN_TIMEOUT_MS) || 10_000;
+let shuttingDown = false;
+
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`${signal} received, shutting down`);
+
+  const forceExit = setTimeout(() => {
+    console.error(`Graceful shutdown exceeded ${shutdownTimeoutMs}ms, forcing exit`);
+    process.exit(1);
+  }, shutdownTimeoutMs);
+  forceExit.unref();
+
+  server.close(async () => {
+    try {
+      await pgPool?.end();
+    } catch (error) {
+      console.error(error);
+    }
+    clearTimeout(forceExit);
+    process.exit(0);
+  });
+
+  // Keep-alive sockets would otherwise hold the server open until the timeout.
+  server.closeIdleConnections();
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
