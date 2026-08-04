@@ -1006,10 +1006,29 @@ function ensureSeedLogin(db, config) {
   };
 }
 
+// Only override SSL when DATABASE_SSL is set explicitly. Left unset, node-postgres
+// keeps reading sslmode from the connection string, which is what Railway relies on.
+function poolSslOption() {
+  switch (process.env.DATABASE_SSL) {
+    case "require":
+      return { rejectUnauthorized: false };
+    case "verify-full":
+      return { rejectUnauthorized: true };
+    case "disable":
+      return false;
+    default:
+      return undefined;
+  }
+}
+
 async function initStorage() {
   if (storageMode === "postgres") {
     const { Pool } = await import("pg");
-    pgPool = new Pool({ connectionString: process.env.DATABASE_URL });
+    const ssl = poolSslOption();
+    pgPool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ...(ssl === undefined ? {} : { ssl })
+    });
     await migratePostgres();
     await seedPostgres();
     console.log("Storage mode: postgres");
