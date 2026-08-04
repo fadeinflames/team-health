@@ -4520,6 +4520,41 @@ async function handleApi(request, response) {
   sendJson(response, 404, { error: "API endpoint not found" });
 }
 
+async function isStorageReady() {
+  if (storageMode === "postgres") {
+    if (!pgPool) return false;
+    await pgPool.query("SELECT 1");
+    return true;
+  }
+  return existsSync(dataFile);
+}
+
+// Liveness and readiness are deliberately separate: /healthz answers as long as the
+// process is running, /readyz also requires storage, so a rollout does not send
+// traffic to a pod that cannot reach the database.
+async function handleHealth(pathname, request, response) {
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    sendJson(response, 405, { error: "Method not allowed" });
+    return;
+  }
+
+  if (pathname === "/healthz") {
+    sendJson(response, 200, { status: "ok" });
+    return;
+  }
+
+  try {
+    const ready = await isStorageReady();
+    sendJson(response, ready ? 200 : 503, {
+      status: ready ? "ok" : "unavailable",
+      storage: storageMode
+    });
+  } catch (error) {
+    console.error(error);
+    sendJson(response, 503, { status: "unavailable", storage: storageMode });
+  }
+}
+
 function safeResolve(pathname) {
   let decoded = "/";
   try {
@@ -4545,6 +4580,20 @@ validateProductionSecrets();
 await initStorage();
 
 const server = createServer((request, response) => {
+  const pathname = (request.url || "/").split("?")[0];
+
+  if (pathname === "/healthz" || pathname === "/readyz") {
+    handleHealth(pathname, request, response).catch((error) => {
+      console.error(error);
+      if (!response.headersSent) {
+        sendJson(response, 503, { status: "unavailable" });
+      } else {
+        response.end();
+      }
+    });
+    return;
+  }
+
   if ((request.url || "").startsWith("/api/")) {
     handleApi(request, response).catch((error) => {
       console.error(error);
