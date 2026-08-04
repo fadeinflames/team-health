@@ -20,12 +20,17 @@ const dataFile = join(dataDir, "workspace.json");
 const port = Number(process.env.PORT) || 4173;
 const sessionTtlMs = 1000 * 60 * 60 * 24 * 14;
 const storageMode = process.env.DATABASE_URL ? "postgres" : "file";
+// Deployment mode drives every production guard below. RAILWAY_ENVIRONMENT stays
+// as an auto-detect fallback so an existing Railway deploy needs no new variable,
+// while any other target (Docker, Kubernetes) sets APP_ENV explicitly.
+const appEnv = process.env.APP_ENV || (process.env.RAILWAY_ENVIRONMENT ? "production" : "local");
+const isProduction = appEnv === "production";
 const failedLoginWindowMs = 1000 * 60 * 15;
 const maxFailedLoginAttempts = 8;
 const maxFailedLoginAttemptsPerIp = 30;
-const trustProxy = Boolean(process.env.RAILWAY_ENVIRONMENT) || process.env.TRUST_PROXY === "1";
+const trustProxy = isProduction || process.env.TRUST_PROXY === "1";
 const allowFileStorageInProduction = process.env.ALLOW_FILE_STORAGE === "1";
-const demoResetAllowed = !process.env.RAILWAY_ENVIRONMENT || process.env.ENABLE_DEMO_RESET === "1";
+const demoResetAllowed = !isProduction || process.env.ENABLE_DEMO_RESET === "1";
 
 const defaultAdminUsername = "mgusev";
 const defaultAdminPassword = "passwb121";
@@ -2526,11 +2531,15 @@ function publicUser(user) {
 }
 
 function validateProductionSecrets() {
-  if (process.env.RAILWAY_ENVIRONMENT && adminPassword === defaultAdminPassword) {
+  if (appEnv !== "local" && appEnv !== "production") {
+    console.error(`APP_ENV must be "local" or "production", got "${appEnv}".`);
+    process.exit(1);
+  }
+  if (isProduction && adminPassword === defaultAdminPassword) {
     console.error("ADMIN_PASSWORD must be set explicitly in production. Refusing to start with the default value.");
     process.exit(1);
   }
-  if (process.env.RAILWAY_ENVIRONMENT && storageMode === "file" && !allowFileStorageInProduction) {
+  if (isProduction && storageMode === "file" && !allowFileStorageInProduction) {
     console.error("DATABASE_URL must be set in production. Refusing to start with ephemeral file storage.");
     process.exit(1);
   }
@@ -2604,12 +2613,12 @@ function parseCookies(cookieHeader = "") {
 }
 
 function sessionCookie(sessionId) {
-  const secure = process.env.RAILWAY_ENVIRONMENT ? "; Secure" : "";
+  const secure = isProduction ? "; Secure" : "";
   return `th_session=${encodeURIComponent(sessionId)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(sessionTtlMs / 1000)}${secure}`;
 }
 
 function clearSessionCookie() {
-  const secure = process.env.RAILWAY_ENVIRONMENT ? "; Secure" : "";
+  const secure = isProduction ? "; Secure" : "";
   return `th_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure}`;
 }
 
