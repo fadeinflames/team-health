@@ -51,6 +51,46 @@ npm run start
 
 Приложение откроется на `http://127.0.0.1:4173`.
 
+## Разработка
+
+`make help` показывает все цели. Два равноценных режима, в обоих правки применяются сразу: бэкенд перезапускает `node --watch`, фронтенд обновляет vite HMR.
+
+На хосте:
+
+```bash
+make install
+make dev
+```
+
+UI на `http://127.0.0.1:5173`, API на `http://127.0.0.1:4173`. Vite проксирует `/api` на бэкенд, поэтому сессия и cookie работают как в production. Без `DATABASE_URL` данные лежат в `.data/workspace.json`, `make reset-data` их сбрасывает.
+
+В docker, вместе с PostgreSQL:
+
+```bash
+make env    # .env из .env.example, опционально
+make up
+make logs
+make down
+```
+
+Порты пробрасываются те же, PostgreSQL на `5433` (5432 на машине разработчика обычно уже занят). `make down-v` дополнительно удаляет volume с данными. `make up-prod` поднимает прод-подобный стек из runtime-образа на `http://127.0.0.1:8080` — тот же образ, который пойдет в registry.
+
+## Тесты
+
+```bash
+make test-docker
+```
+
+Поднимает отдельные PostgreSQL и сервер, гоняет playwright в контейнере и убирает за собой. Dev-стек и его данные при этом не трогаются, тестовая база живет в tmpfs.
+
+На хосте, против уже запущенного приложения:
+
+```bash
+make test-install   # браузер для playwright, один раз
+make build && make start
+make test
+```
+
 ## Production build
 
 ```bash
@@ -62,8 +102,11 @@ npm run start
 
 Сервер использует:
 
+- `APP_ENV` со значениями `local` и `production`; включает все production-защиты сразу. Если не задан, определяется автоматически: `production` при наличии `RAILWAY_ENVIRONMENT`, иначе `local`;
 - `PORT`, который задает Railway;
 - `DATABASE_URL` для PostgreSQL;
+- `DATABASE_SSL` со значениями `require`, `verify-full` или `disable`; без переменной SSL берется из строки подключения;
+- `SHUTDOWN_TIMEOUT_MS` для graceful shutdown, по умолчанию 10000;
 - `DATA_DIR` только как локальный fallback без PostgreSQL;
 - `ADMIN_USERNAME` и `ADMIN_PASSWORD` для seed-админа при первом запуске; на Railway `ADMIN_PASSWORD` обязателен и не может оставаться значением по умолчанию.
 - `DEMO_USERNAME` и `DEMO_PASSWORD` для демо 1:1.
@@ -77,7 +120,14 @@ npm run start
 
 - build command: `npm run build`;
 - start command: `npm run start`;
-- healthcheck: `/`.
+- healthcheck: `/healthz`.
+
+## Проверки состояния
+
+- `GET /healthz` отвечает `200`, пока жив процесс: liveness.
+- `GET /readyz` дополнительно проверяет хранилище (`SELECT 1` для PostgreSQL, наличие файла для file-режима) и отвечает `503`, если оно недоступно: readiness.
+
+Оба эндпоинта не требуют авторизации и не кешируются. По `SIGTERM` и `SIGINT` сервер перестает принимать соединения, дожидается активных запросов, закрывает пул PostgreSQL и выходит.
 
 Для надежного хранения нужен Railway PostgreSQL. Добавление через CLI:
 

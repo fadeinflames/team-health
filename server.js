@@ -20,12 +20,17 @@ const dataFile = join(dataDir, "workspace.json");
 const port = Number(process.env.PORT) || 4173;
 const sessionTtlMs = 1000 * 60 * 60 * 24 * 14;
 const storageMode = process.env.DATABASE_URL ? "postgres" : "file";
+// Deployment mode drives every production guard below. RAILWAY_ENVIRONMENT stays
+// as an auto-detect fallback so an existing Railway deploy needs no new variable,
+// while any other target (Docker, Kubernetes) sets APP_ENV explicitly.
+const appEnv = process.env.APP_ENV || (process.env.RAILWAY_ENVIRONMENT ? "production" : "local");
+const isProduction = appEnv === "production";
 const failedLoginWindowMs = 1000 * 60 * 15;
 const maxFailedLoginAttempts = 8;
 const maxFailedLoginAttemptsPerIp = 30;
-const trustProxy = Boolean(process.env.RAILWAY_ENVIRONMENT) || process.env.TRUST_PROXY === "1";
+const trustProxy = isProduction || process.env.TRUST_PROXY === "1";
 const allowFileStorageInProduction = process.env.ALLOW_FILE_STORAGE === "1";
-const demoResetAllowed = !process.env.RAILWAY_ENVIRONMENT || process.env.ENABLE_DEMO_RESET === "1";
+const demoResetAllowed = !isProduction || process.env.ENABLE_DEMO_RESET === "1";
 
 const defaultAdminUsername = "mgusev";
 const defaultAdminPassword = "passwb121";
@@ -1001,10 +1006,29 @@ function ensureSeedLogin(db, config) {
   };
 }
 
+// Only override SSL when DATABASE_SSL is set explicitly. Left unset, node-postgres
+// keeps reading sslmode from the connection string, which is what Railway relies on.
+function poolSslOption() {
+  switch (process.env.DATABASE_SSL) {
+    case "require":
+      return { rejectUnauthorized: false };
+    case "verify-full":
+      return { rejectUnauthorized: true };
+    case "disable":
+      return false;
+    default:
+      return undefined;
+  }
+}
+
 async function initStorage() {
   if (storageMode === "postgres") {
     const { Pool } = await import("pg");
-    pgPool = new Pool({ connectionString: process.env.DATABASE_URL });
+    const ssl = poolSslOption();
+    pgPool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ...(ssl === undefined ? {} : { ssl })
+    });
     await migratePostgres();
     await seedPostgres();
     console.log("Storage mode: postgres");
@@ -2526,11 +2550,15 @@ function publicUser(user) {
 }
 
 function validateProductionSecrets() {
-  if (process.env.RAILWAY_ENVIRONMENT && adminPassword === defaultAdminPassword) {
+  if (appEnv !== "local" && appEnv !== "production") {
+    console.error(`APP_ENV must be "local" or "production", got "${appEnv}".`);
+    process.exit(1);
+  }
+  if (isProduction && adminPassword === defaultAdminPassword) {
     console.error("ADMIN_PASSWORD must be set explicitly in production. Refusing to start with the default value.");
     process.exit(1);
   }
-  if (process.env.RAILWAY_ENVIRONMENT && storageMode === "file" && !allowFileStorageInProduction) {
+  if (isProduction && storageMode === "file" && !allowFileStorageInProduction) {
     console.error("DATABASE_URL must be set in production. Refusing to start with ephemeral file storage.");
     process.exit(1);
   }
@@ -2604,12 +2632,12 @@ function parseCookies(cookieHeader = "") {
 }
 
 function sessionCookie(sessionId) {
-  const secure = process.env.RAILWAY_ENVIRONMENT ? "; Secure" : "";
+  const secure = isProduction ? "; Secure" : "";
   return `th_session=${encodeURIComponent(sessionId)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(sessionTtlMs / 1000)}${secure}`;
 }
 
 function clearSessionCookie() {
-  const secure = process.env.RAILWAY_ENVIRONMENT ? "; Secure" : "";
+  const secure = isProduction ? "; Secure" : "";
   return `th_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure}`;
 }
 
@@ -4511,6 +4539,41 @@ async function handleApi(request, response) {
   sendJson(response, 404, { error: "API endpoint not found" });
 }
 
+async function isStorageReady() {
+  if (storageMode === "postgres") {
+    if (!pgPool) return false;
+    await pgPool.query("SELECT 1");
+    return true;
+  }
+  return existsSync(dataFile);
+}
+
+// Liveness and readiness are deliberately separate: /healthz answers as long as the
+// process is running, /readyz also requires storage, so a rollout does not send
+// traffic to a pod that cannot reach the database.
+async function handleHealth(pathname, request, response) {
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    sendJson(response, 405, { error: "Method not allowed" });
+    return;
+  }
+
+  if (pathname === "/healthz") {
+    sendJson(response, 200, { status: "ok" });
+    return;
+  }
+
+  try {
+    const ready = await isStorageReady();
+    sendJson(response, ready ? 200 : 503, {
+      status: ready ? "ok" : "unavailable",
+      storage: storageMode
+    });
+  } catch (error) {
+    console.error(error);
+    sendJson(response, 503, { status: "unavailable", storage: storageMode });
+  }
+}
+
 function safeResolve(pathname) {
   let decoded = "/";
   try {
@@ -4535,7 +4598,21 @@ function safeResolve(pathname) {
 validateProductionSecrets();
 await initStorage();
 
-createServer((request, response) => {
+const server = createServer((request, response) => {
+  const pathname = (request.url || "/").split("?")[0];
+
+  if (pathname === "/healthz" || pathname === "/readyz") {
+    handleHealth(pathname, request, response).catch((error) => {
+      console.error(error);
+      if (!response.headersSent) {
+        sendJson(response, 503, { status: "unavailable" });
+      } else {
+        response.end();
+      }
+    });
+    return;
+  }
+
   if ((request.url || "").startsWith("/api/")) {
     handleApi(request, response).catch((error) => {
       console.error(error);
@@ -4563,6 +4640,39 @@ createServer((request, response) => {
       response.end("Not found");
     })
     .pipe(response);
-}).listen(port, "0.0.0.0", () => {
-  console.log(`Team Health 1:1 is listening on ${port}`);
 });
+
+server.listen(port, "0.0.0.0", () => {
+  console.log(`Team Health 1:1 is listening on ${port} (${appEnv})`);
+});
+
+const shutdownTimeoutMs = Number(process.env.SHUTDOWN_TIMEOUT_MS) || 10_000;
+let shuttingDown = false;
+
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`${signal} received, shutting down`);
+
+  const forceExit = setTimeout(() => {
+    console.error(`Graceful shutdown exceeded ${shutdownTimeoutMs}ms, forcing exit`);
+    process.exit(1);
+  }, shutdownTimeoutMs);
+  forceExit.unref();
+
+  server.close(async () => {
+    try {
+      await pgPool?.end();
+    } catch (error) {
+      console.error(error);
+    }
+    clearTimeout(forceExit);
+    process.exit(0);
+  });
+
+  // Keep-alive sockets would otherwise hold the server open until the timeout.
+  server.closeIdleConnections();
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

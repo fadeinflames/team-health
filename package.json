@@ -13,18 +13,19 @@
     "preview": "vite preview --host 0.0.0.0",
     "start": "node server.js",
     "check": "vite build",
-    "test:smoke": "playwright test tests/smoke.spec.js --browser=chromium --reporter=line --workers=1",
-    "test:ui": "playwright test tests/ui-audit.spec.js --browser=chromium --reporter=line --workers=1"
+    "test": "playwright test",
+    "test:smoke": "playwright test tests/smoke.spec.js",
+    "test:ui": "playwright test tests/ui-audit.spec.js"
   },
   "dependencies": {
+    "pg": "^8.20.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@vitejs/plugin-react": "^5.1.1",
     "lucide-react": "^0.552.0",
-    "pg": "^8.20.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "vite": "^8.0.10"
-  },
-  "devDependencies": {
-    "@playwright/test": "^1.59.1"
   }
 }
