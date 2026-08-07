@@ -28,6 +28,16 @@ import {
   buildSeedPulseHistory,
   buildSeedOncallLoad
 } from "./fixtures/demo.mjs";
+import { syncWorkspace, VersionConflictError } from "./db/repositories/workspace.js";
+import {
+  findSessionUser,
+  findUserByUsername,
+  createSession,
+  deleteSession,
+  deleteOtherSessions,
+  updateUserName,
+  updateUserPassword
+} from "./db/repositories/auth.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const distDir = join(__dirname, "dist");
@@ -342,7 +352,12 @@ function normalizeDb(rawDb = {}) {
         return {
           ...card,
           status: existing?.status || card.status,
-          lprId: existing?.lprId || card.lprId || ""
+          lprId: existing?.lprId || card.lprId || "",
+          // Демо-карточки накладываются поверх фикстур, но версию строки
+          // надо брать из базы: иначе оптимистичная блокировка на них
+          // никогда не сработает.
+          createdAt: existing?.createdAt || card.createdAt || null,
+          updatedAt: existing?.updatedAt || null
         };
       }),
       ...cards.filter((card) => !seedCardIds.has(card.id) && !hasLegacyBusinessText(card.title, card.body))
@@ -352,7 +367,9 @@ function normalizeDb(rawDb = {}) {
         const existing = actionsById.get(action.id);
         return {
           ...action,
-          done: typeof existing?.done === "boolean" ? existing.done : action.done
+          done: typeof existing?.done === "boolean" ? existing.done : action.done,
+          createdAt: existing?.createdAt || action.createdAt || null,
+          updatedAt: existing?.updatedAt || null
         };
       }),
       ...actions.filter((action) => !seedActionIds.has(action.id) && !hasLegacyBusinessText(action.title, action.due))
@@ -790,74 +807,6 @@ async function ensureAdminAccounts() {
   }
 }
 
-async function upsertPeople(client, rows) {
-  for (const person of rows) {
-    await client.query(
-      `
-        insert into people
-          (id, name, meeting_name, role, team, initials, next_meeting, cadence, manager_focus, last_summary, trend, meeting_type, mentorship_mode, growth_narrative, performance_narrative, archived_at)
-        values
-          ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::timestamptz)
-        on conflict (id) do update set
-          name = excluded.name,
-          meeting_name = excluded.meeting_name,
-          role = excluded.role,
-          team = excluded.team,
-          initials = excluded.initials,
-          next_meeting = excluded.next_meeting,
-          cadence = excluded.cadence,
-          manager_focus = excluded.manager_focus,
-          last_summary = excluded.last_summary,
-          trend = excluded.trend,
-          meeting_type = excluded.meeting_type,
-          mentorship_mode = excluded.mentorship_mode,
-          growth_narrative = excluded.growth_narrative,
-          performance_narrative = excluded.performance_narrative,
-          archived_at = excluded.archived_at
-      `,
-      [
-        person.id,
-        person.name,
-        person.meetingName,
-        person.role,
-        person.team,
-        person.initials,
-        person.nextMeeting,
-        person.cadence,
-        person.managerFocus,
-        person.lastSummary,
-        person.trend,
-        person.meetingType || "regular",
-        person.mentorshipMode || "coach",
-        person.growthNarrative || "",
-        person.performanceNarrative || "",
-        person.archivedAt || null
-      ]
-    );
-  }
-}
-
-async function upsertPrep(client, prep) {
-  for (const [personId, value] of Object.entries(prep)) {
-    await client.query(
-      `
-        insert into prep (person_id, employee_agenda, manager_agenda, pulse, last_actions, growth, commitments)
-        values ($1, $2, $3, $4, $5, $6, $7)
-        on conflict (person_id) do nothing
-      `,
-      [
-        personId,
-        value.employeeAgenda,
-        value.managerAgenda,
-        value.pulse,
-        value.lastActions,
-        value.growth,
-        value.commitments
-      ]
-    );
-  }
-}
-
 async function readDb() {
   if (storageMode === "postgres") {
     const [
@@ -898,7 +847,8 @@ async function readDb() {
             mentorship_mode as "mentorshipMode",
             growth_narrative as "growthNarrative",
             performance_narrative as "performanceNarrative",
-            to_char(archived_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as "archivedAt"
+            to_char(archived_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as "archivedAt",
+            to_json(updated_at)#>>'{}' as "updatedAt"
           from people
           order by case id when 'demo-sre' then 0 when 'anna' then 1 when 'danila' then 2 when 'mila' then 3 when 'timur' then 4 else 99 end, name
         `),
@@ -910,7 +860,7 @@ async function readDb() {
             focus,
             status,
             created_at as "createdAt",
-            updated_at as "updatedAt"
+            to_json(updated_at)#>>'{}' as "updatedAt"
           from lprs
           order by created_at asc, id asc
         `),
@@ -924,7 +874,9 @@ async function readDb() {
             priority,
             status,
             title,
-            body
+            body,
+            created_at as "createdAt",
+            to_json(updated_at)#>>'{}' as "updatedAt"
           from cards
           order by created_at asc, id asc
         `),
@@ -936,7 +888,9 @@ async function readDb() {
             title,
             due,
             to_char(due_date, 'YYYY-MM-DD') as "dueDate",
-            done
+            done,
+            created_at as "createdAt",
+            to_json(updated_at)#>>'{}' as "updatedAt"
           from actions
           order by created_at asc, id asc
         `),
@@ -951,6 +905,7 @@ async function readDb() {
             progress,
             status,
             created_at as "createdAt",
+            to_json(updated_at)#>>'{}' as "updatedAt",
             due_date as "dueDate"
           from goals
           order by created_at asc, id asc
@@ -971,6 +926,7 @@ async function readDb() {
             cases_json as "cases",
             recommendations_json as "recommendations",
             created_at as "createdAt",
+            to_json(updated_at)#>>'{}' as "updatedAt",
             validated_at as "validatedAt"
           from competency_assessments
           order by created_at asc, id asc
@@ -1164,27 +1120,12 @@ async function writeDb(db, options = {}) {
     const client = await pgPool.connect();
     try {
       await client.query("BEGIN");
-      await upsertPeople(client, normalized.people);
-      await replaceLprs(client, normalized.lprs);
-      await replaceCards(client, normalized.cards);
-      await replaceActions(client, normalized.actions);
-      await replaceGoals(client, normalized.goals);
-      await replaceCompetencyAssessments(client, normalized.competencyAssessments);
-      await replacePrep(client, normalized.prep);
-      await replacePulse(client, normalized.pulse);
-      await replacePulseHistory(client, normalized.pulseHistory);
-      await replaceSurveys(client, normalized.surveys);
-      await replaceSurveyResponses(client, normalized.surveyResponses);
-      await replaceManagerNotes(client, normalized.managerNotes);
-      await replaceOncallLoad(client, normalized.oncallLoad);
-      await replaceMeetingLog(client, normalized.meetingLog);
-      await replaceMeetingDrafts(client, normalized.meetingDrafts);
-      await replaceNotes(client, normalized.notes);
-      if (replaceAuth) {
-        await replaceUsers(client, normalized.users);
-        await replaceSessions(client, normalized.sessions);
-        await deleteMissingPeople(client, normalized.people);
-      }
+      await syncWorkspace(client, normalized, {
+        replaceAuth,
+        pulseHistoryRetentionDays,
+        surveySecretVersion,
+        checkVersions: options.checkVersions === true
+      });
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK");
@@ -1219,183 +1160,6 @@ async function writeDb(db, options = {}) {
       // tmp file already missing — nothing to clean
     }
     throw error;
-  }
-}
-
-async function replaceCards(client, cards) {
-  await client.query("delete from cards");
-  for (const card of cards) {
-    await client.query(
-      `
-        insert into cards (id, person_id, lpr_id, source, category, priority, status, title, body)
-        values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-      `,
-      [card.id, card.personId, card.lprId || null, card.source, card.category, card.priority, card.status, card.title, card.body]
-    );
-  }
-}
-
-async function replaceLprs(client, lprs) {
-  await client.query("delete from lprs");
-  for (const lpr of lprs || []) {
-    await client.query(
-      `
-        insert into lprs (id, person_id, title, focus, status, created_at, updated_at)
-        values ($1, $2, $3, $4, $5, coalesce($6::timestamptz, now()), coalesce($7::timestamptz, now()))
-      `,
-      [
-        lpr.id,
-        lpr.personId,
-        lpr.title,
-        lpr.focus,
-        lpr.status,
-        lpr.createdAt || null,
-        lpr.updatedAt || null
-      ]
-    );
-  }
-}
-
-async function replaceActions(client, actions) {
-  await client.query("delete from actions");
-  for (const action of actions) {
-    await client.query(
-      `
-        insert into actions (id, person_id, owner, title, due, due_date, done)
-        values ($1, $2, $3, $4, $5, $6::date, $7)
-      `,
-      [
-        action.id,
-        action.personId,
-        action.owner,
-        action.title,
-        action.due,
-        action.dueDate || null,
-        action.done
-      ]
-    );
-  }
-}
-
-async function replaceGoals(client, goals) {
-  await client.query("delete from goals");
-  for (const goal of goals || []) {
-    await client.query(
-      `
-        insert into goals (id, person_id, lpr_id, title, description, horizon, progress, status, created_at, due_date)
-        values ($1, $2, $3, $4, $5, $6, $7, $8, coalesce($9::timestamptz, now()), $10)
-      `,
-      [
-        goal.id,
-        goal.personId,
-        goal.lprId || null,
-        goal.title,
-        goal.description,
-        goal.horizon,
-        goal.progress,
-        goal.status,
-        goal.createdAt || null,
-        goal.dueDate
-      ]
-    );
-  }
-}
-
-async function replaceCompetencyAssessments(client, assessments) {
-  await client.query("delete from competency_assessments");
-  for (const assessment of assessments || []) {
-    const cleaned = sanitizeCompetencyAssessment(assessment, assessment.personId);
-    await client.query(
-      `
-        insert into competency_assessments
-          (id, person_id, title, role_context, source, status, scale_max, average_score, min_score, grade, competencies_json, cases_json, recommendations_json, created_at, validated_at)
-        values
-          ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13::jsonb, coalesce($14::timestamptz, now()), $15::timestamptz)
-      `,
-      [
-        cleaned.id,
-        cleaned.personId,
-        cleaned.title,
-        cleaned.roleContext,
-        cleaned.source,
-        cleaned.status,
-        cleaned.scaleMax,
-        cleaned.averageScore,
-        cleaned.minScore,
-        cleaned.grade,
-        JSON.stringify(cleaned.competencies),
-        JSON.stringify(cleaned.cases),
-        JSON.stringify(cleaned.recommendations),
-        cleaned.createdAt || null,
-        cleaned.validatedAt || null
-      ]
-    );
-  }
-}
-
-async function replacePrep(client, prep) {
-  await client.query("delete from prep");
-  await upsertPrep(client, prep);
-}
-
-async function replacePulse(client, pulse) {
-  await client.query("delete from pulse");
-  for (const [personId, value] of Object.entries(pulse)) {
-    await client.query(
-      "insert into pulse (person_id, energy, load, clarity, trust) values ($1, $2, $3, $4, $5)",
-      [personId, value.energy, value.load, value.clarity, value.trust]
-    );
-  }
-}
-
-async function replaceSurveys(client, surveys) {
-  await client.query("delete from surveys");
-  for (const survey of surveys || []) {
-    await client.query(
-      `
-        insert into surveys (id, title, description, anonymous, status, questions_json, is_demo_seed, is_template, owner_user_id, anonymous_min_responses, created_at)
-        values ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, coalesce($11::timestamptz, now()))
-      `,
-      [
-        survey.id,
-        survey.title,
-        survey.description,
-        survey.anonymous,
-        survey.status,
-        JSON.stringify(survey.questions || []),
-        survey.isDemoSeed === true,
-        survey.isTemplate === true,
-        survey.ownerUserId || null,
-        survey.anonymousMinResponses || 3,
-        survey.createdAt || null
-      ]
-    );
-  }
-}
-
-async function replaceMeetingLog(client, entries) {
-  await client.query("delete from meeting_log");
-  for (const entry of entries || []) {
-    await client.query(
-      `
-        insert into meeting_log (id, person_id, held_at, meeting_type, summary, attended)
-        values ($1, $2, $3::timestamptz, $4, $5, $6)
-      `,
-      [entry.id, entry.personId, entry.heldAt, entry.meetingType, entry.summary, entry.attended]
-    );
-  }
-}
-
-async function replaceMeetingDrafts(client, drafts) {
-  await client.query("delete from meeting_drafts");
-  for (const [personId, body] of Object.entries(drafts || {})) {
-    await client.query(
-      `
-        insert into meeting_drafts (person_id, body, updated_at)
-        values ($1, $2, now())
-      `,
-      [personId, body]
-    );
   }
 }
 
@@ -1470,159 +1234,6 @@ async function upsertMeetingDraft(client, personId, body) {
     `,
     [personId, body]
   );
-}
-
-async function replaceOncallLoad(client, entries) {
-  await client.query("delete from oncall_load");
-  for (const entry of entries || []) {
-    await client.query(
-      `
-        insert into oncall_load
-          (person_id, week_start, pages_total, after_hours_pages, incidents_led, sleep_disrupted_nights)
-        values ($1, $2::date, $3, $4, $5, $6)
-      `,
-      [
-        entry.personId,
-        entry.weekStart,
-        entry.pagesTotal,
-        entry.afterHoursPages,
-        entry.incidentsLed,
-        entry.sleepDisruptedNights
-      ]
-    );
-  }
-}
-
-async function replaceManagerNotes(client, notes) {
-  await client.query("delete from manager_notes");
-  for (const note of notes || []) {
-    await client.query(
-      `
-        insert into manager_notes (id, person_id, body, tags, created_at)
-        values ($1, $2, $3, $4::text[], coalesce($5::timestamptz, now()))
-      `,
-      [note.id, note.personId, note.body, note.tags || [], note.createdAt || null]
-    );
-  }
-}
-
-async function replaceSurveyResponses(client, responses) {
-  await client.query("delete from survey_responses");
-  for (const response of responses || []) {
-    await client.query(
-      `
-        insert into survey_responses (id, survey_id, person_id, respondent_hash, secret_version, answers_json, submitted_at)
-        values ($1, $2, $3, $4, $5, $6::jsonb, coalesce($7::timestamptz, now()))
-      `,
-      [
-        response.id,
-        response.surveyId,
-        response.personId || null,
-        response.respondentHash || null,
-        response.secretVersion || surveySecretVersion,
-        JSON.stringify(response.answers || {}),
-        response.submittedAt || null
-      ]
-    );
-  }
-}
-
-async function replacePulseHistory(client, history) {
-  // Upsert only — never truncate. snapshotPulse() already enforces dedup-by-day,
-  // so the typical write touches one row per person regardless of history depth.
-  const cutoff = new Date(Date.now() - pulseHistoryRetentionDays * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
-  await client.query("delete from pulse_history where captured_at < $1::date", [cutoff]);
-  for (const entry of history || []) {
-    await client.query(
-      `
-        insert into pulse_history (person_id, captured_at, energy, load, clarity, trust)
-        values ($1, $2, $3, $4, $5, $6)
-        on conflict (person_id, captured_at) do update set
-          energy = excluded.energy,
-          load = excluded.load,
-          clarity = excluded.clarity,
-          trust = excluded.trust
-      `,
-      [entry.personId, entry.capturedAt, entry.energy, entry.load, entry.clarity, entry.trust]
-    );
-  }
-}
-
-async function replaceNotes(client, notes) {
-  await client.query("delete from notes");
-  for (const [personId, body] of Object.entries(notes)) {
-    await client.query("insert into notes (person_id, body) values ($1, $2)", [personId, body]);
-  }
-}
-
-async function replaceUsers(client, users) {
-  // Defensive guard: never blow away the users table because an upstream
-  // glitch produced an empty array. At minimum the seed platform admin must
-  // be present for the system to remain logged-in-able.
-  if (!Array.isArray(users) || users.length === 0) {
-    console.warn("replaceUsers called with empty users array — skipping delete to avoid wiping logins");
-    return;
-  }
-  await client.query("delete from users where id <> all($1::text[])", [users.map((user) => user.id)]);
-  // Insert in two passes so lead_user_id self-references can resolve regardless
-  // of the order rows appear in the input array.
-  for (const user of users) {
-    await client.query(
-      `
-        insert into users (id, username, name, role, person_id, lead_user_id, team_label, salt, password_hash, created_at)
-        values ($1, $2, $3, $4, $5, NULL, $6, $7, $8, coalesce($9::timestamptz, now()))
-        on conflict (id) do update set
-          username = excluded.username,
-          name = excluded.name,
-          role = excluded.role,
-          person_id = excluded.person_id,
-          team_label = excluded.team_label,
-          salt = excluded.salt,
-          password_hash = excluded.password_hash
-      `,
-      [
-        user.id,
-        user.username,
-        user.name,
-        user.role,
-        user.personId,
-        user.teamLabel || "",
-        user.salt,
-        user.passwordHash,
-        user.createdAt || null
-      ]
-    );
-  }
-  // Second pass: set lead_user_id once all user rows exist.
-  for (const user of users) {
-    if (user.leadUserId) {
-      await client.query("update users set lead_user_id = $1 where id = $2", [
-        user.leadUserId,
-        user.id
-      ]);
-    } else {
-      await client.query("update users set lead_user_id = NULL where id = $1", [user.id]);
-    }
-  }
-}
-
-async function replaceSessions(client, sessions) {
-  await client.query("delete from sessions");
-  for (const session of sessions) {
-    await client.query(
-      `
-        insert into sessions (id, user_id, created_at, expires_at)
-        values ($1, $2, $3::timestamptz, $4::timestamptz)
-      `,
-      [session.id, session.userId, session.createdAt, session.expiresAt]
-    );
-  }
-}
-
-async function deleteMissingPeople(client, peopleRows) {
-  await client.query("delete from people where id <> all($1::text[])", [peopleRows.map((person) => person.id)]);
 }
 
 async function deletePersonById(personId) {
@@ -1873,9 +1484,20 @@ function readJson(request) {
   });
 }
 
-async function getAuthContext(request) {
-  const db = await readDb();
+// withDb: false для endpoint'ов, которым рабочее пространство не нужно.
+// Раньше выбора не было — каждый запрос вычитывал базу целиком, включая
+// таблицу users с salt и password_hash, ради проверки одной куки.
+async function getAuthContext(request, options = {}) {
+  const withDb = options.withDb !== false;
   const sessionId = parseCookies(request.headers.cookie).th_session;
+
+  if (storageMode === "postgres") {
+    const auth = await findSessionUser(pgPool, sessionId);
+    if (!auth) return { db: withDb ? await readDb() : null, user: null, session: null };
+    return { db: withDb ? await readDb() : null, user: auth.user, session: auth.session };
+  }
+
+  const db = await readDb();
   const now = Date.now();
   const activeSessions = db.sessions.filter((session) => new Date(session.expiresAt).getTime() > now);
 
@@ -1891,8 +1513,8 @@ async function getAuthContext(request) {
   return { db, user: user || null, session };
 }
 
-async function requireAuth(request, response) {
-  const context = await getAuthContext(request);
+async function requireAuth(request, response, options = {}) {
+  const context = await getAuthContext(request, options);
   if (!context.user) {
     sendJson(response, 401, { error: "Требуется авторизация" });
     return null;
@@ -2274,7 +1896,10 @@ function sanitizeCard(card, personId, forcedSource = null, lprIds = new Set()) {
     priority: ["high", "medium", "low"].includes(card.priority) ? card.priority : "medium",
     status: ["todo", "discussing", "done"].includes(card.status) ? card.status : "todo",
     title: String(card.title || "").slice(0, 160),
-    body: String(card.body || "").slice(0, 1000)
+    body: String(card.body || "").slice(0, 1000),
+    // Версия строки для оптимистичной блокировки. Пробрасывается как есть:
+    // это значение из базы, клиент его только возвращает.
+    updatedAt: typeof card.updatedAt === "string" && card.updatedAt ? card.updatedAt : null
   };
 }
 
@@ -2288,7 +1913,10 @@ function sanitizeAction(action, personId, forcedOwner = null) {
     title: String(action.title || "").slice(0, 180),
     due: String(action.due || "к следующему 1:1").slice(0, 80),
     dueDate,
-    done: Boolean(action.done)
+    done: Boolean(action.done),
+    // Версия строки для оптимистичной блокировки. Пробрасывается как есть:
+    // это значение из базы, клиент его только возвращает.
+    updatedAt: typeof action.updatedAt === "string" && action.updatedAt ? action.updatedAt : null
   };
 }
 
@@ -2581,7 +2209,10 @@ function sanitizeGoal(goal, personId, lprIds = new Set()) {
     progress: clampInt(goal.progress, 0, 100, 0),
     status: goalStatuses.includes(goal.status) ? goal.status : "active",
     createdAt: typeof goal.createdAt === "string" && goal.createdAt ? goal.createdAt : new Date().toISOString(),
-    dueDate: isValidISODate(dueDate) ? dueDate : ""
+    dueDate: isValidISODate(dueDate) ? dueDate : "",
+    // Версия строки для оптимистичной блокировки. Пробрасывается как есть:
+    // это значение из базы, клиент его только возвращает.
+    updatedAt: typeof goal.updatedAt === "string" && goal.updatedAt ? goal.updatedAt : null
   };
 }
 
@@ -2819,7 +2450,6 @@ async function handleApi(request, response) {
 
   if (request.method === "POST" && url.pathname === "/api/login") {
     const body = await readJson(request);
-    const db = await readDb();
     const username = String(body.username || "").trim();
 
     if (isLoginRateLimited(request, username)) {
@@ -2827,7 +2457,10 @@ async function handleApi(request, response) {
       return;
     }
 
-    const user = db.users.find((item) => item.username.toLowerCase() === username.toLowerCase());
+    const user =
+      storageMode === "postgres"
+        ? await findUserByUsername(pgPool, username)
+        : (await readDb()).users.find((item) => item.username.toLowerCase() === username.toLowerCase());
     // Run scrypt unconditionally so response time does not reveal whether the
     // username exists.
     const passwordOk = verifyPassword(String(body.password || ""), user || dummyPasswordRecord);
@@ -2844,25 +2477,35 @@ async function handleApi(request, response) {
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + sessionTtlMs).toISOString()
     };
-    db.sessions = [...db.sessions.filter((item) => item.userId !== user.id), session];
-    await writeDb(db);
+    if (storageMode === "postgres") {
+      await createSession(pgPool, session);
+    } else {
+      const db = await readDb();
+      db.sessions = [...db.sessions.filter((item) => item.userId !== user.id), session];
+      await writeDb(db);
+    }
     clearFailedLogins(request, username);
     sendJson(response, 200, { user: publicUser(user) }, { "Set-Cookie": sessionCookie(session.id) });
     return;
   }
 
   if (request.method === "POST" && url.pathname === "/api/logout") {
-    const context = await getAuthContext(request);
+    const context = await getAuthContext(request, { withDb: storageMode !== "postgres" });
     if (context.session) {
-      context.db.sessions = context.db.sessions.filter((session) => session.id !== context.session.id);
-      await writeDb(context.db);
+      if (storageMode === "postgres") {
+        await deleteSession(pgPool, context.session.id);
+      } else {
+        context.db.sessions = context.db.sessions.filter((session) => session.id !== context.session.id);
+        await writeDb(context.db);
+      }
     }
     sendJson(response, 200, { ok: true }, { "Set-Cookie": clearSessionCookie() });
     return;
   }
 
   if (request.method === "GET" && url.pathname === "/api/me") {
-    const context = await requireAuth(request, response);
+    // Рабочее пространство здесь не нужно: отвечаем одним пользователем.
+    const context = await requireAuth(request, response, { withDb: storageMode !== "postgres" });
     if (!context) return;
     sendJson(response, 200, { user: publicUser(context.user) });
     return;
@@ -2880,13 +2523,23 @@ async function handleApi(request, response) {
     }
 
     context.user.name = name.slice(0, 120);
-    await writeDb(context.db);
-    sendJson(response, 200, { user: publicUser(context.user), workspace: scopeWorkspace(context.db, context.user) });
+    if (storageMode === "postgres") {
+      // Точечный update вместо перезаписи шестнадцати таблиц. Именно здесь
+      // раньше сбрасывался created_at у карточек: переименование
+      // пользователя переписывало всю базу.
+      await updateUserName(pgPool, context.user.id, context.user.name);
+    } else {
+      await writeDb(context.db);
+    }
+    sendJson(response, 200, {
+      user: publicUser(context.user),
+      workspace: scopeWorkspace(await readDb(), context.user)
+    });
     return;
   }
 
   if (request.method === "POST" && url.pathname === "/api/me/password") {
-    const context = await requireAuth(request, response);
+    const context = await requireAuth(request, response, { withDb: storageMode !== "postgres" });
     if (!context) return;
     if (isDemoUser(context.user)) {
       sendJson(response, 403, { error: "Демо-пароль управляется через переменные окружения" });
@@ -2905,12 +2558,19 @@ async function handleApi(request, response) {
       sendJson(response, 400, { error: "Пароль должен быть не короче 8 символов" });
       return;
     }
-    Object.assign(context.user, hashPassword(password));
-    // Keep the current session, drop all other sessions of this user.
-    context.db.sessions = context.db.sessions.filter(
-      (s) => s.userId !== context.user.id || s.id === context.session.id
-    );
-    await writeDb(context.db);
+    const credentials = hashPassword(password);
+    Object.assign(context.user, credentials);
+    if (storageMode === "postgres") {
+      await updateUserPassword(pgPool, context.user.id, credentials);
+      // Текущая сессия остаётся, остальные гаснут: смена пароля обязана
+      // выкинуть всех, кто знал старый, но не того, кто её делает.
+      await deleteOtherSessions(pgPool, context.user.id, context.session.id);
+    } else {
+      context.db.sessions = context.db.sessions.filter(
+        (s) => s.userId !== context.user.id || s.id === context.session.id
+      );
+      await writeDb(context.db);
+    }
     sendJson(response, 200, { ok: true });
     return;
   }
@@ -2927,8 +2587,27 @@ async function handleApi(request, response) {
     if (!context) return;
     const body = await readJson(request);
     const nextDb = mergeWorkspaceUpdate(context.db, context.user, body);
-    await writeDb(nextDb, { replaceAuth: false });
-    sendJson(response, 200, scopeWorkspace(nextDb, context.user));
+    try {
+      await writeDb(nextDb, { replaceAuth: false, checkVersions: true });
+    } catch (error) {
+      if (!(error instanceof VersionConflictError)) throw error;
+      // Кто-то успел сохранить те же сущности раньше. Отдаём актуальное
+      // состояние: клиент должен показать конфликт, а не молча затереть
+      // чужие правки повторной отправкой.
+      const current = await readDb();
+      console.warn(
+        `Конфликт версий при сохранении: ${error.conflicts.map((c) => `${c.table}:${c.id}`).join(", ")}`
+      );
+      sendJson(response, 409, {
+        error: "Данные изменились в другом месте. Обновите страницу и повторите",
+        conflicts: error.conflicts,
+        workspace: scopeWorkspace(current, context.user)
+      });
+      return;
+    }
+    // Читаем заново: в снимке из памяти лежат версии строк до записи,
+    // и клиент запомнил бы устаревший updatedAt.
+    sendJson(response, 200, scopeWorkspace(await readDb(), context.user));
     return;
   }
 
@@ -3042,7 +2721,7 @@ async function handleApi(request, response) {
       sendJson(response, 201, {
         user: publicUser(user),
         person: person || null,
-        workspace: scopeWorkspace(context.db, context.user)
+        workspace: scopeWorkspace(await readDb(), context.user)
       });
       return;
     }
@@ -3131,7 +2810,7 @@ async function handleApi(request, response) {
     sendJson(response, 201, {
       user: publicUser(user),
       person,
-      workspace: scopeWorkspace(context.db, context.user)
+      workspace: scopeWorkspace(await readDb(), context.user)
     });
     return;
   }
@@ -3729,7 +3408,7 @@ async function handleApi(request, response) {
     sendJson(
       response,
       200,
-      { ok: true, user: publicUser(admin), workspace: scopeWorkspace(nextDb, admin) },
+      { ok: true, user: publicUser(admin), workspace: scopeWorkspace(await readDb(), admin) },
       { "Set-Cookie": sessionCookie(session.id) }
     );
     return;

@@ -21,6 +21,7 @@ x-source-mounts: &source-mounts
   - ./migrations:/app/migrations:ro
   - ./scripts:/app/scripts:ro
   - ./fixtures:/app/fixtures:ro
+  - ./db:/app/db:ro
 services:
   # --- разработка (профиль по умолчанию) ---
   db:

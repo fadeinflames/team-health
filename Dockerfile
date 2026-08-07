@@ -59,6 +59,7 @@ COPY server.js ./
 COPY migrations ./migrations
 COPY scripts ./scripts
 COPY fixtures ./fixtures
+COPY db ./db
 COPY --from=build /app/dist ./dist
 
 # Каталог нужен только для file-fallback без DATABASE_URL. В k8s его не будет:
