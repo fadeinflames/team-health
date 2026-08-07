@@ -12,6 +12,22 @@ import { createServer } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import {
+  people,
+  initialCards,
+  initialActions,
+  initialLprs,
+  initialGoals,
+  initialCompetencyAssessments,
+  initialSurveys,
+  initialNotes,
+  initialPrep,
+  initialPulse,
+  demoOnlyPersonIds,
+  demoSeedSurveyIds,
+  buildSeedPulseHistory,
+  buildSeedOncallLoad
+} from "./fixtures/demo.mjs";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const distDir = join(__dirname, "dist");
@@ -32,13 +48,39 @@ const trustProxy = isProduction || process.env.TRUST_PROXY === "1";
 const allowFileStorageInProduction = process.env.ALLOW_FILE_STORAGE === "1";
 const demoResetAllowed = !isProduction || process.env.ENABLE_DEMO_RESET === "1";
 
-const defaultAdminUsername = "mgusev";
-const defaultAdminPassword = "passwb121";
+// Дефолт есть только у имени пользователя. Пароля по умолчанию не существует
+// ни в одном окружении: вне local его отсутствие — отказ старта, в local он
+// генерируется при первом запуске и печатается один раз.
+const defaultAdminUsername = "admin";
 const adminUsername = process.env.ADMIN_USERNAME || defaultAdminUsername;
-const adminPassword = process.env.ADMIN_PASSWORD || defaultAdminPassword;
+const adminName = process.env.ADMIN_NAME || "Администратор";
+let adminPassword = process.env.ADMIN_PASSWORD || "";
 const demoUsername = process.env.DEMO_USERNAME || "demo";
 const demoPassword = process.env.DEMO_PASSWORD || "demo";
-const surveyResponseSecret = process.env.SURVEY_RESPONSE_SECRET || adminPassword;
+
+// Секрет анонимности опросов. Фолбэка на пароль администратора больше нет:
+// respondent_hash = sha256(surveyId:userId:secret), а список userId админу
+// доступен, поэтому знание пароля админа раскрывало авторов анонимных
+// ответов за секунду.
+let surveyResponseSecret = process.env.SURVEY_RESPONSE_SECRET || "";
+// Поколение секрета. Смена секрета инкрементирует его, и старые ответы
+// остаются в своём поколении вместо того, чтобы молча перестать
+// дедуплицироваться. Значение живёт в app_meta.
+let surveySecretVersion = 1;
+
+// Значения, которые успели утечь или никогда не были секретом. Держать
+// скомпрометированный пароль в коде ради его запрета нормально: это
+// блок-лист, а не секрет.
+const BURNED_SECRETS = new Set([
+  "passwb121",
+  "admin",
+  "password",
+  "changeme",
+  "change-me-locally",
+  "local-survey-secret",
+  "test-survey-secret",
+  "demo"
+]);
 
 let pgPool = null;
 const failedLogins = new Map();
@@ -74,361 +116,6 @@ const contentTypes = {
   ".webp": "image/webp"
 };
 
-const people = [
-  {
-    id: "demo-sre",
-    name: "Демо участник команды",
-    meetingName: "демо участником",
-    role: "Product Manager",
-    team: "Product Growth",
-    initials: "ДУ",
-    nextMeeting: "10 мая, 11:30",
-    cadence: "каждую неделю",
-    managerFocus: "собрать фокус недели, риски и ближайшие договоренности",
-    lastSummary: "Договорились сузить фокус квартала, убрать лишние параллельные инициативы и зафиксировать критерии успеха.",
-    trend: "+4",
-    energy: 6,
-    load: 8,
-    clarity: 7,
-    trust: 8
-  },
-  {
-    id: "anna",
-    name: "Анна Морозова",
-    meetingName: "Анной Морозовой",
-    role: "Senior Product Manager",
-    team: "Product",
-    initials: "АМ",
-    nextMeeting: "10 мая, 14:00",
-    cadence: "каждую неделю",
-    managerFocus: "снять перегруз от параллельных инициатив и укрепить ownership направления",
-    lastSummary: "Договорились сузить roadmap до трех приоритетов и заранее подсветить зависимости для запуска.",
-    trend: "+5",
-    energy: 7,
-    load: 7,
-    clarity: 8,
-    trust: 8
-  },
-  {
-    id: "danila",
-    name: "Данила Ким",
-    meetingName: "Данилой Кимом",
-    role: "Product Designer",
-    team: "Design",
-    initials: "ДК",
-    nextMeeting: "11 мая, 15:00",
-    cadence: "раз в 2 недели",
-    managerFocus: "поддержать рост в discovery и самостоятельность в исследовательском цикле",
-    lastSummary: "Нужно больше раннего контекста по целям исследования и критериям успешного решения.",
-    trend: "-3",
-    energy: 6,
-    load: 8,
-    clarity: 5,
-    trust: 7
-  },
-  {
-    id: "mila",
-    name: "Мила Варламова",
-    meetingName: "Милой Варламовой",
-    role: "Customer Success Lead",
-    team: "Customer Success",
-    initials: "МВ",
-    nextMeeting: "12 мая, 12:00",
-    cadence: "каждую неделю",
-    managerFocus: "сохранить качество работы с клиентами без перегруза команды",
-    lastSummary: "Хочет больше обратной связи по качеству customer handoff и приоритизации эскалаций.",
-    trend: "+2",
-    energy: 8,
-    load: 5,
-    clarity: 8,
-    trust: 9
-  },
-  {
-    id: "timur",
-    name: "Тимур Абашев",
-    meetingName: "Тимуром Абашевым",
-    role: "Operations Manager",
-    team: "Operations",
-    initials: "ТА",
-    nextMeeting: "13 мая, 17:00",
-    cadence: "каждую неделю",
-    managerFocus: "вернуть ощущение контроля над межкомандными follow-up и нагрузкой",
-    lastSummary: "Поднял риск поздних follow-up после ретро и ручной координации между командами.",
-    trend: "-7",
-    energy: 5,
-    load: 9,
-    clarity: 6,
-    trust: 6
-  }
-];
-
-const demoOnlyPersonIds = new Set(people.map((person) => person.id));
-
-const initialCards = [
-  {
-    id: "c-demo-1",
-    personId: "demo-sre",
-    lprId: "lpr-demo-1",
-    source: "employee",
-    category: "blocker",
-    priority: "high",
-    status: "todo",
-    title: "Слишком много параллельных приоритетов",
-    body: "Требуется выбрать 2-3 главных фокуса и явно отложить остальное до следующего цикла."
-  },
-  {
-    id: "c-demo-2",
-    personId: "demo-sre",
-    lprId: "lpr-demo-1",
-    source: "manager",
-    category: "growth",
-    priority: "medium",
-    status: "todo",
-    title: "Следующий шаг в роли владельца направления",
-    body: "Определить решения, которые участник сможет вести самостоятельно в следующем месяце."
-  },
-  {
-    id: "c-demo-3",
-    personId: "demo-sre",
-    source: "employee",
-    category: "checkin",
-    priority: "medium",
-    status: "discussing",
-    title: "Энергия проседает после плотной недели",
-    body: "Требуется окно восстановления и ограничение переключений между срочными задачами."
-  },
-  {
-    id: "c-1",
-    personId: "anna",
-    lprId: "lpr-anna-1",
-    source: "employee",
-    category: "blocker",
-    priority: "high",
-    status: "todo",
-    title: "Много ручных согласований перед запуском",
-    body: "Требуется определить первый этап упрощения процесса и список обязательных проверок."
-  },
-  {
-    id: "c-2",
-    personId: "anna",
-    lprId: "lpr-anna-1",
-    source: "manager",
-    category: "growth",
-    priority: "medium",
-    status: "todo",
-    title: "Следующий шаг в роли product lead",
-    body: "Определить решения по roadmap, которые можно передать Анне в следующем цикле."
-  },
-  {
-    id: "c-3",
-    personId: "anna",
-    source: "employee",
-    category: "checkin",
-    priority: "medium",
-    status: "discussing",
-    title: "Энергия держится, но фокус проседает",
-    body: "Много переключений между customer feedback, roadmap и срочными уточнениями от стейкхолдеров."
-  },
-  {
-    id: "c-4",
-    personId: "danila",
-    source: "employee",
-    category: "feedback",
-    priority: "high",
-    status: "todo",
-    title: "Не хватает раннего контекста по изменению приоритетов",
-    body: "Нужен список критериев решения и отложенных задач до старта работы."
-  },
-  {
-    id: "c-5",
-    personId: "mila",
-    source: "manager",
-    category: "thanks",
-    priority: "low",
-    status: "todo",
-    title: "Отметить вклад в улучшение customer handoff",
-    body: "Новые материалы помогли команде быстрее понимать контекст клиента и следующий шаг."
-  },
-  {
-    id: "c-6",
-    personId: "timur",
-    source: "employee",
-    category: "blocker",
-    priority: "high",
-    status: "todo",
-    title: "Follow-up после ретро закрываются слишком поздно",
-    body: "Нужен явный владелец каждого follow-up и короткий контрольный цикл."
-  }
-];
-
-const initialActions = [
-  {
-    id: "a-demo-1",
-    personId: "demo-sre",
-    owner: "manager",
-    title: "Выбрать 3 приоритета квартала и зафиксировать owner/критерий успеха",
-    due: "до пятницы",
-    done: false
-  },
-  {
-    id: "a-demo-2",
-    personId: "demo-sre",
-    owner: "employee",
-    title: "Собрать входные данные для решения по onboarding",
-    due: "к следующему 1:1",
-    done: false
-  },
-  {
-    id: "a-1",
-    personId: "anna",
-    owner: "manager",
-    title: "Согласовать правило triage для срочных запросов",
-    due: "до пятницы",
-    done: false
-  },
-  {
-    id: "a-2",
-    personId: "anna",
-    owner: "employee",
-    title: "Выбрать одну зону ответственности для самостоятельного решения",
-    due: "к следующему 1:1",
-    done: false
-  },
-  {
-    id: "a-3",
-    personId: "timur",
-    owner: "manager",
-    title: "Зафиксировать SLA для follow-up после ретро",
-    due: "сегодня",
-    done: false
-  }
-];
-
-const initialLprs = [
-  {
-    id: "lpr-demo-1",
-    personId: "demo-sre",
-    title: "ЛПР: фокус квартала и ownership",
-    focus: "Собрать повторяющиеся темы из 1:1, превратить их в план развития и связать с измеримыми целями.",
-    status: "active",
-    createdAt: "2026-04-01T00:00:00.000Z",
-    updatedAt: "2026-04-01T00:00:00.000Z"
-  },
-  {
-    id: "lpr-anna-1",
-    personId: "anna",
-    title: "ЛПР: ownership направления",
-    focus: "Снять лишние согласования и постепенно передать Анне самостоятельные продуктовые решения.",
-    status: "active",
-    createdAt: "2026-03-15T00:00:00.000Z",
-    updatedAt: "2026-03-15T00:00:00.000Z"
-  }
-];
-
-const initialGoals = [
-  {
-    id: "g-demo-1",
-    personId: "demo-sre",
-    lprId: "lpr-demo-1",
-    title: "Сократить количество параллельных приоритетов до 3",
-    description: "Через ревизию инициатив и явное правило, что откладываем",
-    horizon: "2026-Q2",
-    progress: 25,
-    status: "active",
-    createdAt: "2026-04-01T00:00:00.000Z",
-    dueDate: "2026-06-30"
-  },
-  {
-    id: "g-demo-2",
-    personId: "demo-sre",
-    lprId: "lpr-demo-1",
-    title: "Вести ключевое направление без постоянной эскалации",
-    description: "Провести 5 решений по направлению с понятными критериями и обратной связью",
-    horizon: "2026-Q2",
-    progress: 40,
-    status: "active",
-    createdAt: "2026-04-01T00:00:00.000Z",
-    dueDate: ""
-  },
-  {
-    id: "g-anna-1",
-    personId: "anna",
-    lprId: "lpr-anna-1",
-    title: "Запустить регулярный цикл customer feedback",
-    description: "Закрыть 80% discovery-решений через проверку гипотез с клиентами",
-    horizon: "2026-Q2",
-    progress: 55,
-    status: "active",
-    createdAt: "2026-03-15T00:00:00.000Z",
-    dueDate: "2026-06-30"
-  }
-];
-
-const initialCompetencyAssessments = [
-  {
-    id: "ca-demo-1",
-    personId: "demo-sre",
-    title: "Кейс-интервью: Product Growth",
-    roleContext: "Product Manager · Product Growth",
-    source: "case-ai",
-    status: "validated",
-    scaleMax: 5,
-    competencies: [
-      {
-        id: "cac-demo-1",
-        name: "Приоритизация",
-        category: "Product execution",
-        score: 3,
-        targetScore: 4,
-        evidence: "Хорошо разделяет срочное и важное, но иногда держит слишком много инициатив в работе.",
-        recommendation: "Согласовать правило WIP и еженедельный triage инициатив."
-      },
-      {
-        id: "cac-demo-2",
-        name: "Системная диагностика",
-        category: "Problem solving",
-        score: 2.5,
-        targetScore: 3,
-        evidence: "Видит локальные причины, но не всегда переводит повторяющиеся сигналы в системную проблему.",
-        recommendation: "Раз в неделю собирать топ повторяющихся сигналов и формулировать гипотезу процесса."
-      },
-      {
-        id: "cac-demo-3",
-        name: "Коммуникация со стейкхолдерами",
-        category: "Collaboration",
-        score: 4,
-        targetScore: 4,
-        evidence: "Ясно проговаривает trade-off и ожидания по срокам.",
-        recommendation: "Удерживать текущую практику коротких письменных recap."
-      }
-    ],
-    cases: [
-      {
-        id: "case-demo-1",
-        title: "Три конкурирующих запуска в одну неделю",
-        summary: "Проверялись приоритизация, коммуникация и работа с зависимостями.",
-        checkedCompetencies: ["Приоритизация", "Коммуникация со стейкхолдерами"]
-      }
-    ],
-    recommendations: [
-      {
-        id: "car-demo-1",
-        competencyName: "Системная диагностика",
-        action: "Оформить 2 повторяющиеся проблемы из 1:1 в гипотезы улучшения процесса.",
-        dueDate: "2026-06-30"
-      },
-      {
-        id: "car-demo-2",
-        competencyName: "Приоритизация",
-        action: "Ввести лимит WIP на квартальные инициативы и проговорить исключения.",
-        dueDate: "2026-06-30"
-      }
-    ],
-    createdAt: "2026-04-15T00:00:00.000Z",
-    validatedAt: "2026-04-16T00:00:00.000Z"
-  }
-];
-
 const lprStatuses = ["active", "paused", "done"];
 const goalStatuses = ["active", "achieved", "abandoned"];
 const competencyAssessmentSources = ["case-ai", "manual", "review"];
@@ -438,113 +125,8 @@ const meetingTypes = ["regular", "career", "performance", "post-incident", "firs
 const mentorshipModes = ["mentor", "coach", "sponsor"];
 
 const pulseHistoryRetentionDays = 365;
-const pulseHistoryDemoSpanDays = 56;
-
-function seedPulseHistoryFor(personId, currentPulse) {
-  const out = [];
-  const today = new Date();
-  for (let dayOffset = pulseHistoryDemoSpanDays; dayOffset >= 0; dayOffset -= 7) {
-    const ts = new Date(today.getTime() - dayOffset * 24 * 60 * 60 * 1000);
-    const wobble = (seed) => Math.max(1, Math.min(10, seed + Math.round(Math.sin(dayOffset / 4 + seed) * 1.4)));
-    out.push({
-      personId,
-      capturedAt: ts.toISOString().slice(0, 10),
-      energy: wobble(currentPulse.energy),
-      load: wobble(currentPulse.load),
-      clarity: wobble(currentPulse.clarity),
-      trust: wobble(currentPulse.trust)
-    });
-  }
-  return out;
-}
-
-function buildSeedPulseHistory() {
-  const rows = [];
-  for (const person of people) {
-    rows.push(...seedPulseHistoryFor(person.id, initialPulse[person.id]));
-  }
-  return rows;
-}
-
-function buildSeedOncallLoad() {
-  return [];
-}
 
 const surveyQuestionTypes = ["scale", "single", "multi", "text", "date"];
-
-const initialSurveys = [
-  {
-    id: "s-demo-weekly",
-    title: "Еженедельный пульс команды",
-    description: "Помоги лиду понять состояние команды, фокус и риски недели.",
-    anonymous: false,
-    status: "active",
-    isDemoSeed: true,
-    createdAt: "2026-05-08T00:00:00.000Z",
-    questions: [
-      {
-        id: "q1",
-        type: "scale",
-        prompt: "Насколько понятен фокус недели? (1 — неясно, 10 — полностью понятно)",
-        required: true,
-        options: []
-      },
-      {
-        id: "q2",
-        type: "single",
-        prompt: "Насколько перегружен(а) сейчас?",
-        required: true,
-        options: ["Спокойно", "Нормально", "На пределе", "Нужна помощь"]
-      },
-      {
-        id: "q3",
-        type: "multi",
-        prompt: "Что съедало фокус?",
-        required: false,
-        options: ["Срочные запросы", "Встречи", "Переключения контекста", "Нехватка информации", "Зависимости"]
-      },
-      {
-        id: "q4",
-        type: "text",
-        prompt: "Что хочешь поднять на ближайшем 1:1?",
-        required: false,
-        options: []
-      }
-    ]
-  }
-];
-
-const initialPrep = Object.fromEntries(
-  people.map((person) => [
-    person.id,
-    {
-      employeeAgenda: person.id !== "danila",
-      managerAgenda: true,
-      pulse: person.id !== "timur",
-      lastActions: person.id !== "timur",
-      growth: person.id === "demo-sre" || person.id === "anna" || person.id === "mila",
-      commitments: person.id === "demo-sre"
-    }
-  ])
-);
-
-const initialPulse = Object.fromEntries(
-  people.map((person) => [
-    person.id,
-    {
-      energy: person.energy,
-      load: person.load,
-      clarity: person.clarity,
-      trust: person.trust
-    }
-  ])
-);
-
-const initialNotes = {
-  "demo-sre": "Проверить, не накопилась ли усталость от параллельных инициатив. Спросить про восстановление и фокус.",
-  anna: "Проверить объем координации между roadmap, customer feedback и стейкхолдерами.",
-  timur: "Риск выгорания: спросить про восстановление после плотного цикла ретро и follow-up."
-};
 
 const prepKeys = ["employeeAgenda", "managerAgenda", "pulse", "lastActions", "growth", "commitments"];
 const adminWritablePrepKeys = new Set(prepKeys);
@@ -609,7 +191,7 @@ function createSeedDb() {
       const admin = seedUser({
         username: adminUsername,
         password: adminPassword,
-        name: "Максим Гусев",
+        name: adminName,
         role: "platform_admin"
       });
       const demo = seedUser({
@@ -832,7 +414,7 @@ function normalizeDb(rawDb = {}) {
   ensureSeedLogin(db, {
     username: adminUsername,
     password: adminPassword,
-    name: "Максим Гусев",
+    name: adminName,
     role: "platform_admin",
     personId: null
   });
@@ -1021,16 +603,67 @@ function poolSslOption() {
   }
 }
 
+// Последняя миграция, на которую рассчитывает этот код. Поднимается вместе
+// с миграцией, добавляющей то, что код начал использовать.
+const EXPECTED_SCHEMA = "0024_teams_expand";
+
+let schemaReady = false;
+
+// Приложение больше не мигрирует, но обязано убедиться, что база не старше
+// кода. Асимметрия проверки намеренная: база новее кода — штатная ситуация
+// во время rolling update, ради неё и существует expand-шаг. База старше
+// кода — гарантированная поломка, стартовать нельзя.
+async function assertSchemaVersion(pool) {
+  let rows;
+  try {
+    ({ rows } = await pool.query("select name from pgmigrations order by id desc limit 1"));
+  } catch (error) {
+    if (error.code === "42P01") {
+      throw new Error(
+        "Схема не инициализирована: таблицы pgmigrations нет. " +
+          "Выполните `npm run migrate` (для базы, созданной до перехода на миграции — сначала `npm run migrate:baseline`)."
+      );
+    }
+    throw error;
+  }
+
+  const actual = rows[0]?.name;
+  if (!actual) {
+    throw new Error("Схема не инициализирована: журнал миграций пуст. Выполните `npm run migrate`.");
+  }
+  if (actual < EXPECTED_SCHEMA) {
+    throw new Error(`База на миграции ${actual}, коду нужна ${EXPECTED_SCHEMA}. Выполните \`npm run migrate\`.`);
+  }
+  if (actual > EXPECTED_SCHEMA) {
+    console.warn(`База новее кода (${actual} > ${EXPECTED_SCHEMA}) — это нормально при rolling update`);
+  }
+  schemaReady = true;
+}
+
 async function initStorage() {
   if (storageMode === "postgres") {
     const { Pool } = await import("pg");
     const ssl = poolSslOption();
     pgPool = new Pool({
       connectionString: process.env.DATABASE_URL,
-      ...(ssl === undefined ? {} : { ssl })
+      ...(ssl === undefined ? {} : { ssl }),
+      // Пул без параметров — это отказ сервиса вместо деградации: одна
+      // зависшая транзакция выедает соединения, и падает всё сразу.
+      max: Number(process.env.DATABASE_POOL_MAX) || 10,
+      idleTimeoutMillis: 30_000,
+      connectionTimeoutMillis: 5_000,
+      application_name: "team-health-api",
+      // Серверные таймауты, а не клиентские: клиентский отменяет ожидание,
+      // но оставляет запрос молотить на сервере.
+      options: "-c statement_timeout=15s -c idle_in_transaction_session_timeout=30s"
     });
-    await migratePostgres();
-    await seedPostgres();
+    // Ошибка на простаивающем соединении (сервер закрыл его, сеть моргнула)
+    // без обработчика роняет процесс целиком.
+    pgPool.on("error", (error) => {
+      console.error("Ошибка на простаивающем соединении пула:", error.message);
+    });
+    await assertSchemaVersion(pgPool);
+    await ensureAdminAccounts();
     console.log("Storage mode: postgres");
     return;
   }
@@ -1044,344 +677,113 @@ async function initStorage() {
   console.log(`Storage mode: file (${dataFile})`);
 }
 
-async function migratePostgres() {
-  await pgPool.query(`
-    create table if not exists people (
-      id text primary key,
-      name text not null,
-      meeting_name text not null,
-      role text not null,
-      team text not null,
-      initials text not null,
-      next_meeting text not null,
-      cadence text not null,
-      manager_focus text not null,
-      last_summary text not null,
-      trend text not null,
-      meeting_type text not null default 'regular',
-      mentorship_mode text not null default 'coach'
-    );
-
-    alter table people add column if not exists meeting_type text not null default 'regular';
-    alter table people add column if not exists mentorship_mode text not null default 'coach';
-    alter table people add column if not exists growth_narrative text not null default '';
-    alter table people add column if not exists performance_narrative text not null default '';
-    alter table people add column if not exists archived_at timestamptz;
-
-    create table if not exists users (
-      id text primary key,
-      username text not null,
-      name text not null,
-      role text not null check (role in ('admin', 'platform_admin', 'lead', 'employee')),
-      person_id text references people(id) on delete restrict,
-      salt text not null,
-      password_hash text not null,
-      created_at timestamptz not null default now()
-    );
-
-    create unique index if not exists users_username_lower_idx on users (lower(username));
-
-    -- Existing rc0.1 databases still have users_role_check limited to
-    -- ('admin', 'employee'). Recreate role checks before seedPostgres upgrades
-    -- the seed admin to platform_admin. Without this, writes that persist
-    -- role='platform_admin' or 'lead' roll back and can look like phantom 401s
-    -- when the request also touched sessions.
-    do $$
-    declare
-      role_check_name text;
-    begin
-      for role_check_name in
-        select conname
-        from pg_constraint
-        where conrelid = 'users'::regclass
-          and contype = 'c'
-          and pg_get_constraintdef(oid) like '%role%'
-      loop
-        execute format('alter table users drop constraint %I', role_check_name);
-      end loop;
-
-      alter table users
-        add constraint users_role_check
-        check (role in ('admin', 'platform_admin', 'lead', 'employee'));
-    end$$;
-
-    -- Lead chain: each user can have a parent user (their manager / lead).
-    -- platform_admin has lead_user_id = NULL. Employees and leads point upward.
-    alter table users add column if not exists lead_user_id text;
-    do $$
-    begin
-      if not exists (
-        select 1 from information_schema.table_constraints
-        where constraint_name = 'users_lead_user_id_fkey'
-      ) then
-        alter table users
-          add constraint users_lead_user_id_fkey
-          foreign key (lead_user_id) references users(id) on delete set null;
-      end if;
-    end$$;
-    create index if not exists users_lead_user_id_idx on users(lead_user_id);
-
-    -- Friendly label of the team a lead owns. Only set for users with role=lead
-    -- or platform_admin. Allows the team to be named without a separate table.
-    alter table users add column if not exists team_label text not null default '';
-
-    create table if not exists lprs (
-      id text primary key,
-      person_id text not null references people(id) on delete cascade,
-      title text not null,
-      focus text not null default '',
-      status text not null check (status in ('active', 'paused', 'done')),
-      created_at timestamptz not null default now(),
-      updated_at timestamptz not null default now()
-    );
-
-    create index if not exists lprs_person_id_idx on lprs(person_id);
-    create index if not exists lprs_status_idx on lprs(status);
-
-    create table if not exists sessions (
-      id text primary key,
-      user_id text not null references users(id) on delete cascade,
-      created_at timestamptz not null default now(),
-      expires_at timestamptz not null
-    );
-
-    create index if not exists sessions_user_id_idx on sessions(user_id);
-    create index if not exists sessions_expires_at_idx on sessions(expires_at);
-
-    create table if not exists pulse (
-      person_id text primary key references people(id) on delete cascade,
-      energy integer not null check (energy between 1 and 10),
-      load integer not null check (load between 1 and 10),
-      clarity integer not null check (clarity between 1 and 10),
-      trust integer not null check (trust between 1 and 10)
-    );
-
-    create table if not exists prep (
-      person_id text primary key references people(id) on delete cascade,
-      employee_agenda boolean not null default false,
-      manager_agenda boolean not null default false,
-      pulse boolean not null default false,
-      last_actions boolean not null default false,
-      growth boolean not null default false,
-      commitments boolean not null default false
-    );
-
-    create table if not exists notes (
-      person_id text primary key references people(id) on delete cascade,
-      body text not null default ''
-    );
-
-    create table if not exists cards (
-      id text primary key,
-      person_id text not null references people(id) on delete cascade,
-      lpr_id text references lprs(id) on delete set null,
-      source text not null check (source in ('manager', 'employee')),
-      category text not null check (category in ('checkin', 'blocker', 'growth', 'feedback', 'decision', 'thanks')),
-      priority text not null check (priority in ('high', 'medium', 'low')),
-      status text not null check (status in ('todo', 'discussing', 'done')),
-      title text not null,
-      body text not null default '',
-      created_at timestamptz not null default now(),
-      updated_at timestamptz not null default now()
-    );
-
-    alter table cards add column if not exists lpr_id text references lprs(id) on delete set null;
-
-    create index if not exists cards_person_id_idx on cards(person_id);
-    create index if not exists cards_lpr_id_idx on cards(lpr_id);
-    create index if not exists cards_status_idx on cards(status);
-
-    create table if not exists actions (
-      id text primary key,
-      person_id text not null references people(id) on delete cascade,
-      owner text not null check (owner in ('manager', 'employee')),
-      title text not null,
-      due text not null,
-      due_date date,
-      done boolean not null default false,
-      created_at timestamptz not null default now(),
-      updated_at timestamptz not null default now()
-    );
-
-    -- Idempotent column add for existing tables before due_date was introduced
-    alter table actions add column if not exists due_date date;
-
-    create index if not exists actions_person_id_idx on actions(person_id);
-    create index if not exists actions_done_idx on actions(done);
-    create index if not exists actions_due_date_idx on actions(due_date) where done = false;
-
-    create table if not exists goals (
-      id text primary key,
-      person_id text not null references people(id) on delete cascade,
-      lpr_id text references lprs(id) on delete set null,
-      title text not null,
-      description text not null default '',
-      horizon text not null default '',
-      progress integer not null check (progress between 0 and 100),
-      status text not null check (status in ('active', 'achieved', 'abandoned')),
-      created_at timestamptz not null default now(),
-      due_date text not null default ''
-    );
-
-    alter table goals add column if not exists lpr_id text references lprs(id) on delete set null;
-
-    create index if not exists goals_person_id_idx on goals(person_id);
-    create index if not exists goals_lpr_id_idx on goals(lpr_id);
-    create index if not exists goals_status_idx on goals(status);
-
-    create table if not exists competency_assessments (
-      id text primary key,
-      person_id text not null references people(id) on delete cascade,
-      title text not null,
-      role_context text not null default '',
-      source text not null check (source in ('case-ai', 'manual', 'review')),
-      status text not null check (status in ('draft', 'validated')),
-      scale_max integer not null default 5,
-      average_score numeric(3,1) not null default 0,
-      min_score numeric(3,1) not null default 0,
-      grade text not null check (grade in ('junior', 'middle', 'senior', 'lead-ready')),
-      competencies_json jsonb not null default '[]'::jsonb,
-      cases_json jsonb not null default '[]'::jsonb,
-      recommendations_json jsonb not null default '[]'::jsonb,
-      created_at timestamptz not null default now(),
-      validated_at timestamptz
-    );
-
-    create index if not exists competency_assessments_person_idx on competency_assessments(person_id);
-    create index if not exists competency_assessments_created_idx on competency_assessments(created_at desc);
-
-    create table if not exists pulse_history (
-      person_id text not null references people(id) on delete cascade,
-      captured_at date not null,
-      energy integer not null check (energy between 1 and 10),
-      load integer not null check (load between 1 and 10),
-      clarity integer not null check (clarity between 1 and 10),
-      trust integer not null check (trust between 1 and 10),
-      primary key (person_id, captured_at)
-    );
-
-    create index if not exists pulse_history_captured_at_idx on pulse_history(captured_at);
-
-    create table if not exists surveys (
-      id text primary key,
-      title text not null,
-      description text not null default '',
-      anonymous boolean not null default false,
-      status text not null check (status in ('active', 'closed')),
-      questions_json jsonb not null,
-      is_demo_seed boolean not null default false,
-      is_template boolean not null default false,
-      owner_user_id text references users(id) on delete set null,
-      anonymous_min_responses integer not null default 3,
-      created_at timestamptz not null default now()
-    );
-
-    alter table surveys add column if not exists is_demo_seed boolean not null default false;
-    alter table surveys add column if not exists is_template boolean not null default false;
-    alter table surveys add column if not exists owner_user_id text references users(id) on delete set null;
-    alter table surveys add column if not exists anonymous_min_responses integer not null default 3;
-
-    create table if not exists survey_responses (
-      id text primary key,
-      survey_id text not null references surveys(id) on delete cascade,
-      person_id text references people(id) on delete set null,
-      respondent_hash text,
-      answers_json jsonb not null,
-      submitted_at timestamptz not null default now()
-    );
-
-    alter table survey_responses add column if not exists respondent_hash text;
-
-    create index if not exists survey_responses_survey_id_idx on survey_responses(survey_id);
-    create index if not exists survey_responses_person_id_idx on survey_responses(person_id);
-    create unique index if not exists survey_responses_unique_per_person
-      on survey_responses(survey_id, person_id)
-      where person_id is not null;
-    create unique index if not exists survey_responses_unique_per_hash
-      on survey_responses(survey_id, respondent_hash)
-      where respondent_hash is not null;
-
-    create table if not exists manager_notes (
-      id text primary key,
-      person_id text not null references people(id) on delete cascade,
-      body text not null,
-      tags text[] not null default '{}',
-      created_at timestamptz not null default now()
-    );
-
-    create index if not exists manager_notes_person_id_idx on manager_notes(person_id);
-    create index if not exists manager_notes_created_at_idx on manager_notes(created_at desc);
-
-    create table if not exists oncall_load (
-      person_id text not null references people(id) on delete cascade,
-      week_start date not null,
-      pages_total integer not null default 0,
-      after_hours_pages integer not null default 0,
-      incidents_led integer not null default 0,
-      sleep_disrupted_nights integer not null default 0,
-      primary key (person_id, week_start)
-    );
-
-    create index if not exists oncall_load_week_idx on oncall_load(week_start desc);
-
-    create table if not exists meeting_log (
-      id text primary key,
-      person_id text not null references people(id) on delete cascade,
-      held_at timestamptz not null,
-      meeting_type text not null default 'regular',
-      summary text not null default '',
-      attended boolean not null default true
-    );
-
-    create index if not exists meeting_log_person_held_idx on meeting_log(person_id, held_at desc);
-
-    create table if not exists meeting_drafts (
-      person_id text primary key references people(id) on delete cascade,
-      body text not null default '',
-      updated_at timestamptz not null default now()
-    );
-  `);
+// Отпечаток пары логин-пароль. sha256 необратим, поэтому запись в базе
+// безопасна: восстановить по ней пароль нельзя, а сравнить — можно.
+function secretFingerprint(...parts) {
+  return createHash("sha256").update(parts.join(":")).digest("hex");
 }
 
-async function seedPostgres() {
+async function readMeta(client, key) {
+  const { rows } = await client.query("select value from app_meta where key = $1", [key]);
+  return rows[0]?.value ?? null;
+}
+
+async function writeMeta(client, key, value) {
+  await client.query(
+    `
+      insert into app_meta (key, value) values ($1, $2)
+      on conflict (key) do update set value = excluded.value, updated_at = now()
+    `,
+    [key, value]
+  );
+}
+
+// Учётная запись администратора.
+//
+// Раньше salt и password_hash безусловно перезаписывались из ADMIN_PASSWORD
+// на каждом старте. Пароль так действительно менялся через окружение, но
+// любая внешняя ротация — через CLI, через восстановление из бэкапа —
+// молча откатывалась ближайшим рестартом.
+//
+// Отпечаток разводит два случая. Совпал — ADMIN_PASSWORD с прошлого старта
+// не менялся, база авторитетна, не трогаем. Не совпал — переменную
+// поменяли осознанно, применяем и гасим сессии.
+async function ensureAdminPassword(client) {
+  const fingerprint = secretFingerprint(adminUsername, adminPassword);
+  const stored = await readMeta(client, "admin_password_fingerprint");
+  const existing = await client.query("select id from users where lower(username) = lower($1)", [adminUsername]);
+  const { salt, passwordHash } = hashPassword(adminPassword);
+
+  if (!existing.rows[0]) {
+    await client.query(
+      `
+        insert into users (id, username, name, role, person_id, lead_user_id, team_label, salt, password_hash)
+        values ($1, $2, $3, 'platform_admin', null, null, '', $4, $5)
+      `,
+      [makeId("user"), adminUsername, adminName, salt, passwordHash]
+    );
+    await writeMeta(client, "admin_password_fingerprint", fingerprint);
+    console.log(`Создана учётная запись администратора ${adminUsername}`);
+    return;
+  }
+
+  if (stored === fingerprint) return;
+
+  await client.query("update users set salt = $1, password_hash = $2 where id = $3", [
+    salt,
+    passwordHash,
+    existing.rows[0].id
+  ]);
+  await writeMeta(client, "admin_password_fingerprint", fingerprint);
+  // Смена пароля обязана инвалидировать активные сессии. Без этого старая
+  // сессия продолжает работать после смены пароля через окружение, и
+  // «сменил пароль» перестаёт означать «выгнал того, кто знал старый».
+  const killed = await client.query("delete from sessions where user_id = $1", [existing.rows[0].id]);
+  console.log(
+    `Пароль администратора обновлён из ADMIN_PASSWORD, сброшено сессий: ${killed.rowCount}`
+  );
+}
+
+// Поколение секрета опросов. Тот же приём с отпечатком: сменили
+// SURVEY_RESPONSE_SECRET — поколение растёт, старые ответы остаются со
+// своей версией, дедупликация внутри поколения продолжает работать.
+async function ensureSurveySecretVersion(client) {
+  const fingerprint = secretFingerprint("survey", surveyResponseSecret);
+  const stored = await readMeta(client, "survey_secret_fingerprint");
+  const version = Number(await readMeta(client, "survey_secret_version")) || 0;
+
+  if (stored === fingerprint && version > 0) {
+    surveySecretVersion = version;
+    return;
+  }
+
+  surveySecretVersion = version + 1;
+  await writeMeta(client, "survey_secret_fingerprint", fingerprint);
+  await writeMeta(client, "survey_secret_version", String(surveySecretVersion));
+  if (version > 0) {
+    console.log(`SURVEY_RESPONSE_SECRET изменился, поколение хешей: ${surveySecretVersion}`);
+  }
+}
+
+async function ensureAdminAccounts() {
   const client = await pgPool.connect();
   try {
-    await client.query("BEGIN");
-    const userCountResult = await client.query("select count(*)::int as count from users");
-    const shouldSeedDemoLogin = Number(userCountResult.rows[0]?.count || 0) === 0;
-    await upsertPeople(client, people);
-    await upsertPulse(client, initialPulse);
-    await upsertPrep(client, initialPrep);
-    await upsertNotes(client, initialNotes);
-    await insertSeedLprs(client);
-    await insertSeedCards(client);
-    await insertSeedActions(client);
-    await insertSeedGoals(client);
-    await insertSeedCompetencyAssessments(client);
-    await insertSeedPulseHistory(client);
-    await insertSeedSurveys(client);
-    await clearSeedOncallLoad(client);
-    const adminId = await upsertSeedUser(client, {
-      username: adminUsername,
-      password: adminPassword,
-      name: "Максим Гусев",
-      role: "platform_admin",
-      personId: null
-    });
-    if (shouldSeedDemoLogin) {
-      await upsertSeedUser(client, {
-        username: demoUsername,
-        password: demoPassword,
-        name: "Демо участник команды",
-        role: "employee",
-        personId: "demo-sre",
-        leadUserId: adminId
-      });
+    await client.query("begin");
+    // В local секрет опросов может не быть задан вовсе — тогда он один раз
+    // генерируется и сохраняется в базе. Иначе хеши разъезжались бы на
+    // каждом рестарте, и локальная разработка опросов превратилась бы в
+    // угадайку.
+    if (!surveyResponseSecret) {
+      const persisted = await readMeta(client, "survey_secret_local");
+      surveyResponseSecret = persisted || randomBytes(24).toString("base64url");
+      if (!persisted) await writeMeta(client, "survey_secret_local", surveyResponseSecret);
     }
+    await ensureAdminPassword(client);
+    await ensureSurveySecretVersion(client);
     await client.query("delete from sessions where expires_at < now()");
-    await client.query("COMMIT");
+    await client.query("commit");
   } catch (error) {
-    await client.query("ROLLBACK");
+    await client.query("rollback");
     throw error;
   } finally {
     client.release();
@@ -1435,23 +837,6 @@ async function upsertPeople(client, rows) {
   }
 }
 
-async function upsertPulse(client, pulse) {
-  for (const [personId, value] of Object.entries(pulse)) {
-    await client.query(
-      `
-        insert into pulse (person_id, energy, load, clarity, trust)
-        values ($1, $2, $3, $4, $5)
-        on conflict (person_id) do update set
-          energy = coalesce(pulse.energy, excluded.energy),
-          load = coalesce(pulse.load, excluded.load),
-          clarity = coalesce(pulse.clarity, excluded.clarity),
-          trust = coalesce(pulse.trust, excluded.trust)
-      `,
-      [personId, value.energy, value.load, value.clarity, value.trust]
-    );
-  }
-}
-
 async function upsertPrep(client, prep) {
   for (const [personId, value] of Object.entries(prep)) {
     await client.query(
@@ -1471,259 +856,6 @@ async function upsertPrep(client, prep) {
       ]
     );
   }
-}
-
-async function upsertNotes(client, notes) {
-  for (const [personId, body] of Object.entries(notes)) {
-    await client.query(
-      `
-        insert into notes (person_id, body)
-        values ($1, $2)
-        on conflict (person_id) do update set
-          body = excluded.body
-      `,
-      [personId, body]
-    );
-  }
-}
-
-async function insertSeedLprs(client) {
-  for (const lpr of initialLprs) {
-    await client.query(
-      `
-        insert into lprs (id, person_id, title, focus, status, created_at, updated_at)
-        values ($1, $2, $3, $4, $5, $6::timestamptz, $7::timestamptz)
-        on conflict (id) do update set
-          person_id = excluded.person_id,
-          title = excluded.title,
-          focus = excluded.focus,
-          status = excluded.status,
-          updated_at = now()
-      `,
-      [
-        lpr.id,
-        lpr.personId,
-        lpr.title,
-        lpr.focus,
-        lpr.status,
-        lpr.createdAt,
-        lpr.updatedAt
-      ]
-    );
-  }
-}
-
-async function insertSeedCards(client) {
-  for (const card of initialCards) {
-    await client.query(
-      `
-        insert into cards (id, person_id, lpr_id, source, category, priority, status, title, body)
-        values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        on conflict (id) do update set
-          person_id = excluded.person_id,
-          lpr_id = excluded.lpr_id,
-          source = excluded.source,
-          category = excluded.category,
-          priority = excluded.priority,
-          status = excluded.status,
-          title = excluded.title,
-          body = excluded.body,
-          updated_at = now()
-      `,
-      [card.id, card.personId, card.lprId || null, card.source, card.category, card.priority, card.status, card.title, card.body]
-    );
-  }
-}
-
-async function insertSeedActions(client) {
-  for (const action of initialActions) {
-    await client.query(
-      `
-        insert into actions (id, person_id, owner, title, due, due_date, done)
-        values ($1, $2, $3, $4, $5, $6::date, $7)
-        on conflict (id) do update set
-          person_id = excluded.person_id,
-          owner = excluded.owner,
-          title = excluded.title,
-          due = excluded.due,
-          due_date = excluded.due_date,
-          done = excluded.done,
-          updated_at = now()
-      `,
-      [action.id, action.personId, action.owner, action.title, action.due, action.dueDate || null, action.done]
-    );
-  }
-}
-
-async function insertSeedGoals(client) {
-  for (const goal of initialGoals) {
-    await client.query(
-      `
-        insert into goals (id, person_id, lpr_id, title, description, horizon, progress, status, due_date)
-        values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        on conflict (id) do update set
-          person_id = excluded.person_id,
-          lpr_id = coalesce(goals.lpr_id, excluded.lpr_id),
-          title = excluded.title,
-          description = excluded.description,
-          horizon = excluded.horizon,
-          due_date = excluded.due_date
-      `,
-      [goal.id, goal.personId, goal.lprId || null, goal.title, goal.description, goal.horizon, goal.progress, goal.status, goal.dueDate]
-    );
-  }
-}
-
-async function insertSeedCompetencyAssessments(client) {
-  for (const assessment of initialCompetencyAssessments) {
-    const cleaned = sanitizeCompetencyAssessment(assessment, assessment.personId);
-    await client.query(
-      `
-        insert into competency_assessments
-          (id, person_id, title, role_context, source, status, scale_max, average_score, min_score, grade, competencies_json, cases_json, recommendations_json, created_at, validated_at)
-        values
-          ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13::jsonb, $14::timestamptz, $15::timestamptz)
-        on conflict (id) do update set
-          person_id = excluded.person_id,
-          title = excluded.title,
-          role_context = excluded.role_context,
-          source = excluded.source,
-          status = excluded.status,
-          scale_max = excluded.scale_max,
-          average_score = excluded.average_score,
-          min_score = excluded.min_score,
-          grade = excluded.grade,
-          competencies_json = excluded.competencies_json,
-          cases_json = excluded.cases_json,
-          recommendations_json = excluded.recommendations_json,
-          validated_at = excluded.validated_at
-      `,
-      [
-        cleaned.id,
-        cleaned.personId,
-        cleaned.title,
-        cleaned.roleContext,
-        cleaned.source,
-        cleaned.status,
-        cleaned.scaleMax,
-        cleaned.averageScore,
-        cleaned.minScore,
-        cleaned.grade,
-        JSON.stringify(cleaned.competencies),
-        JSON.stringify(cleaned.cases),
-        JSON.stringify(cleaned.recommendations),
-        cleaned.createdAt,
-        cleaned.validatedAt || null
-      ]
-    );
-  }
-}
-
-async function insertSeedPulseHistory(client) {
-  for (const entry of buildSeedPulseHistory()) {
-    await client.query(
-      `
-        insert into pulse_history (person_id, captured_at, energy, load, clarity, trust)
-        values ($1, $2, $3, $4, $5, $6)
-        on conflict (person_id, captured_at) do nothing
-      `,
-      [entry.personId, entry.capturedAt, entry.energy, entry.load, entry.clarity, entry.trust]
-    );
-  }
-}
-
-async function insertSeedSurveys(client) {
-  for (const survey of initialSurveys) {
-    await client.query(
-      `
-        insert into surveys (id, title, description, anonymous, status, questions_json, is_demo_seed, is_template, owner_user_id, anonymous_min_responses, created_at)
-        values ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11::timestamptz)
-        on conflict (id) do update set
-          title = excluded.title,
-          description = excluded.description,
-          anonymous = excluded.anonymous,
-          status = excluded.status,
-          questions_json = excluded.questions_json,
-          is_demo_seed = excluded.is_demo_seed,
-          is_template = excluded.is_template,
-          anonymous_min_responses = excluded.anonymous_min_responses
-      `,
-      [
-        survey.id,
-        survey.title,
-        survey.description,
-        survey.anonymous,
-        survey.status,
-        JSON.stringify(survey.questions),
-        survey.isDemoSeed === true,
-        survey.isTemplate === true,
-        survey.ownerUserId || null,
-        survey.anonymousMinResponses || 3,
-        survey.createdAt
-      ]
-    );
-  }
-}
-
-async function clearSeedOncallLoad(client) {
-  for (const person of people) {
-    await client.query("delete from oncall_load where person_id = $1", [person.id]);
-  }
-}
-
-async function upsertSeedUser(client, config) {
-  const passwordFields = hashPassword(config.password);
-  const leadUserId = config.leadUserId || null;
-  const teamLabel = String(config.teamLabel || "").slice(0, 120);
-  const existing = await client.query("select id, name from users where lower(username) = lower($1)", [config.username]);
-  if (existing.rows[0]) {
-    await client.query(
-      `
-        update users set
-          username = $1,
-          name = $2,
-          role = $3,
-          person_id = $4,
-          lead_user_id = $5,
-          team_label = $6,
-          salt = $7,
-          password_hash = $8
-        where id = $9
-      `,
-      [
-        config.username,
-        existing.rows[0].name || config.name,
-        config.role,
-        config.personId,
-        leadUserId,
-        teamLabel,
-        passwordFields.salt,
-        passwordFields.passwordHash,
-        existing.rows[0].id
-      ]
-    );
-    return existing.rows[0].id;
-  }
-
-  const inserted = await client.query(
-    `
-      insert into users (id, username, name, role, person_id, lead_user_id, team_label, salt, password_hash, created_at)
-      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
-      returning id
-    `,
-    [
-      makeId("user"),
-      config.username,
-      config.name,
-      config.role,
-      config.personId,
-      leadUserId,
-      teamLabel,
-      passwordFields.salt,
-      passwordFields.passwordHash
-    ]
-  );
-  return inserted.rows[0].id;
 }
 
 async function readDb() {
@@ -1878,6 +1010,7 @@ async function readDb() {
             survey_id as "surveyId",
             person_id as "personId",
             respondent_hash as "respondentHash",
+            secret_version as "secretVersion",
             answers_json as "answers",
             submitted_at as "submittedAt"
           from survey_responses
@@ -2378,14 +1511,15 @@ async function replaceSurveyResponses(client, responses) {
   for (const response of responses || []) {
     await client.query(
       `
-        insert into survey_responses (id, survey_id, person_id, respondent_hash, answers_json, submitted_at)
-        values ($1, $2, $3, $4, $5::jsonb, coalesce($6::timestamptz, now()))
+        insert into survey_responses (id, survey_id, person_id, respondent_hash, secret_version, answers_json, submitted_at)
+        values ($1, $2, $3, $4, $5, $6::jsonb, coalesce($7::timestamptz, now()))
       `,
       [
         response.id,
         response.surveyId,
         response.personId || null,
         response.respondentHash || null,
+        response.secretVersion || surveySecretVersion,
         JSON.stringify(response.answers || {}),
         response.submittedAt || null
       ]
@@ -2533,14 +1667,11 @@ async function deletePersonById(personId) {
 }
 
 function publicUser(user) {
-  // Normalise role so the client always sees the new vocabulary, even for
-  // legacy users persisted with role='admin'.
-  const role = user.role === "admin" ? "platform_admin" : user.role;
   return {
     id: user.id,
     username: user.username,
     name: user.name,
-    role,
+    role: user.role,
     personId: user.personId || null,
     leadUserId: user.leadUserId || null,
     teamLabel: user.teamLabel || "",
@@ -2549,18 +1680,68 @@ function publicUser(user) {
   };
 }
 
+// Секрет попал в .env — дописываем, чтобы разработчик не терял его при
+// следующем запуске. Молча пропускаем, если файла нет или он read-only:
+// в контейнере это норма, а падать из-за невозможности записать удобство
+// незачем.
+function appendToDotEnv(key, value) {
+  const envFile = join(__dirname, ".env");
+  try {
+    if (!existsSync(envFile)) return false;
+    const current = readFileSync(envFile, "utf8");
+    const line = `${key}=${value}`;
+    const pattern = new RegExp(`^${key}=.*$`, "m");
+    writeFileSync(
+      envFile,
+      pattern.test(current) ? current.replace(pattern, line) : `${current.replace(/\n?$/, "\n")}${line}\n`
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function validateProductionSecrets() {
   if (appEnv !== "local" && appEnv !== "production") {
     console.error(`APP_ENV must be "local" or "production", got "${appEnv}".`);
     process.exit(1);
   }
-  if (isProduction && adminPassword === defaultAdminPassword) {
-    console.error("ADMIN_PASSWORD must be set explicitly in production. Refusing to start with the default value.");
+
+  const fail = (message) => {
+    console.error(message);
     process.exit(1);
+  };
+
+  // Не isProduction, а «всё, что не local». Формулировка устойчивее к
+  // появлению staging: третье значение APP_ENV сейчас отвергается выше, но
+  // когда его добавят, требование секретов не должно проехать мимо.
+  if (appEnv !== "local") {
+    if (!adminPassword) fail("ADMIN_PASSWORD обязателен вне local. Отказываюсь стартовать без пароля администратора.");
+    if (adminPassword.length < 12) fail("ADMIN_PASSWORD короче 12 символов.");
+    if (BURNED_SECRETS.has(adminPassword)) fail("ADMIN_PASSWORD входит в список скомпрометированных значений.");
+    if (!surveyResponseSecret) fail("SURVEY_RESPONSE_SECRET обязателен вне local.");
+    if (BURNED_SECRETS.has(surveyResponseSecret)) fail("SURVEY_RESPONSE_SECRET входит в список скомпрометированных значений.");
+    if (surveyResponseSecret === adminPassword) {
+      fail("SURVEY_RESPONSE_SECRET не может совпадать с ADMIN_PASSWORD: это делает анонимность опросов фиктивной.");
+    }
+    if (storageMode === "file" && !allowFileStorageInProduction) {
+      fail("DATABASE_URL обязателен вне local. Отказываюсь стартовать с эфемерным файловым хранилищем.");
+    }
+    return;
   }
-  if (isProduction && storageMode === "file" && !allowFileStorageInProduction) {
-    console.error("DATABASE_URL must be set in production. Refusing to start with ephemeral file storage.");
-    process.exit(1);
+
+  // В local отсутствующий пароль — не повод не дать поработать. Генерируем,
+  // показываем один раз и дописываем в .env, если он доступен на запись.
+  if (!adminPassword) {
+    adminPassword = randomBytes(24).toString("base64url");
+    const saved = appendToDotEnv("ADMIN_PASSWORD", adminPassword);
+    console.log("");
+    console.log("  ADMIN_PASSWORD не задан. Сгенерирован пароль администратора:");
+    console.log("");
+    console.log(`      ${adminUsername} / ${adminPassword}`);
+    console.log("");
+    console.log(saved ? "  Записан в .env." : "  В .env записать не удалось — сохраните сами, иначе он потеряется.");
+    console.log("");
   }
 }
 
@@ -2721,7 +1902,9 @@ async function requireAuth(request, response) {
 
 function isPlatformAdmin(user) {
   if (!user) return false;
-  return user.role === "platform_admin" || user.role === "admin";
+  // Легаси-роль 'admin' убрана миграцией 0017: строки переведены в
+  // 'platform_admin', констрейнт сужен. Проверять её больше не надо.
+  return user.role === "platform_admin";
 }
 
 function isLead(user) {
@@ -2741,7 +1924,10 @@ function isAdmin(user) {
 
 function isProtectedUser(user) {
   const username = String(user.username || "").toLowerCase();
-  return user.role === "admin" || username === adminUsername.toLowerCase();
+  // Роль проверяется через isPlatformAdmin, а не по строке 'admin': после
+  // миграции 0017 такого значения в базе нет, и сравнение со строкой тихо
+  // сняло бы защиту с тех, кого раньше защищало.
+  return isPlatformAdmin(user) || username === adminUsername.toLowerCase();
 }
 
 function isDemoUser(user) {
@@ -2786,7 +1972,7 @@ function userInLeadTeam(db, lead, user) {
   if (!lead || !user) return false;
   if (user.id === lead.id) return true;
   if (user.leadUserId) return user.leadUserId === lead.id;
-  if (user.role === "lead" || user.role === "platform_admin" || user.role === "admin") return false;
+  if (user.role === "lead" || user.role === "platform_admin") return false;
   const leadTeam = normalizeTeamName(teamLabelForUser(db, lead));
   const userTeam = normalizeTeamName(teamLabelForUser(db, user));
   return Boolean(leadTeam && userTeam && leadTeam === userTeam);
@@ -2888,6 +2074,8 @@ function canSeeSurveyTemplate(db, user, survey) {
   return !survey.ownerUserId || survey.ownerUserId === user.id;
 }
 
+// Хеш респондента. Секрет в него входит, чтобы админ, знающий список
+// userId, не мог перебором сопоставить анонимный ответ с автором.
 function surveyRespondentHash(user, survey) {
   if (!user?.id || !survey?.id) return null;
   return createHash("sha256")
@@ -2919,7 +2107,8 @@ function scopeWorkspace(db, user) {
         return Boolean(
           !isAdmin(user) &&
           currentRespondentHash &&
-          response.respondentHash === currentRespondentHash
+          response.respondentHash === currentRespondentHash &&
+          response.secretVersion === surveySecretVersion
         );
       }
       if (isPlatformAdmin(user) || isDemoUser(user)) return true;
@@ -2928,7 +2117,7 @@ function scopeWorkspace(db, user) {
     const myResponse = !isAdmin(user) && user.personId
       ? scopedResponsesForSurvey.find((response) =>
           survey.anonymous
-            ? response.respondentHash && response.respondentHash === currentRespondentHash
+            ? response.respondentHash === currentRespondentHash && response.secretVersion === surveySecretVersion
             : response.personId === user.personId
         ) || null
       : null;
@@ -3122,7 +2311,6 @@ function sanitizeSurveyQuestion(question, fallbackId) {
   };
 }
 
-const demoSeedSurveyIds = new Set(initialSurveys.map((s) => s.id));
 
 function sanitizeSurvey(survey, users = []) {
   const questions = Array.isArray(survey?.questions) ? survey.questions : [];
@@ -3191,6 +2379,10 @@ function sanitizeSurveyResponse(response, surveys) {
     surveyId: survey.id,
     personId: response?.personId ? String(response.personId) : null,
     respondentHash: response?.respondentHash ? String(response.respondentHash).slice(0, 128) : null,
+    // Поколение секрета, в котором посчитан respondentHash. Ответы старых
+    // поколений сохраняются как есть — пересчитать их хеш нельзя, исходный
+    // секрет утрачен, и это ровно то свойство, ради которого он и нужен.
+    secretVersion: clampInt(response?.secretVersion, 1, 1_000_000, surveySecretVersion),
     submittedAt:
       typeof response?.submittedAt === "string" && response.submittedAt
         ? response.submittedAt
@@ -4476,14 +3668,20 @@ async function handleApi(request, response) {
       }
     } else {
       const respondentHash = surveyRespondentHash(context.user, survey);
+      // Совпадение ищем внутри текущего поколения секрета: ответ, посчитанный
+      // старым секретом, сравнивать не с чем.
       const existingIndex = context.db.surveyResponses.findIndex(
-        (response) => response.surveyId === survey.id && response.respondentHash === respondentHash
+        (response) =>
+          response.surveyId === survey.id &&
+          response.respondentHash === respondentHash &&
+          response.secretVersion === surveySecretVersion
       );
       const anonymousResponse = {
         id: makeId("response"),
         surveyId: survey.id,
         personId: null,
         respondentHash,
+        secretVersion: surveySecretVersion,
         answers: sanitizedAnswers,
         submittedAt: new Date().toISOString()
       };
@@ -4491,6 +3689,7 @@ async function handleApi(request, response) {
         context.db.surveyResponses[existingIndex] = {
           ...context.db.surveyResponses[existingIndex],
           respondentHash,
+          secretVersion: surveySecretVersion,
           answers: sanitizedAnswers,
           submittedAt: anonymousResponse.submittedAt
         };
@@ -4542,6 +3741,9 @@ async function handleApi(request, response) {
 async function isStorageReady() {
   if (storageMode === "postgres") {
     if (!pgPool) return false;
+    // Живого соединения мало: под с базой, до которой миграции не доехали,
+    // трафик принимать не должен.
+    if (!schemaReady) return false;
     await pgPool.query("SELECT 1");
     return true;
   }

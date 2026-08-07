@@ -1,8 +1,11 @@
 import { expect, request as playwrightRequest, test } from "@playwright/test";
 
 const baseURL = process.env.BASE_URL || "http://127.0.0.1:4173";
-const adminUsername = process.env.ADMIN_USERNAME || "mgusev";
-const adminPassword = process.env.ADMIN_PASSWORD || "passwb121";
+const adminUsername = process.env.ADMIN_USERNAME || "admin";
+// Без фолбэка: пароля по умолчанию не существует, и тест, который его
+// придумывает, проверяет не то приложение, которое поедет в прод.
+const adminPassword = process.env.ADMIN_PASSWORD;
+if (!adminPassword) throw new Error("ADMIN_PASSWORD обязателен для запуска тестов");
 const demoUsername = process.env.DEMO_USERNAME || "demo";
 const demoPassword = process.env.DEMO_PASSWORD || "demo";
 
@@ -60,9 +63,9 @@ test("auth, admin workflow, and employee data isolation work", async ({ page, re
   // Profile name editing moved to Настройки
   await page.getByRole("button", { name: "Настройки", exact: true }).click();
   const leaderForm = page.locator(".settings-card").filter({ hasText: "Как вас зовут" });
-  await leaderForm.getByLabel("Имя").fill("Максим Гусев QA");
+  await leaderForm.getByLabel("Имя").fill("Админ Тестовый");
   await leaderForm.getByRole("button", { name: "Сохранить" }).click();
-  await expect(page.getByText("Вы вошли как Максим Гусев QA · Админ платформы")).toBeVisible();
+  await expect(page.getByText("Вы вошли как Админ Тестовый · Админ платформы")).toBeVisible();
 
   const employeeName = "Игорь Сидоров";
   const employeeUsername = `igor_${Date.now()}`;

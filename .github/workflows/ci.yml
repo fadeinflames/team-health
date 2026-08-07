@@ -1,0 +1,145 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    name: Секреты
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks смотрит на историю, а не только на срез рабочего дерева.
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Отдельная проверка: рабочих значений из старых дефолтов в дереве быть
+      # не должно. Блок-лист в server.js и текст планов — законные исключения.
+      - name: Сожжённые значения не вернулись
+        run: |
+          if grep -rn --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=plans \
+                --exclude-dir=.github \
+                -e 'passwb121' -e 'mgusev' . | grep -v '^./server.js:.*"passwb121",$'; then
+            echo "::error::В рабочем дереве снова есть скомпрометированные значения"
+            exit 1
+          fi
+
+  build:
+    name: Сборка
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
+  migrations:
+    name: Миграции
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: team_health
+          POSTGRES_PASSWORD: team_health
+          POSTGRES_DB: team_health
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U team_health"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://team_health:team_health@127.0.0.1:5432/team_health
+      DATABASE_SSL: disable
+      APP_ENV: local
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      # Клиент обязан совпасть с сервером по мажорной версии, иначе дамп
+      # отличается форматированием и сравнивать его не с чем.
+      - name: postgresql-client 17
+        run: |
+          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+
+      # 1. Up с нуля. Ловит поломанный порядок и забытые зависимости.
+      - name: Up с чистой базы
+        run: node scripts/migrate.mjs up
+
+      # 2. Снимок схемы совпадает с закоммиченным. Ловит миграцию, которую
+      #    забыли отразить в db/schema.sql, и правку схемы мимо миграций.
+      - name: db/schema.sql актуален
+        run: |
+          scripts/schema-dump.sh > /tmp/schema-actual.sql
+          if ! diff -u db/schema.sql /tmp/schema-actual.sql; then
+            echo "::error::db/schema.sql разошёлся с результатом миграций. Обновите: make db-schema"
+            exit 1
+          fi
+
+      # 3. Down/up последней миграции. Ловит несимметричный down.
+      #    Только последней: полный откат цепочки не тестируем сознательно,
+      #    см. политику отката в migrations/README.md.
+      - name: Down/up последней миграции
+        run: |
+          scripts/schema-dump.sh > /tmp/schema-before.sql
+          node scripts/migrate.mjs down 1
+          node scripts/migrate.mjs up
+          scripts/schema-dump.sh > /tmp/schema-after.sql
+          if ! diff -u /tmp/schema-before.sql /tmp/schema-after.sql; then
+            echo "::error::down последней миграции не обратен up"
+            exit 1
+          fi
+
+      # 4. Up от baseline. Ловит миграции, которые работают только на пустой
+      #    базе. Проверяем на копии схемы, которую создавал старый код.
+      - name: Up от baseline
+        env:
+          DATABASE_URL: postgres://team_health:team_health@127.0.0.1:5432/baseline_check
+        run: |
+          psql "postgres://team_health:team_health@127.0.0.1:5432/team_health" \
+            -v ON_ERROR_STOP=1 -c "create database baseline_check"
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f fixtures/schema-baseline.sql
+          node scripts/migrate.mjs baseline
+          node scripts/migrate.mjs up
+          scripts/schema-dump.sh > /tmp/schema-from-baseline.sql
+          if ! diff -u db/schema.sql /tmp/schema-from-baseline.sql; then
+            echo "::error::baseline + up даёт не ту же схему, что up с нуля"
+            exit 1
+          fi
+
+      # 5. Сидинг проходит на свежей схеме.
+      - name: Сидинг
+        run: node scripts/seed.mjs
+
+  e2e:
+    name: E2E
+    runs-on: ubuntu-latest
+    # Тестовый профиль compose живёт на своих значениях, но интерполяция
+    # проверяет весь файл целиком, включая ${VAR:?} у dev-профиля. Значения
+    # здесь одноразовые и никуда не уезжают.
+    env:
+      POSTGRES_PASSWORD: ci-postgres-password
+      ADMIN_PASSWORD: ci-admin-password
+      SURVEY_RESPONSE_SECRET: ci-survey-secret
+      PROD_ADMIN_PASSWORD: ci-prod-admin-password
+    steps:
+      - uses: actions/checkout@v4
+      - name: make test-docker
+        run: make test-docker

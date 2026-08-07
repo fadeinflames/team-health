@@ -36,15 +36,15 @@ This version is a working Node + React platform deployed as a Railway service. I
 
 ## Access model implemented
 
-- Admin login is seeded from `ADMIN_USERNAME` / `ADMIN_PASSWORD`; local defaults are `mgusev` / `passwb121`, but Railway refuses to start with the default admin password.
-- Demo login is seeded from `DEMO_USERNAME` / `DEMO_PASSWORD`; local defaults are `demo` / `demo`, and the account is scoped to a ready universal 1:1.
+- Admin login comes from `ADMIN_USERNAME` (defaults to `admin`) and `ADMIN_PASSWORD`, which has no default in any environment: outside `local` a missing password refuses the start, in `local` one is generated on first run and printed once. `make secrets` generates it; `make admin-password` rotates it without a restart.
+- Demo login is created by `scripts/seed.mjs` (`make seed`) from `DEMO_USERNAME` / `DEMO_PASSWORD`; local defaults are `demo` / `demo`, and the account is scoped to a ready universal 1:1. It is no longer recreated on every start.
 - In production, data lives in normalized PostgreSQL tables. Local file storage is only a fallback when `DATABASE_URL` is absent.
 - The frontend bundle does not contain employee seed data; it calls `/api/workspace` after login.
 - Platform admin receives the full team workspace and can create lead or employee logins.
 - Leads receive only their scoped team workspace.
 - Admin can add employees from the “Команда” view. Demo reset keeps the admin session locally, but is disabled on Railway unless `ENABLE_DEMO_RESET=1`.
 - Admin manages logins inside the “Админка” view: real accounts and demo accounts are separated, employee passwords can be reset, and every non-admin login can be deleted, including demo logins.
-- The admin account `mgusev` is protected from in-app deletion or password reset because it is controlled by environment defaults.
+- The admin account named by `ADMIN_USERNAME` is protected from in-app deletion or password reset because its password lifecycle belongs to the environment and to `scripts/admin-password.mjs`.
 - Employee receives only the workspace rows scoped to their `personId`; `users` and `notes` are returned as empty collections.
 
 ## PostgreSQL tables

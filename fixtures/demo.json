@@ -1,0 +1,412 @@
+{
+  "people": [
+    {
+      "id": "demo-sre",
+      "name": "Демо участник команды",
+      "meetingName": "демо участником",
+      "role": "Product Manager",
+      "team": "Product Growth",
+      "initials": "ДУ",
+      "nextMeeting": "10 мая, 11:30",
+      "cadence": "каждую неделю",
+      "managerFocus": "собрать фокус недели, риски и ближайшие договоренности",
+      "lastSummary": "Договорились сузить фокус квартала, убрать лишние параллельные инициативы и зафиксировать критерии успеха.",
+      "trend": "+4",
+      "energy": 6,
+      "load": 8,
+      "clarity": 7,
+      "trust": 8
+    },
+    {
+      "id": "anna",
+      "name": "Анна Морозова",
+      "meetingName": "Анной Морозовой",
+      "role": "Senior Product Manager",
+      "team": "Product",
+      "initials": "АМ",
+      "nextMeeting": "10 мая, 14:00",
+      "cadence": "каждую неделю",
+      "managerFocus": "снять перегруз от параллельных инициатив и укрепить ownership направления",
+      "lastSummary": "Договорились сузить roadmap до трех приоритетов и заранее подсветить зависимости для запуска.",
+      "trend": "+5",
+      "energy": 7,
+      "load": 7,
+      "clarity": 8,
+      "trust": 8
+    },
+    {
+      "id": "danila",
+      "name": "Данила Ким",
+      "meetingName": "Данилой Кимом",
+      "role": "Product Designer",
+      "team": "Design",
+      "initials": "ДК",
+      "nextMeeting": "11 мая, 15:00",
+      "cadence": "раз в 2 недели",
+      "managerFocus": "поддержать рост в discovery и самостоятельность в исследовательском цикле",
+      "lastSummary": "Нужно больше раннего контекста по целям исследования и критериям успешного решения.",
+      "trend": "-3",
+      "energy": 6,
+      "load": 8,
+      "clarity": 5,
+      "trust": 7
+    },
+    {
+      "id": "mila",
+      "name": "Мила Варламова",
+      "meetingName": "Милой Варламовой",
+      "role": "Customer Success Lead",
+      "team": "Customer Success",
+      "initials": "МВ",
+      "nextMeeting": "12 мая, 12:00",
+      "cadence": "каждую неделю",
+      "managerFocus": "сохранить качество работы с клиентами без перегруза команды",
+      "lastSummary": "Хочет больше обратной связи по качеству customer handoff и приоритизации эскалаций.",
+      "trend": "+2",
+      "energy": 8,
+      "load": 5,
+      "clarity": 8,
+      "trust": 9
+    },
+    {
+      "id": "timur",
+      "name": "Тимур Абашев",
+      "meetingName": "Тимуром Абашевым",
+      "role": "Operations Manager",
+      "team": "Operations",
+      "initials": "ТА",
+      "nextMeeting": "13 мая, 17:00",
+      "cadence": "каждую неделю",
+      "managerFocus": "вернуть ощущение контроля над межкомандными follow-up и нагрузкой",
+      "lastSummary": "Поднял риск поздних follow-up после ретро и ручной координации между командами.",
+      "trend": "-7",
+      "energy": 5,
+      "load": 9,
+      "clarity": 6,
+      "trust": 6
+    }
+  ],
+  "cards": [
+    {
+      "id": "c-demo-1",
+      "personId": "demo-sre",
+      "lprId": "lpr-demo-1",
+      "source": "employee",
+      "category": "blocker",
+      "priority": "high",
+      "status": "todo",
+      "title": "Слишком много параллельных приоритетов",
+      "body": "Требуется выбрать 2-3 главных фокуса и явно отложить остальное до следующего цикла."
+    },
+    {
+      "id": "c-demo-2",
+      "personId": "demo-sre",
+      "lprId": "lpr-demo-1",
+      "source": "manager",
+      "category": "growth",
+      "priority": "medium",
+      "status": "todo",
+      "title": "Следующий шаг в роли владельца направления",
+      "body": "Определить решения, которые участник сможет вести самостоятельно в следующем месяце."
+    },
+    {
+      "id": "c-demo-3",
+      "personId": "demo-sre",
+      "source": "employee",
+      "category": "checkin",
+      "priority": "medium",
+      "status": "discussing",
+      "title": "Энергия проседает после плотной недели",
+      "body": "Требуется окно восстановления и ограничение переключений между срочными задачами."
+    },
+    {
+      "id": "c-1",
+      "personId": "anna",
+      "lprId": "lpr-anna-1",
+      "source": "employee",
+      "category": "blocker",
+      "priority": "high",
+      "status": "todo",
+      "title": "Много ручных согласований перед запуском",
+      "body": "Требуется определить первый этап упрощения процесса и список обязательных проверок."
+    },
+    {
+      "id": "c-2",
+      "personId": "anna",
+      "lprId": "lpr-anna-1",
+      "source": "manager",
+      "category": "growth",
+      "priority": "medium",
+      "status": "todo",
+      "title": "Следующий шаг в роли product lead",
+      "body": "Определить решения по roadmap, которые можно передать Анне в следующем цикле."
+    },
+    {
+      "id": "c-3",
+      "personId": "anna",
+      "source": "employee",
+      "category": "checkin",
+      "priority": "medium",
+      "status": "discussing",
+      "title": "Энергия держится, но фокус проседает",
+      "body": "Много переключений между customer feedback, roadmap и срочными уточнениями от стейкхолдеров."
+    },
+    {
+      "id": "c-4",
+      "personId": "danila",
+      "source": "employee",
+      "category": "feedback",
+      "priority": "high",
+      "status": "todo",
+      "title": "Не хватает раннего контекста по изменению приоритетов",
+      "body": "Нужен список критериев решения и отложенных задач до старта работы."
+    },
+    {
+      "id": "c-5",
+      "personId": "mila",
+      "source": "manager",
+      "category": "thanks",
+      "priority": "low",
+      "status": "todo",
+      "title": "Отметить вклад в улучшение customer handoff",
+      "body": "Новые материалы помогли команде быстрее понимать контекст клиента и следующий шаг."
+    },
+    {
+      "id": "c-6",
+      "personId": "timur",
+      "source": "employee",
+      "category": "blocker",
+      "priority": "high",
+      "status": "todo",
+      "title": "Follow-up после ретро закрываются слишком поздно",
+      "body": "Нужен явный владелец каждого follow-up и короткий контрольный цикл."
+    }
+  ],
+  "actions": [
+    {
+      "id": "a-demo-1",
+      "personId": "demo-sre",
+      "owner": "manager",
+      "title": "Выбрать 3 приоритета квартала и зафиксировать owner/критерий успеха",
+      "due": "до пятницы",
+      "done": false
+    },
+    {
+      "id": "a-demo-2",
+      "personId": "demo-sre",
+      "owner": "employee",
+      "title": "Собрать входные данные для решения по onboarding",
+      "due": "к следующему 1:1",
+      "done": false
+    },
+    {
+      "id": "a-1",
+      "personId": "anna",
+      "owner": "manager",
+      "title": "Согласовать правило triage для срочных запросов",
+      "due": "до пятницы",
+      "done": false
+    },
+    {
+      "id": "a-2",
+      "personId": "anna",
+      "owner": "employee",
+      "title": "Выбрать одну зону ответственности для самостоятельного решения",
+      "due": "к следующему 1:1",
+      "done": false
+    },
+    {
+      "id": "a-3",
+      "personId": "timur",
+      "owner": "manager",
+      "title": "Зафиксировать SLA для follow-up после ретро",
+      "due": "сегодня",
+      "done": false
+    }
+  ],
+  "lprs": [
+    {
+      "id": "lpr-demo-1",
+      "personId": "demo-sre",
+      "title": "ЛПР: фокус квартала и ownership",
+      "focus": "Собрать повторяющиеся темы из 1:1, превратить их в план развития и связать с измеримыми целями.",
+      "status": "active",
+      "createdAt": "2026-04-01T00:00:00.000Z",
+      "updatedAt": "2026-04-01T00:00:00.000Z"
+    },
+    {
+      "id": "lpr-anna-1",
+      "personId": "anna",
+      "title": "ЛПР: ownership направления",
+      "focus": "Снять лишние согласования и постепенно передать Анне самостоятельные продуктовые решения.",
+      "status": "active",
+      "createdAt": "2026-03-15T00:00:00.000Z",
+      "updatedAt": "2026-03-15T00:00:00.000Z"
+    }
+  ],
+  "goals": [
+    {
+      "id": "g-demo-1",
+      "personId": "demo-sre",
+      "lprId": "lpr-demo-1",
+      "title": "Сократить количество параллельных приоритетов до 3",
+      "description": "Через ревизию инициатив и явное правило, что откладываем",
+      "horizon": "2026-Q2",
+      "progress": 25,
+      "status": "active",
+      "createdAt": "2026-04-01T00:00:00.000Z",
+      "dueDate": "2026-06-30"
+    },
+    {
+      "id": "g-demo-2",
+      "personId": "demo-sre",
+      "lprId": "lpr-demo-1",
+      "title": "Вести ключевое направление без постоянной эскалации",
+      "description": "Провести 5 решений по направлению с понятными критериями и обратной связью",
+      "horizon": "2026-Q2",
+      "progress": 40,
+      "status": "active",
+      "createdAt": "2026-04-01T00:00:00.000Z",
+      "dueDate": ""
+    },
+    {
+      "id": "g-anna-1",
+      "personId": "anna",
+      "lprId": "lpr-anna-1",
+      "title": "Запустить регулярный цикл customer feedback",
+      "description": "Закрыть 80% discovery-решений через проверку гипотез с клиентами",
+      "horizon": "2026-Q2",
+      "progress": 55,
+      "status": "active",
+      "createdAt": "2026-03-15T00:00:00.000Z",
+      "dueDate": "2026-06-30"
+    }
+  ],
+  "competencyAssessments": [
+    {
+      "id": "ca-demo-1",
+      "personId": "demo-sre",
+      "title": "Кейс-интервью: Product Growth",
+      "roleContext": "Product Manager · Product Growth",
+      "source": "case-ai",
+      "status": "validated",
+      "scaleMax": 5,
+      "averageScore": 3.2,
+      "minScore": 2.5,
+      "grade": "middle",
+      "competencies": [
+        {
+          "id": "cac-demo-1",
+          "name": "Приоритизация",
+          "category": "Product execution",
+          "score": 3,
+          "targetScore": 4,
+          "evidence": "Хорошо разделяет срочное и важное, но иногда держит слишком много инициатив в работе.",
+          "recommendation": "Согласовать правило WIP и еженедельный triage инициатив."
+        },
+        {
+          "id": "cac-demo-2",
+          "name": "Системная диагностика",
+          "category": "Problem solving",
+          "score": 2.5,
+          "targetScore": 3,
+          "evidence": "Видит локальные причины, но не всегда переводит повторяющиеся сигналы в системную проблему.",
+          "recommendation": "Раз в неделю собирать топ повторяющихся сигналов и формулировать гипотезу процесса."
+        },
+        {
+          "id": "cac-demo-3",
+          "name": "Коммуникация со стейкхолдерами",
+          "category": "Collaboration",
+          "score": 4,
+          "targetScore": 4,
+          "evidence": "Ясно проговаривает trade-off и ожидания по срокам.",
+          "recommendation": "Удерживать текущую практику коротких письменных recap."
+        }
+      ],
+      "cases": [
+        {
+          "id": "case-demo-1",
+          "title": "Три конкурирующих запуска в одну неделю",
+          "summary": "Проверялись приоритизация, коммуникация и работа с зависимостями.",
+          "checkedCompetencies": [
+            "Приоритизация",
+            "Коммуникация со стейкхолдерами"
+          ]
+        }
+      ],
+      "recommendations": [
+        {
+          "id": "car-demo-1",
+          "competencyName": "Системная диагностика",
+          "action": "Оформить 2 повторяющиеся проблемы из 1:1 в гипотезы улучшения процесса.",
+          "dueDate": "2026-06-30"
+        },
+        {
+          "id": "car-demo-2",
+          "competencyName": "Приоритизация",
+          "action": "Ввести лимит WIP на квартальные инициативы и проговорить исключения.",
+          "dueDate": "2026-06-30"
+        }
+      ],
+      "createdAt": "2026-04-15T00:00:00.000Z",
+      "validatedAt": "2026-04-16T00:00:00.000Z"
+    }
+  ],
+  "surveys": [
+    {
+      "id": "s-demo-weekly",
+      "title": "Еженедельный пульс команды",
+      "description": "Помоги лиду понять состояние команды, фокус и риски недели.",
+      "anonymous": false,
+      "status": "active",
+      "isDemoSeed": true,
+      "createdAt": "2026-05-08T00:00:00.000Z",
+      "questions": [
+        {
+          "id": "q1",
+          "type": "scale",
+          "prompt": "Насколько понятен фокус недели? (1 — неясно, 10 — полностью понятно)",
+          "required": true,
+          "options": []
+        },
+        {
+          "id": "q2",
+          "type": "single",
+          "prompt": "Насколько перегружен(а) сейчас?",
+          "required": true,
+          "options": [
+            "Спокойно",
+            "Нормально",
+            "На пределе",
+            "Нужна помощь"
+          ]
+        },
+        {
+          "id": "q3",
+          "type": "multi",
+          "prompt": "Что съедало фокус?",
+          "required": false,
+          "options": [
+            "Срочные запросы",
+            "Встречи",
+            "Переключения контекста",
+            "Нехватка информации",
+            "Зависимости"
+          ]
+        },
+        {
+          "id": "q4",
+          "type": "text",
+          "prompt": "Что хочешь поднять на ближайшем 1:1?",
+          "required": false,
+          "options": []
+        }
+      ]
+    }
+  ],
+  "notes": {
+    "demo-sre": "Проверить, не накопилась ли усталость от параллельных инициатив. Спросить про восстановление и фокус.",
+    "anna": "Проверить объем координации между roadmap, customer feedback и стейкхолдерами.",
+    "timur": "Риск выгорания: спросить про восстановление после плотного цикла ретро и follow-up."
+  }
+}
