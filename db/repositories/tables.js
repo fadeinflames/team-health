@@ -142,18 +142,6 @@ export const prepTable = {
   ]
 };
 
-export const pulseTable = {
-  table: "pulse",
-  key: "person_id",
-  columns: [
-    { name: "person_id", type: "text", value: (p) => p.personId },
-    { name: "energy", type: "int", value: (p) => p.energy },
-    { name: "load", type: "int", value: (p) => p.load },
-    { name: "clarity", type: "int", value: (p) => p.clarity },
-    { name: "trust", type: "int", value: (p) => p.trust }
-  ]
-};
-
 export const notesTable = {
   table: "notes",
   key: "person_id",

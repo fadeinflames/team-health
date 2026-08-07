@@ -28,6 +28,7 @@ Schema management moves out of the application into migrations, secrets get a li
 - Writes no longer delete and reinsert sixteen tables. An unchanged row is not touched at all, and `created_at` survives updates — renaming a user used to reset it on every card.
 - Authentication is a single query instead of reading the entire database, and expired sessions are cleaned up at login rather than through a full table rewrite on every request. This is what produced the intermittent 401s.
 - The connection pool has limits and timeouts. One stuck transaction used to exhaust it and take the service down instead of degrading it.
+- `pulse` is a view over `pulse_history` instead of a second table holding the same numbers. The two used to be kept in sync by two different write paths, and forgetting either one made "current pulse" and "the last point on the graph" disagree - with no way to tell which was right, since both look plausible. Retention now never deletes a person's most recent point, because that point is their current pulse.
 - `pulse_history` retention runs at most hourly instead of inside every write transaction.
 - Text length limits the application already enforced are now constraints in the database.
 

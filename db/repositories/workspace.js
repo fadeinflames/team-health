@@ -19,7 +19,6 @@ import {
   goalsTable,
   competencyAssessmentsTable,
   prepTable,
-  pulseTable,
   notesTable,
   meetingDraftsTable,
   pulseHistoryTable,
@@ -90,7 +89,6 @@ export async function syncWorkspace(client, db, options = {}) {
   await syncRows(client, goalsTable, db.goals || []);
   await syncRows(client, competencyAssessmentsTable, db.competencyAssessments || []);
   await syncRows(client, prepTable, fromMap(db.prep));
-  await syncRows(client, pulseTable, fromMap(db.pulse));
   await syncRows(client, notesTable, fromMap(db.notes));
   await syncRows(client, meetingDraftsTable, fromMap(db.meetingDrafts));
   await syncRows(client, surveysTable, db.surveys || []);
@@ -103,13 +101,39 @@ export async function syncWorkspace(client, db, options = {}) {
   // что клиент успел прочитать, и удаление «лишнего» стёрло бы историю,
   // которой в нём просто нет. Только upsert.
   await upsertRows(client, pulseHistoryTable, db.pulseHistory || []);
+
+  // Текущий пульс — сегодняшняя точка истории (миграция 0026), и пишется он
+  // строго ПОСЛЕ самой истории. Порядок здесь несущий: снимок может нести
+  // сегодняшнюю точку, посчитанную независимо от db.pulse, и если записать
+  // её последней, она станет «текущим пульсом», затерев то, что пользователь
+  // только что выставил. Ровно так /api/reset подменял пульс демо-персон
+  // сгенерированным значением с графика.
+  const today = new Date().toISOString().slice(0, 10);
+  await upsertRows(
+    client,
+    pulseHistoryTable,
+    fromMap(db.pulse).map((row) => ({ ...row, capturedAt: today }))
+  );
   // Ретеншн — не дело пользовательской транзакции. Раньше `delete ... where
   // captured_at < cutoff` выполнялся при каждой записи пульса: лишний
   // диапазонный скан и лишний лок в горячем пути ради строк, которые никуда
   // не денутся за следующий час.
-  if (shouldRunRetention(pulseHistoryRetentionDays)) {
+  if (shouldRunRetention()) {
     const cutoff = new Date(Date.now() - pulseHistoryRetentionDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    const { rowCount } = await client.query("delete from pulse_history where captured_at < $1::date", [cutoff]);
+    // Последняя точка каждого человека не удаляется никогда: с миграции 0026
+    // именно она и есть его текущий пульс, и вычистить её значит стереть
+    // показатель, а не историю.
+    const { rowCount } = await client.query(
+      `
+        delete from pulse_history old
+        where old.captured_at < $1::date
+          and exists (
+            select 1 from pulse_history newer
+            where newer.person_id = old.person_id and newer.captured_at > old.captured_at
+          )
+      `,
+      [cutoff]
+    );
     if (rowCount) console.log(`Ретеншн pulse_history: удалено строк ${rowCount}`);
   }
 

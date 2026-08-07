@@ -637,7 +637,7 @@ function poolSslOption() {
 
 // Последняя миграция, на которую рассчитывает этот код. Поднимается вместе
 // с миграцией, добавляющей то, что код начал использовать.
-const EXPECTED_SCHEMA = "0025_text_length_checks";
+const EXPECTED_SCHEMA = "0026_pulse_as_view";
 
 let schemaReady = false;
 
@@ -1311,21 +1311,6 @@ async function upsertMeetingPrep(client, personId, prep) {
   );
 }
 
-async function upsertMeetingPulse(client, personId, pulse) {
-  await client.query(
-    `
-      insert into pulse (person_id, energy, load, clarity, trust)
-      values ($1, $2, $3, $4, $5)
-      on conflict (person_id) do update set
-        energy = excluded.energy,
-        load = excluded.load,
-        clarity = excluded.clarity,
-        trust = excluded.trust
-    `,
-    [personId, pulse.energy, pulse.load, pulse.clarity, pulse.trust]
-  );
-}
-
 async function upsertMeetingPulseHistory(client, personId, pulse) {
   const today = new Date().toISOString().slice(0, 10);
   const cutoff = new Date(Date.now() - pulseHistoryRetentionDays * 24 * 60 * 60 * 1000)
@@ -1343,7 +1328,19 @@ async function upsertMeetingPulseHistory(client, personId, pulse) {
     `,
     [personId, today, pulse.energy, pulse.load, pulse.clarity, pulse.trust]
   );
-  await client.query("delete from pulse_history where captured_at < $1::date", [cutoff]);
+  // Последняя точка каждого человека не удаляется: она же и есть его
+  // текущий пульс, см. миграцию 0026.
+  await client.query(
+    `
+      delete from pulse_history old
+      where old.captured_at < $1::date
+        and exists (
+          select 1 from pulse_history newer
+          where newer.person_id = old.person_id and newer.captured_at > old.captured_at
+        )
+    `,
+    [cutoff]
+  );
 }
 
 async function upsertMeetingDraft(client, personId, body) {
@@ -2288,7 +2285,8 @@ async function persistMeetingStatePatch(db, personId, state, changed) {
         await upsertMeetingPrep(client, personId, state.prep);
       }
       if (changed.pulse) {
-        await upsertMeetingPulse(client, personId, state.pulse);
+        // Одна запись вместо двух: с миграции 0026 pulse это view поверх
+        // pulse_history, и текущее значение — её сегодняшняя точка.
         await upsertMeetingPulseHistory(client, personId, state.pulse);
       }
       if (changed.meetingDraft) {

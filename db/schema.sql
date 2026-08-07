@@ -262,23 +262,6 @@ CREATE TABLE public.prep (
 );
 
 --
--- Name: pulse; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.pulse (
-    person_id text NOT NULL,
-    energy integer NOT NULL,
-    load integer NOT NULL,
-    clarity integer NOT NULL,
-    trust integer NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT pulse_clarity_check CHECK (((clarity >= 1) AND (clarity <= 10))),
-    CONSTRAINT pulse_energy_check CHECK (((energy >= 1) AND (energy <= 10))),
-    CONSTRAINT pulse_load_check CHECK (((load >= 1) AND (load <= 10))),
-    CONSTRAINT pulse_trust_check CHECK (((trust >= 1) AND (trust <= 10)))
-);
-
---
 -- Name: pulse_history; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -294,6 +277,20 @@ CREATE TABLE public.pulse_history (
     CONSTRAINT pulse_history_load_check CHECK (((load >= 1) AND (load <= 10))),
     CONSTRAINT pulse_history_trust_check CHECK (((trust >= 1) AND (trust <= 10)))
 );
+
+--
+-- Name: pulse; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.pulse AS
+ SELECT DISTINCT ON (person_id) person_id,
+    energy,
+    load,
+    clarity,
+    trust,
+    captured_at
+   FROM public.pulse_history
+  ORDER BY person_id, captured_at DESC;
 
 --
 -- Name: sessions; Type: TABLE; Schema: public; Owner: -
@@ -574,13 +571,6 @@ ALTER TABLE ONLY public.prep
 
 ALTER TABLE ONLY public.pulse_history
     ADD CONSTRAINT pulse_history_pkey PRIMARY KEY (person_id, captured_at);
-
---
--- Name: pulse pulse_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.pulse
-    ADD CONSTRAINT pulse_pkey PRIMARY KEY (person_id);
 
 --
 -- Name: sessions sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -866,12 +856,6 @@ CREATE TRIGGER people_set_updated_at BEFORE UPDATE ON public.people FOR EACH ROW
 CREATE TRIGGER prep_set_updated_at BEFORE UPDATE ON public.prep FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 --
--- Name: pulse pulse_set_updated_at; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER pulse_set_updated_at BEFORE UPDATE ON public.pulse FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
-
---
 -- Name: surveys surveys_set_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -993,13 +977,6 @@ ALTER TABLE ONLY public.prep
 
 ALTER TABLE ONLY public.pulse_history
     ADD CONSTRAINT pulse_history_person_id_fkey FOREIGN KEY (person_id) REFERENCES public.people(id) ON DELETE CASCADE;
-
---
--- Name: pulse pulse_person_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.pulse
-    ADD CONSTRAINT pulse_person_id_fkey FOREIGN KEY (person_id) REFERENCES public.people(id) ON DELETE CASCADE;
 
 --
 -- Name: sessions sessions_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -

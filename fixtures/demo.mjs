@@ -60,12 +60,18 @@ const pulseHistoryDemoSpanDays = 56;
 // Восемь недельных точек назад от сегодня, слегка «дышащих» вокруг текущего
 // значения. Синус, а не случайные числа: график должен выглядеть как
 // динамика, а не как шум, и повторяться от запуска к запуску.
+//
+// Сегодняшняя точка «дыханию» не подлежит. С миграции 0026 текущий пульс —
+// это и есть последняя точка истории, и разойтись они не могут по
+// построению: фикстура, где заявленный пульс отличается от последней точки
+// графика, описывает состояние, которого в базе не бывает.
 function seedPulseHistoryFor(personId, currentPulse) {
   const out = [];
   const today = new Date();
   for (let dayOffset = pulseHistoryDemoSpanDays; dayOffset >= 0; dayOffset -= 7) {
     const ts = new Date(today.getTime() - dayOffset * 24 * 60 * 60 * 1000);
-    const wobble = (seed) => Math.max(1, Math.min(10, seed + Math.round(Math.sin(dayOffset / 4 + seed) * 1.4)));
+    const wobble = (seed) =>
+      dayOffset === 0 ? seed : Math.max(1, Math.min(10, seed + Math.round(Math.sin(dayOffset / 4 + seed) * 1.4)));
     out.push({
       personId,
       capturedAt: ts.toISOString().slice(0, 10),

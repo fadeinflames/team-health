@@ -122,17 +122,30 @@ async function seedPeople(client) {
   );
 }
 
-async function seedPulse(client) {
+// Текущий пульс — это сегодняшняя точка истории: с миграции 0026 таблицы
+// pulse больше нет, есть view поверх pulse_history.
+//
+// Идёт после seedPulseHistory и перезаписывает сегодняшний день: история
+// генерируется «дышащей» вокруг заявленного значения, а текущий пульс должен
+// совпадать с фикстурой точно, иначе демо показывает не то, что в ней
+// написано.
+async function seedCurrentPulse(client) {
+  const today = new Date().toISOString().slice(0, 10);
   const rows = Object.entries(initialPulse).map(([personId, value]) => ({ personId, ...value }));
   await client.query(
     `
-      insert into pulse (person_id, energy, load, clarity, trust)
-      select * from unnest($1::text[], $2::int[], $3::int[], $4::int[], $5::int[])
-      on conflict (person_id) do nothing
+      insert into pulse_history (person_id, captured_at, energy, load, clarity, trust)
+      select * from unnest($1::text[], $2::date[], $3::int[], $4::int[], $5::int[], $6::int[])
+      on conflict (person_id, captured_at) do update set
+        energy = excluded.energy,
+        load = excluded.load,
+        clarity = excluded.clarity,
+        trust = excluded.trust
     `,
     columns(
       rows,
       (r) => r.personId,
+      () => today,
       (r) => r.energy,
       (r) => r.load,
       (r) => r.clarity,
@@ -410,7 +423,6 @@ async function main() {
   try {
     await client.query("begin");
     await seedPeople(client);
-    await seedPulse(client);
     await seedPrep(client);
     await seedNotes(client);
     await seedLprs(client);
@@ -419,6 +431,7 @@ async function main() {
     await seedGoals(client);
     await seedCompetencyAssessments(client);
     await seedPulseHistory(client);
+    await seedCurrentPulse(client);
     await seedSurveys(client);
     // Дежурная нагрузка демо-персон намеренно чистится: цифры выгорания,
     // взятые с потолка, читаются как настоящие.
