@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+Schema management moves out of the application into migrations, secrets get a lifecycle, and mutations stop rewriting the whole database.
+
+### Breaking
+
+- **Demo data is no longer recreated on start.** `seedPostgres()` used to run on every boot, so deleted demo people, cards and goals came back after a restart — including in production. Seeding is now `make seed` / `npm run seed`, refuses to run outside `local` without `--force`, and demo fixtures live in `fixtures/demo.json`. If you relied on demo data reappearing, run the seed explicitly.
+- **The default admin login changed to `admin`, and the default password is gone.** There is no default password in any environment: outside `local` a missing `ADMIN_PASSWORD` refuses the start, in `local` one is generated on first run and printed once. Set `ADMIN_USERNAME` explicitly before upgrading if you were relying on the old default. The previous default password must be treated as compromised — it is in the public git history — and rotated anywhere it was reused.
+- **`SURVEY_RESPONSE_SECRET` no longer falls back to the admin password.** The two sharing a value made survey anonymity fiction: the admin knows every `userId`, so the same secret let them match an anonymous answer to its author. Outside `local` the secret is required and must differ from `ADMIN_PASSWORD`.
+- **The application no longer creates the schema.** Run `npm run migrate` before starting it. An existing database created by the old code needs `npm run migrate:baseline` once, first. `/readyz` answers 503 until the schema is at least as new as the code.
+- **The legacy `admin` role is gone** from both the data and the constraint; those rows are now `platform_admin`.
+
+### Added
+
+- `migrations/` with the schema as reviewable SQL files, `scripts/migrate.mjs` with an advisory lock, and `db/schema.sql` as a committed snapshot.
+- `make secrets`, `make secrets-check` and `make admin-password` for generating, checking and rotating secrets. Admin password rotation now survives a restart, and changing the password invalidates that account's sessions.
+- Survey secret versioning: changing `SURVEY_RESPONSE_SECRET` starts a new generation instead of silently breaking response deduplication.
+- Optimistic locking on cards, actions, goals and development plans. A save against a stale version answers 409 with the conflicting ids and the current state.
+- `GET /metrics` with connection-pool occupancy and the conflict counter; `make db-dump`, `db-restore`, `db-bloat`, `db-vacuum`.
+- `teams` as a first-class table, kept in sync from the existing lead chain.
+
+### Changed
+
+- Writes no longer delete and reinsert sixteen tables. An unchanged row is not touched at all, and `created_at` survives updates — renaming a user used to reset it on every card.
+- Authentication is a single query instead of reading the entire database, and expired sessions are cleaned up at login rather than through a full table rewrite on every request. This is what produced the intermittent 401s.
+- The connection pool has limits and timeouts. One stuck transaction used to exhaust it and take the service down instead of degrading it.
+- `pulse_history` retention runs at most hourly instead of inside every write transaction.
+- Text length limits the application already enforced are now constraints in the database.
+
 ## rc0.2.4 - 2026-05-11
 
 Patch release for left navigation contrast and theme consistency.

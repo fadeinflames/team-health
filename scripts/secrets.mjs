@@ -101,16 +101,36 @@ function commandInit(force) {
 function commandCheck() {
   const text = readEnv();
   const problems = [];
+  const warnings = [];
+
+  const appEnv = valueOf(text, "APP_ENV") || "local";
 
   for (const key of [...MANAGED, ...VOLUME_BOUND]) {
     const value = valueOf(text, key);
-    if (value === null) {
-      problems.push(`${key}: нет в .env`);
-    } else if (WEAK.has(value)) {
-      problems.push(`${key}: слабое или скомпрометированное значение`);
-    } else if (value.length < 12 && key !== "DEMO_PASSWORD") {
-      problems.push(`${key}: короче 12 символов`);
+
+    // Пустое значение — всегда проблема: без него приложение либо не
+    // стартует, либо стартует не тем, чем надо.
+    if (value === null || value === "") {
+      problems.push(`${key}: пусто в .env`);
+      continue;
     }
+
+    // DEMO_PASSWORD — витрина, а не доступ: слабое значение в local это
+    // осознанное решение, а не упущение.
+    if (key === "DEMO_PASSWORD" && appEnv === "local") continue;
+
+    const weak = WEAK.has(value) || value.length < 12;
+    if (!weak) continue;
+
+    // POSTGRES_PASSWORD в local — пароль контейнера на localhost, и его
+    // смена требует пересоздания volume. Ругаться стоит, ронять сборку —
+    // нет: цена ошибки несопоставима с ценой `make down-v`.
+    if (VOLUME_BOUND.includes(key) && appEnv === "local") {
+      warnings.push(`${key}: слабое значение. Сменить: make secrets-force && make down-v`);
+      continue;
+    }
+
+    problems.push(`${key}: слабое или скомпрометированное значение`);
   }
 
   const adminPassword = valueOf(text, "ADMIN_PASSWORD");
@@ -119,10 +139,11 @@ function commandCheck() {
     problems.push("SURVEY_RESPONSE_SECRET совпадает с ADMIN_PASSWORD: анонимность опросов фиктивна");
   }
 
-  const appEnv = valueOf(text, "APP_ENV") || "local";
   if (valueOf(text, "ENABLE_DEMO_RESET") === "1" && appEnv !== "local") {
     problems.push(`ENABLE_DEMO_RESET=1 при APP_ENV=${appEnv}: /api/reset открыт и сносит рабочие данные`);
   }
+
+  for (const warning of warnings) console.warn(`  предупреждение: ${warning}`);
 
   if (!problems.length) {
     console.log("Секреты в .env в порядке.");

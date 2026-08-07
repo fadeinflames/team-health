@@ -6,12 +6,21 @@
 // Обновляет users и app_meta в одной транзакции, гасит сессии админа и
 // печатает пароль ровно один раз.
 //
-// Отпечаток в app_meta обновляется вместе с паролем — именно поэтому
-// ротация переживает рестарт: приложение при старте увидит, что
-// ADMIN_PASSWORD в окружении не менялся, и не станет ничего перезаписывать.
-// Обратная сторона: если ADMIN_PASSWORD в окружении задан и отличается от
-// нового, ближайший рестарт с несовпавшим отпечатком вернёт значение из
-// переменной. Поэтому в конце — напоминание.
+// Про отпечаток в app_meta.
+//
+// admin_password_fingerprint означает не «каков текущий пароль», а «какое
+// значение ADMIN_PASSWORD из окружения уже применено». Разница принципиальна:
+// именно она позволяет ротации пережить рестарт.
+//
+// Поэтому здесь отпечаток пересчитывается от ТЕКУЩЕГО значения переменной
+// окружения, а не от нового пароля. При следующем старте приложение увидит,
+// что переменная не менялась, и не станет ничего перезаписывать. Если же
+// переменную потом поменяют осознанно, отпечаток разойдётся и новое значение
+// применится, как и задумано.
+//
+// Если ADMIN_PASSWORD в окружении этого скрипта не задан, отпечаток трогать
+// нельзя: мы не знаем, с чем сравнивать, и любая запись сюда сделает
+// поведение рестарта непредсказуемым.
 
 import { scryptSync, randomBytes, createHash } from "node:crypto";
 
@@ -76,16 +85,20 @@ async function main() {
 
     const salt = randomBytes(16).toString("hex");
     const passwordHash = scryptSync(password, salt, 64).toString("hex");
-    const fingerprint = createHash("sha256").update(`${adminUsername}:${password}`).digest("hex");
 
     await client.query("update users set salt = $1, password_hash = $2 where id = $3", [salt, passwordHash, userId]);
-    await client.query(
-      `
-        insert into app_meta (key, value) values ('admin_password_fingerprint', $1)
-        on conflict (key) do update set value = excluded.value, updated_at = now()
-      `,
-      [fingerprint]
-    );
+
+    const envPassword = process.env.ADMIN_PASSWORD || "";
+    if (envPassword) {
+      const envFingerprint = createHash("sha256").update(`${adminUsername}:${envPassword}`).digest("hex");
+      await client.query(
+        `
+          insert into app_meta (key, value) values ('admin_password_fingerprint', $1)
+          on conflict (key) do update set value = excluded.value, updated_at = now()
+        `,
+        [envFingerprint]
+      );
+    }
     const killed = await client.query("delete from sessions where user_id = $1", [userId]);
     await client.query("commit");
 
@@ -95,7 +108,13 @@ async function main() {
     console.log(`      ${password}`);
     console.log("");
     console.log(`  Показан один раз. Активных сессий сброшено: ${killed.rowCount}.`);
-    console.log("  Обновите ADMIN_PASSWORD в окружении — иначе ближайший рестарт вернёт старое значение.");
+    if (envPassword) {
+      console.log("  Рестарт приложения его не откатит: ADMIN_PASSWORD в окружении отмечен как уже применённый.");
+      console.log("  Смена самой переменной по-прежнему перезапишет пароль при старте.");
+    } else {
+      console.log("  ADMIN_PASSWORD в окружении этого скрипта не задан, отпечаток не тронут.");
+      console.log("  Если у приложения переменная задана, ближайший рестарт вернёт её значение.");
+    }
     console.log("");
   } catch (error) {
     await client.query("rollback").catch(() => {});

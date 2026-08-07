@@ -51,6 +51,11 @@ services:
     environment:
       !!merge <<: *dev-database
       APP_ENV: local
+      # Учётные данные админа нужны не миграциям, а `make admin-password`,
+      # который запускается в этом же контейнере: ротация помечает текущее
+      # значение ADMIN_PASSWORD как применённое, иначе рестарт её откатит.
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?задайте ADMIN_PASSWORD — make env && make secrets}
     volumes: *source-mounts
     depends_on:
       db:
