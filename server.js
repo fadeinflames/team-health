@@ -572,9 +572,24 @@ function mergeMeetingDraftsUpdate(currentDrafts = {}, incomingDrafts = {}, perso
   return next;
 }
 
+// Учётная запись администратора в снимке.
+//
+// Раньше здесь на каждом вызове считался scrypt и перезаписывались salt с
+// password_hash — то есть на каждом чтении базы. Две беды сразу.
+//
+// Первая: scrypt намеренно медленный, и это была самая дорогая операция на
+// пути обычного GET. Замерено: около семи миллисекунд на запрос.
+//
+// Вторая хуже. Хеш переписывался значением из ADMIN_PASSWORD, и ближайшая
+// запись сохраняла его в базу. Ротация через scripts/admin-password.mjs
+// молча откатывалась первой же операцией вроде создания пользователя.
+//
+// Теперь пароль существующей учётки здесь не трогается вовсе. В postgres им
+// управляет ensureAdminPassword по отпечатку в app_meta. В файловом режиме
+// app_meta нет, поэтому там прежнее поведение сохранено: смена
+// ADMIN_PASSWORD применяется, иначе её нечем применить.
 function ensureSeedLogin(db, config) {
   const index = db.users.findIndex((user) => user.username.toLowerCase() === config.username.toLowerCase());
-  const passwordFields = hashPassword(config.password);
   const leadUserId = config.leadUserId || null;
   const teamLabel = String(config.teamLabel || "").slice(0, 120);
 
@@ -588,7 +603,7 @@ function ensureSeedLogin(db, config) {
       leadUserId,
       teamLabel,
       createdAt: new Date().toISOString(),
-      ...passwordFields
+      ...hashPassword(config.password)
     });
     return;
   }
@@ -601,7 +616,7 @@ function ensureSeedLogin(db, config) {
     personId: config.personId,
     leadUserId,
     teamLabel,
-    ...passwordFields
+    ...(storageMode === "file" ? hashPassword(config.password) : {})
   };
 }
 
@@ -807,8 +822,126 @@ async function ensureAdminAccounts() {
   }
 }
 
-async function readDb() {
+// Признак того, что снимок неполон. Symbol, а не обычное поле: он не должен
+// попадать ни в JSON, ни в перебор ключей.
+const READ_ONLY = Symbol("readOnlySnapshot");
+
+// Список колонок вынесен, потому что фаза вычисления скоупа читает те же
+// таблицы отдельным запросом, и разъехавшиеся списки дали бы разный скоуп на
+// разных фазах — ошибку, которую было бы очень неприятно искать.
+const PEOPLE_COLUMNS = `
+            id,
+            name,
+            meeting_name as "meetingName",
+            role,
+            team,
+            initials,
+            next_meeting as "nextMeeting",
+            cadence,
+            manager_focus as "managerFocus",
+            last_summary as "lastSummary",
+            trend,
+            meeting_type as "meetingType",
+            mentorship_mode as "mentorshipMode",
+            growth_narrative as "growthNarrative",
+            performance_narrative as "performanceNarrative",
+            to_char(archived_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as "archivedAt",
+            to_json(updated_at)#>>'{}' as "updatedAt"`;
+
+// Порядок людей задаёт порядок всего интерфейса, поэтому он явный и
+// одинаковый на обеих фазах.
+const PEOPLE_ORDER =
+  "order by case id when 'demo-sre' then 0 when 'anna' then 1 when 'danila' then 2 when 'mila' then 3 when 'timur' then 4 else 99 end, name";
+
+function userColumns(omitCredentials) {
+  return `
+            id,
+            username,
+            name,
+            role,
+            person_id as "personId",
+            lead_user_id as "leadUserId",
+            team_label as "teamLabel",
+            ${omitCredentials ? `'' as salt, '' as "passwordHash"` : `salt, password_hash as "passwordHash"`},
+            created_at as "createdAt"`;
+}
+
+// Чтение под конкретного пользователя.
+//
+// Раньше на каждый запрос вычитывались все восемнадцать таблиц без единого
+// WHERE, а права применялись потом в JS. Из-за этого ни один из двадцати
+// трёх индексов не использовался: все чтения были seq scan.
+//
+// Две фазы вместо одной. Сначала небольшие таблицы, по которым считается
+// скоуп, — люди и учётные записи. Потом всё, что привязано к человеку, уже
+// с `where person_id = any(...)`.
+//
+// Скоуп считает та же функция, что и раньше, на тех же данных. Переписывать
+// её рекурсивным CTE я не стал: в коде обход не рекурсивный (lead_user_id
+// заполняется только у employee, так что цепочка всегда длиной в один шаг),
+// а иерархия из плана расширила бы лиду доступ на подчинённых его
+// подчинённых. Это смена модели доступа, а не рефакторинг чтения, и ей
+// место в отдельном изменении.
+//
+// Возвращённый снимок помечен как read-only: он неполон, и попытка записать
+// его обратно удалила бы всё, что осталось за пределами скоупа.
+async function readDbForUser(user) {
+  // Рычаг отката. Скоупленное чтение обязано давать ровно тот же ответ, что
+  // и полное; если на проде вдруг окажется, что не даёт, переменная
+  // возвращает старое поведение без выката.
+  if (storageMode !== "postgres" || process.env.WORKSPACE_SCOPED_READ === "0") return readDb();
+
+  // У админа платформы скоуп — это почти вся база. Фаза вычисления скоупа для
+  // него — лишний round-trip ради фильтра, который ничего не отфильтрует,
+  // поэтому читаем сразу целиком. Замерено: для админа двухфазное чтение
+  // отсекало 8 строк из 5561 и добавляло 20 мс.
+  if (isPlatformAdmin(user)) {
+    const full = await readDb({ omitCredentials: true });
+    Object.defineProperty(full, READ_ONLY, { value: true, enumerable: false });
+    return full;
+  }
+
+  const skeleton = await readDb({ tablesFor: "scope", omitCredentials: true });
+  const personIds = [...scopedPersonIds(skeleton, user)];
+
+  const db = await readDb({ personIds, omitCredentials: true });
+  Object.defineProperty(db, READ_ONLY, { value: true, enumerable: false });
+  return db;
+}
+
+// Чтение базы.
+//
+// options.personIds — сузить таблицы, привязанные к человеку. Без него
+// читаются все восемнадцать таблиц целиком: это нужно путям записи, где
+// снимок возвращается обратно в базу, и там сужать нельзя — syncWorkspace
+// удалил бы всё, чего в снимке не оказалось.
+//
+// options.omitCredentials — не тянуть salt и password_hash. На пути чтения
+// они не нужны никому, а таблица users с ними попадала в память на каждый
+// запрос любого сотрудника.
+async function readDb(options = {}) {
+  const { personIds = null, omitCredentials = false, tablesFor = null } = options;
+
   if (storageMode === "postgres") {
+    // Фаза скоупа: нужны только люди и учётные записи. Остальное normalizeDb
+    // достроит из фикстур, и на вычисление скоупа это не влияет.
+    if (tablesFor === "scope") {
+      metrics.readQueries += 2;
+      const [scopePeople, scopeUsers] = await Promise.all([
+        pgPool.query(`select ${PEOPLE_COLUMNS} from people ${PEOPLE_ORDER}`),
+        pgPool.query(`select ${userColumns(omitCredentials)} from users order by created_at asc`)
+      ]);
+      metrics.readRows += scopePeople.rowCount + scopeUsers.rowCount;
+      return normalizeDb({ people: scopePeople.rows, users: scopeUsers.rows, sessions: [] });
+    }
+
+    // Один и тот же параметр $1 во всех запросах: pg отправляет их
+    // независимо, нумерация у каждого своя.
+    const scope = personIds ? "where person_id = any($1::text[])" : "";
+    const scopeAnd = personIds ? "and person_id = any($1::text[])" : "";
+    const scopeArgs = personIds ? [personIds] : [];
+
+    metrics.readQueries += 18;
     const [
       peopleResult,
       lprsResult,
@@ -830,28 +963,7 @@ async function readDb() {
       sessionsResult
     ] =
       await Promise.all([
-        pgPool.query(`
-          select
-            id,
-            name,
-            meeting_name as "meetingName",
-            role,
-            team,
-            initials,
-            next_meeting as "nextMeeting",
-            cadence,
-            manager_focus as "managerFocus",
-            last_summary as "lastSummary",
-            trend,
-            meeting_type as "meetingType",
-            mentorship_mode as "mentorshipMode",
-            growth_narrative as "growthNarrative",
-            performance_narrative as "performanceNarrative",
-            to_char(archived_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as "archivedAt",
-            to_json(updated_at)#>>'{}' as "updatedAt"
-          from people
-          order by case id when 'demo-sre' then 0 when 'anna' then 1 when 'danila' then 2 when 'mila' then 3 when 'timur' then 4 else 99 end, name
-        `),
+        pgPool.query(`select ${PEOPLE_COLUMNS} from people ${PEOPLE_ORDER}`),
         pgPool.query(`
           select
             id,
@@ -862,8 +974,9 @@ async function readDb() {
             created_at as "createdAt",
             to_json(updated_at)#>>'{}' as "updatedAt"
           from lprs
+          ${scope}
           order by created_at asc, id asc
-        `),
+        `, scopeArgs),
         pgPool.query(`
           select
             id,
@@ -878,8 +991,9 @@ async function readDb() {
             created_at as "createdAt",
             to_json(updated_at)#>>'{}' as "updatedAt"
           from cards
+          ${scope}
           order by created_at asc, id asc
-        `),
+        `, scopeArgs),
         pgPool.query(`
           select
             id,
@@ -892,8 +1006,9 @@ async function readDb() {
             created_at as "createdAt",
             to_json(updated_at)#>>'{}' as "updatedAt"
           from actions
+          ${scope}
           order by created_at asc, id asc
-        `),
+        `, scopeArgs),
         pgPool.query(`
           select
             id,
@@ -908,8 +1023,9 @@ async function readDb() {
             to_json(updated_at)#>>'{}' as "updatedAt",
             due_date as "dueDate"
           from goals
+          ${scope}
           order by created_at asc, id asc
-        `),
+        `, scopeArgs),
         pgPool.query(`
           select
             id,
@@ -929,10 +1045,11 @@ async function readDb() {
             to_json(updated_at)#>>'{}' as "updatedAt",
             validated_at as "validatedAt"
           from competency_assessments
+          ${scope}
           order by created_at asc, id asc
-        `),
-        pgPool.query("select * from prep"),
-        pgPool.query("select * from pulse"),
+        `, scopeArgs),
+        pgPool.query(`select * from prep ${scope}`, scopeArgs),
+        pgPool.query(`select * from pulse ${scope}`, scopeArgs),
         pgPool.query(`
           select
             person_id as "personId",
@@ -942,8 +1059,9 @@ async function readDb() {
             clarity,
             trust
           from pulse_history
+          ${scope}
           order by captured_at asc
-        `),
+        `, scopeArgs),
         pgPool.query(`
           select
             id,
@@ -980,8 +1098,9 @@ async function readDb() {
             tags,
             created_at as "createdAt"
           from manager_notes
+          ${scope}
           order by created_at desc
-        `),
+        `, scopeArgs),
         pgPool.query(`
           select
             person_id as "personId",
@@ -991,8 +1110,9 @@ async function readDb() {
             incidents_led as "incidentsLed",
             sleep_disrupted_nights as "sleepDisruptedNights"
           from oncall_load
+          ${scope}
           order by week_start desc
-        `),
+        `, scopeArgs),
         pgPool.query(`
           select
             id,
@@ -1002,25 +1122,12 @@ async function readDb() {
             summary,
             attended
           from meeting_log
+          ${scope}
           order by held_at desc
-        `),
-        pgPool.query("select person_id, body from meeting_drafts"),
-        pgPool.query("select person_id, body from notes"),
-        pgPool.query(`
-          select
-            id,
-            username,
-            name,
-            role,
-            person_id as "personId",
-            lead_user_id as "leadUserId",
-            team_label as "teamLabel",
-            salt,
-            password_hash as "passwordHash",
-            created_at as "createdAt"
-          from users
-          order by created_at asc
-        `),
+        `, scopeArgs),
+        pgPool.query(`select person_id, body from meeting_drafts ${scope}`, scopeArgs),
+        pgPool.query(`select person_id, body from notes ${scope}`, scopeArgs),
+        pgPool.query(`select ${userColumns(omitCredentials)} from users order by created_at asc`),
         pgPool.query(`
           select
             id,
@@ -1030,6 +1137,14 @@ async function readDb() {
           from sessions
         `)
       ]);
+
+    metrics.readRows +=
+      peopleResult.rowCount + lprsResult.rowCount + cardsResult.rowCount + actionsResult.rowCount +
+      goalsResult.rowCount + competencyAssessmentsResult.rowCount + prepResult.rowCount +
+      pulseResult.rowCount + pulseHistoryResult.rowCount + surveysResult.rowCount +
+      surveyResponsesResult.rowCount + managerNotesResult.rowCount + oncallLoadResult.rowCount +
+      meetingLogResult.rowCount + meetingDraftsResult.rowCount + notesResult.rowCount +
+      usersResult.rowCount + sessionsResult.rowCount;
 
     return normalizeDb({
       people: peopleResult.rows,
@@ -1115,6 +1230,11 @@ async function readDb() {
 }
 
 async function writeDb(db, options = {}) {
+  if (db?.[READ_ONLY]) {
+    // Снимок из readDbForUser неполон по построению. Запись его обратно
+    // удалила бы всё, что не попало в скоуп читавшего.
+    throw new Error("Попытка записать скоупленный снимок: используйте readDb() на путях записи");
+  }
   metrics.writes += 1;
   const replaceAuth = options.replaceAuth !== false;
   const normalized = normalizeDb(db);
@@ -2579,9 +2699,11 @@ async function handleApi(request, response) {
   }
 
   if (request.method === "GET" && url.pathname === "/api/workspace") {
-    const context = await requireAuth(request, response);
+    // Самый частый запрос в приложении. Читаем скоупленно: без этого он
+    // тянул все восемнадцать таблиц целиком ради нескольких строк.
+    const context = await requireAuth(request, response, { withDb: false });
     if (!context) return;
-    sendJson(response, 200, scopeWorkspace(context.db, context.user));
+    sendJson(response, 200, scopeWorkspace(await readDbForUser(context.user), context.user));
     return;
   }
 
@@ -3442,6 +3564,12 @@ async function isStorageReady() {
 const metrics = {
   versionConflicts: 0,
   writes: 0,
+  // Запросы и строки, поднятые с диска на чтение рабочего пространства.
+  // Ради второго числа всё и затевалось: полное чтение вытаскивало все
+  // строки всех восемнадцати таблиц на каждый HTTP-запрос независимо от
+  // того, сколько из них читающий имеет право видеть.
+  readQueries: 0,
+  readRows: 0,
   startedAt: Date.now()
 };
 
@@ -3469,6 +3597,8 @@ async function handleHealth(pathname, request, response) {
         ? { total: pgPool.totalCount, idle: pgPool.idleCount, waiting: pgPool.waitingCount }
         : null,
       writes: metrics.writes,
+      readQueries: metrics.readQueries,
+      readRows: metrics.readRows,
       versionConflicts: metrics.versionConflicts
     });
     return;

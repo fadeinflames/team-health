@@ -23,6 +23,8 @@ Schema management moves out of the application into migrations, secrets get a li
 
 ### Changed
 
+- `GET /api/workspace` reads only the rows the caller is allowed to see instead of every row of eighteen tables. Measured on 63 people and 2400 cards: an employee's request went from 5573 rows and 16 ms to 161 rows and 9 ms, with byte-identical responses. `WORKSPACE_SCOPED_READ=0` restores the old behaviour.
+- The admin account's password hash is no longer recomputed and overwritten on every read. That cost a `scrypt` per request — the single most expensive operation on the read path — and worse, it silently reverted a CLI rotation on the next write.
 - Writes no longer delete and reinsert sixteen tables. An unchanged row is not touched at all, and `created_at` survives updates — renaming a user used to reset it on every card.
 - Authentication is a single query instead of reading the entire database, and expired sessions are cleaned up at login rather than through a full table rewrite on every request. This is what produced the intermittent 401s.
 - The connection pool has limits and timeouts. One stuck transaction used to exhaust it and take the service down instead of degrading it.
