@@ -21,7 +21,7 @@ IN_DB_URL = postgresql:///$(or $(DB_NAME),team_health)?host=/var/run/postgresql&
 .PHONY: help env secrets secrets-force secrets-check install dev dev-api dev-web build start preview check reset-data clean \
         up up-prod down down-v logs ps rebuild sh db-shell \
         migrate migrate-status migrate-new migrate-down migrate-baseline seed \
-        db-schema db-drift db-dump db-restore admin-password \
+        db-schema db-drift db-dump db-restore db-vacuum db-bloat admin-password \
         test-install test test-smoke test-ui test-docker \
         image image-push
 
@@ -152,6 +152,22 @@ db-dump: ## Снять полный бэкап локальной базы в ba
 	@$(COMPOSE) exec -T db pg_dump --format=custom --no-owner --no-privileges "$(IN_DB_URL)" \
 		> backups/team-health-$$(date +%Y%m%d-%H%M%S).dump
 	@ls -la backups | tail -1
+
+db-vacuum: ## Разовая чистка после перехода на точечные записи (окно обслуживания)
+	@echo "VACUUM FULL блокирует таблицы целиком. Делайте это в окне обслуживания."
+	@echo "Ctrl-C, если передумали."
+	@sleep 5
+	@$(COMPOSE) exec -T db psql -v ON_ERROR_STOP=1 "$(IN_DB_URL)" -c "vacuum full analyze"
+	@echo "Готово. Проверить раздутость: make db-bloat"
+
+db-bloat: ## Показать соотношение мёртвых и живых версий строк
+	@$(COMPOSE) exec -T db psql "$(IN_DB_URL)" -c "\
+		select relname, n_live_tup, n_dead_tup, \
+		       case when n_live_tup > 0 then round(n_dead_tup::numeric / n_live_tup, 2) else null end as dead_ratio, \
+		       last_autovacuum \
+		from pg_stat_user_tables \
+		where n_dead_tup > 0 \
+		order by n_dead_tup desc"
 
 db-restore: ## Восстановить базу из бэкапа: make db-restore file=backups/....dump
 	@test -n "$(file)" || (echo "Укажи файл: make db-restore file=backups/team-health-....dump" && exit 1)

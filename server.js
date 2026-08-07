@@ -622,7 +622,7 @@ function poolSslOption() {
 
 // Последняя миграция, на которую рассчитывает этот код. Поднимается вместе
 // с миграцией, добавляющей то, что код начал использовать.
-const EXPECTED_SCHEMA = "0024_teams_expand";
+const EXPECTED_SCHEMA = "0025_text_length_checks";
 
 let schemaReady = false;
 
@@ -1050,7 +1050,9 @@ async function readDb() {
         cases: Array.isArray(row.cases) ? row.cases : [],
         recommendations: Array.isArray(row.recommendations) ? row.recommendations : [],
         createdAt: row.createdAt?.toISOString?.() || row.createdAt,
-        validatedAt: row.validatedAt?.toISOString?.() || row.validatedAt || ""
+        // null, а не "": база хранит отсутствие даты корректно, и портить
+        // это на чтении незачем. Фронтенд и так читает validatedAt || createdAt.
+        validatedAt: row.validatedAt?.toISOString?.() || row.validatedAt || null
       })),
       prep: Object.fromEntries(
         prepResult.rows.map((row) => [
@@ -1113,6 +1115,7 @@ async function readDb() {
 }
 
 async function writeDb(db, options = {}) {
+  metrics.writes += 1;
   const replaceAuth = options.replaceAuth !== false;
   const normalized = normalizeDb(db);
 
@@ -2306,7 +2309,7 @@ function sanitizeCompetencyAssessment(assessment = {}, personId) {
     cases,
     recommendations,
     createdAt: typeof assessment.createdAt === "string" && assessment.createdAt ? assessment.createdAt : new Date().toISOString(),
-    validatedAt: typeof assessment.validatedAt === "string" && assessment.validatedAt ? assessment.validatedAt : ""
+    validatedAt: typeof assessment.validatedAt === "string" && assessment.validatedAt ? assessment.validatedAt : null
   };
 }
 
@@ -2591,6 +2594,7 @@ async function handleApi(request, response) {
       await writeDb(nextDb, { replaceAuth: false, checkVersions: true });
     } catch (error) {
       if (!(error instanceof VersionConflictError)) throw error;
+      metrics.versionConflicts += 1;
       // Кто-то успел сохранить те же сущности раньше. Отдаём актуальное
       // состояние: клиент должен показать конфликт, а не молча затереть
       // чужие правки повторной отправкой.
@@ -3432,6 +3436,15 @@ async function isStorageReady() {
 // Liveness and readiness are deliberately separate: /healthz answers as long as the
 // process is running, /readyz also requires storage, so a rollout does not send
 // traffic to a pod that cannot reach the database.
+// Счётчики для наблюдаемости. Не Prometheus-клиент: одна зависимость ради
+// четырёх чисел не окупается, а формат экспозиции при необходимости
+// добавляется поверх.
+const metrics = {
+  versionConflicts: 0,
+  writes: 0,
+  startedAt: Date.now()
+};
+
 async function handleHealth(pathname, request, response) {
   if (request.method !== "GET" && request.method !== "HEAD") {
     sendJson(response, 405, { error: "Method not allowed" });
@@ -3440,6 +3453,24 @@ async function handleHealth(pathname, request, response) {
 
   if (pathname === "/healthz") {
     sendJson(response, 200, { status: "ok" });
+    return;
+  }
+
+  if (pathname === "/metrics") {
+    // Занятые и свободные соединения плюс очередь ожидающих: очередь,
+    // отличная от нуля, означает, что пул стал узким местом раньше базы.
+    // Счётчик 409 — прямой индикатор того, как часто пользователи реально
+    // конфликтуют, а не как часто мы боимся, что они конфликтуют.
+    sendJson(response, 200, {
+      uptimeSeconds: Math.round((Date.now() - metrics.startedAt) / 1000),
+      storage: storageMode,
+      schema: EXPECTED_SCHEMA,
+      pool: pgPool
+        ? { total: pgPool.totalCount, idle: pgPool.idleCount, waiting: pgPool.waitingCount }
+        : null,
+      writes: metrics.writes,
+      versionConflicts: metrics.versionConflicts
+    });
     return;
   }
 
@@ -3482,7 +3513,7 @@ await initStorage();
 const server = createServer((request, response) => {
   const pathname = (request.url || "/").split("?")[0];
 
-  if (pathname === "/healthz" || pathname === "/readyz") {
+  if (pathname === "/healthz" || pathname === "/readyz" || pathname === "/metrics") {
     handleHealth(pathname, request, response).catch((error) => {
       console.error(error);
       if (!response.headersSent) {

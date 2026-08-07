@@ -373,11 +373,32 @@ CREATE TABLE public.users (
 );
 
 --
+-- Name: actions actions_due_label_length; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.actions
+    ADD CONSTRAINT actions_due_label_length CHECK ((length(due_label) <= 80)) NOT VALID;
+
+--
+-- Name: actions actions_due_length; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.actions
+    ADD CONSTRAINT actions_due_length CHECK ((length(due) <= 80)) NOT VALID;
+
+--
 -- Name: actions actions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.actions
     ADD CONSTRAINT actions_pkey PRIMARY KEY (id);
+
+--
+-- Name: actions actions_title_length; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.actions
+    ADD CONSTRAINT actions_title_length CHECK ((length(title) <= 180)) NOT VALID;
 
 --
 -- Name: app_meta app_meta_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -387,11 +408,25 @@ ALTER TABLE ONLY public.app_meta
     ADD CONSTRAINT app_meta_pkey PRIMARY KEY (key);
 
 --
+-- Name: cards cards_body_length; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.cards
+    ADD CONSTRAINT cards_body_length CHECK ((length(body) <= 1000)) NOT VALID;
+
+--
 -- Name: cards cards_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.cards
     ADD CONSTRAINT cards_pkey PRIMARY KEY (id);
+
+--
+-- Name: cards cards_title_length; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.cards
+    ADD CONSTRAINT cards_title_length CHECK ((length(title) <= 160)) NOT VALID;
 
 --
 -- Name: competency_assessments competency_assessments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -401,11 +436,39 @@ ALTER TABLE ONLY public.competency_assessments
     ADD CONSTRAINT competency_assessments_pkey PRIMARY KEY (id);
 
 --
+-- Name: goals goals_description_length; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.goals
+    ADD CONSTRAINT goals_description_length CHECK ((length(description) <= 1500)) NOT VALID;
+
+--
+-- Name: goals goals_horizon_length; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.goals
+    ADD CONSTRAINT goals_horizon_length CHECK ((length(horizon) <= 32)) NOT VALID;
+
+--
 -- Name: goals goals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.goals
     ADD CONSTRAINT goals_pkey PRIMARY KEY (id);
+
+--
+-- Name: goals goals_title_length; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.goals
+    ADD CONSTRAINT goals_title_length CHECK ((length(title) <= 200)) NOT VALID;
+
+--
+-- Name: lprs lprs_focus_length; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.lprs
+    ADD CONSTRAINT lprs_focus_length CHECK ((length(focus) <= 2000)) NOT VALID;
 
 --
 -- Name: lprs lprs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -415,11 +478,32 @@ ALTER TABLE ONLY public.lprs
     ADD CONSTRAINT lprs_pkey PRIMARY KEY (id);
 
 --
+-- Name: lprs lprs_title_length; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.lprs
+    ADD CONSTRAINT lprs_title_length CHECK ((length(title) <= 200)) NOT VALID;
+
+--
+-- Name: manager_notes manager_notes_body_length; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.manager_notes
+    ADD CONSTRAINT manager_notes_body_length CHECK ((length(body) <= 4000)) NOT VALID;
+
+--
 -- Name: manager_notes manager_notes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.manager_notes
     ADD CONSTRAINT manager_notes_pkey PRIMARY KEY (id);
+
+--
+-- Name: meeting_drafts meeting_drafts_body_length; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.meeting_drafts
+    ADD CONSTRAINT meeting_drafts_body_length CHECK ((length(body) <= 12000)) NOT VALID;
 
 --
 -- Name: meeting_drafts meeting_drafts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -436,6 +520,13 @@ ALTER TABLE ONLY public.meeting_log
     ADD CONSTRAINT meeting_log_pkey PRIMARY KEY (id);
 
 --
+-- Name: meeting_log meeting_log_summary_length; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.meeting_log
+    ADD CONSTRAINT meeting_log_summary_length CHECK ((length(summary) <= 4000)) NOT VALID;
+
+--
 -- Name: notes notes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -448,6 +539,20 @@ ALTER TABLE ONLY public.notes
 
 ALTER TABLE ONLY public.oncall_load
     ADD CONSTRAINT oncall_load_pkey PRIMARY KEY (person_id, week_start);
+
+--
+-- Name: people people_growth_narrative_length; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.people
+    ADD CONSTRAINT people_growth_narrative_length CHECK ((length(growth_narrative) <= 8000)) NOT VALID;
+
+--
+-- Name: people people_performance_narrative_length; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.people
+    ADD CONSTRAINT people_performance_narrative_length CHECK ((length(performance_narrative) <= 8000)) NOT VALID;
 
 --
 -- Name: people people_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -506,11 +611,25 @@ ALTER TABLE ONLY public.teams
     ADD CONSTRAINT teams_pkey PRIMARY KEY (id);
 
 --
+-- Name: users users_name_length; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.users
+    ADD CONSTRAINT users_name_length CHECK ((length(name) <= 120)) NOT VALID;
+
+--
 -- Name: users users_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.users
     ADD CONSTRAINT users_pkey PRIMARY KEY (id);
+
+--
+-- Name: users users_team_label_length; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.users
+    ADD CONSTRAINT users_team_label_length CHECK ((length(team_label) <= 120)) NOT VALID;
 
 --
 -- Name: actions_done_idx; Type: INDEX; Schema: public; Owner: -
