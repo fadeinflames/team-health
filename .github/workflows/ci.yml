@@ -22,12 +22,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # Отдельная проверка: рабочих значений из старых дефолтов в дереве быть
-      # не должно. Блок-лист в server.js и текст планов — законные исключения.
+      # не должно. Законные исключения — сами блок-листы (server.js и
+      # scripts/secrets.mjs) и текст планов.
       - name: Сожжённые значения не вернулись
         run: |
           if grep -rn --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=plans \
                 --exclude-dir=.github \
-                -e 'passwb121' -e 'mgusev' . | grep -v '^./server.js:.*"passwb121",$'; then
+                -e 'passwb121' -e 'mgusev' . \
+                | grep -vE '^\./(server\.js|scripts/secrets\.mjs):.*"passwb121",$'; then
             echo "::error::В рабочем дереве снова есть скомпрометированные значения"
             exit 1
           fi
@@ -78,6 +80,12 @@ jobs:
           curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg
           sudo apt-get update -qq
           sudo apt-get install -y -qq postgresql-client-17
+          # На раннере уже есть клиент 16 в /usr/bin, и он идёт в PATH раньше.
+          # Без этой строки pg_dump 16 упрётся в сервер 17 и упадёт.
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
+
+      - name: Версия pg_dump
+        run: pg_dump --version
 
       # 1. Up с нуля. Ловит поломанный порядок и забытые зависимости.
       - name: Up с чистой базы
