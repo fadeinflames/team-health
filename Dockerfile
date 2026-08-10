@@ -54,6 +54,12 @@ ENV NODE_ENV=production \
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY server.js ./
+# Миграции едут в том же образе, что и код, который их ожидает. Отдельный
+# образ для миграций рано или поздно разъедется по версиям.
+COPY migrations ./migrations
+COPY scripts ./scripts
+COPY fixtures ./fixtures
+COPY db ./db
 COPY --from=build /app/dist ./dist
 
 # Каталог нужен только для file-fallback без DATABASE_URL. В k8s его не будет:

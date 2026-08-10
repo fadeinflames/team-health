@@ -15,9 +15,18 @@
     "check": "vite build",
     "test": "playwright test",
     "test:smoke": "playwright test tests/smoke.spec.js",
-    "test:ui": "playwright test tests/ui-audit.spec.js"
+    "test:ui": "playwright test tests/ui-audit.spec.js",
+    "migrate": "node scripts/migrate.mjs up",
+    "migrate:status": "node scripts/migrate.mjs status",
+    "migrate:baseline": "node scripts/migrate.mjs baseline",
+    "migrate:new": "node scripts/migrate.mjs create",
+    "seed": "node scripts/seed.mjs",
+    "secrets": "node scripts/secrets.mjs init",
+    "secrets:check": "node scripts/secrets.mjs check",
+    "admin-password": "node scripts/admin-password.mjs rotate"
   },
   "dependencies": {
+    "node-pg-migrate": "^8.0.4",
     "pg": "^8.20.0"
   },
   "devDependencies": {

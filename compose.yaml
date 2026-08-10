@@ -1,23 +1,39 @@
 name: team-health
 x-postgres-credentials: &postgres-credentials
   POSTGRES_USER: ${POSTGRES_USER:-team_health}
-  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-team_health}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?задайте POSTGRES_PASSWORD — make env && make secrets}
   POSTGRES_DB: ${POSTGRES_DB:-team_health}
+# Фолбэков у секретов нет сознательно: рабочего значения в репозитории быть
+# не должно ни одного. Заполняет их make secrets.
 x-app-secrets: &app-secrets
-  ADMIN_USERNAME: ${ADMIN_USERNAME:-mgusev}
-  ADMIN_PASSWORD: ${ADMIN_PASSWORD:-passwb121}
+  ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+  ADMIN_PASSWORD: ${ADMIN_PASSWORD:?задайте ADMIN_PASSWORD — make env && make secrets}
   DEMO_USERNAME: ${DEMO_USERNAME:-demo}
   DEMO_PASSWORD: ${DEMO_PASSWORD:-demo}
-  SURVEY_RESPONSE_SECRET: ${SURVEY_RESPONSE_SECRET:-local-survey-secret}
+  SURVEY_RESPONSE_SECRET: ${SURVEY_RESPONSE_SECRET:?задайте SURVEY_RESPONSE_SECRET — make env && make secrets}
+x-dev-database: &dev-database
+  DATABASE_URL: postgres://${POSTGRES_USER:-team_health}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-team_health}
+  DATABASE_SSL: disable
+# Миграции и сидинг ходят в базу тем же кодом, что и приложение, поэтому им
+# нужны те же исходники. Bind-mount, а не пересборка образа на каждую правку.
+x-source-mounts: &source-mounts
+  - ./server.js:/app/server.js:ro
+  - ./migrations:/app/migrations:ro
+  - ./scripts:/app/scripts:ro
+  - ./fixtures:/app/fixtures:ro
+  - ./db:/app/db:ro
 services:
   # --- разработка (профиль по умолчанию) ---
   db:
     image: postgres:17-alpine
     environment: *postgres-credentials
+    # Дефолтные 64 МБ упираются в потолок на тяжёлых сортировках и хешах,
+    # и локальное окружение начинает вести себя не как боевое.
+    shm_size: 256mb
     ports:
-      # 5432 по умолчанию: на машине разработчика 5432 обычно уже занят
+      # 5433 по умолчанию: на машине разработчика 5432 обычно уже занят
       # другим локальным постгресом.
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_PORT:-5433}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -25,32 +41,67 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+  # Одноразовый сервис: применяет миграции и выходит. api не стартует, пока
+  # он не отработает с нулевым кодом — приложение больше не создаёт схему само.
+  migrate:
+    build:
+      context: .
+      target: dev
+    command: node scripts/migrate.mjs up
+    environment:
+      !!merge <<: *dev-database
+      APP_ENV: local
+      # Учётные данные админа нужны не миграциям, а `make admin-password`,
+      # который запускается в этом же контейнере: ротация помечает текущее
+      # значение ADMIN_PASSWORD как применённое, иначе рестарт её откатит.
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?задайте ADMIN_PASSWORD — make env && make secrets}
+    volumes: *source-mounts
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
   api:
     build:
       context: .
       target: dev
     command: node --watch server.js
     environment:
-      !!merge <<: *app-secrets
+      !!merge <<: [*app-secrets, *dev-database]
       APP_ENV: local
       PORT: 4173
-      DATABASE_URL: postgres://${POSTGRES_USER:-team_health}:${POSTGRES_PASSWORD:-team_health}@db:5432/${POSTGRES_DB:-team_health}
-      DATABASE_SSL: disable
     ports:
       - "${API_PORT:-4173}:4173"
-    volumes:
-      # Точечные mount'ы вместо всего каталога: так контейнерный node_modules
-      # не перекрывается хостовым, собранным под macOS.
-      - ./server.js:/app/server.js:ro
+    volumes: *source-mounts
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4173/healthz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4173/readyz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
+  # Демо-фикстуры. Профиль seed: запускается явно через `make seed`, а не
+  # каждым `up` — демо-люди больше не воскресают сами.
+  seed:
+    profiles: ["seed"]
+    build:
+      context: .
+      target: dev
+    command: node scripts/seed.mjs
+    environment:
+      !!merge <<: *dev-database
+      APP_ENV: local
+      DEMO_USERNAME: ${DEMO_USERNAME:-demo}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-demo}
+    volumes: *source-mounts
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
   web:
     build:
       context: .
@@ -77,17 +128,17 @@ services:
         VERSION: ${VERSION:-dev}
         GIT_SHA: ${GIT_SHA:-unknown}
     environment:
-      !!merge <<: *app-secrets
-      ADMIN_PASSWORD: ${PROD_ADMIN_PASSWORD:-change-me-locally}
+      !!merge <<: [*app-secrets, *dev-database]
+      ADMIN_PASSWORD: ${PROD_ADMIN_PASSWORD:?задайте PROD_ADMIN_PASSWORD — make env && make secrets}
       APP_ENV: production
       PORT: 4173
-      DATABASE_URL: postgres://${POSTGRES_USER:-team_health}:${POSTGRES_PASSWORD:-team_health}@db:5432/${POSTGRES_DB:-team_health}
-      DATABASE_SSL: disable
     ports:
       - "${PROD_PORT:-8080}:4173"
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
   # --- тесты: своя база и свой сервер, dev-данные не трогаются ---
   db-test:
     profiles: ["test"]
@@ -96,6 +147,7 @@ services:
       POSTGRES_USER: team_health
       POSTGRES_PASSWORD: team_health
       POSTGRES_DB: team_health_test
+    shm_size: 256mb
     # Данные тестов живут только в памяти: быстрее и не оставляет мусора между прогонами.
     tmpfs:
       - /var/lib/postgresql/data
@@ -104,6 +156,42 @@ services:
       interval: 3s
       timeout: 5s
       retries: 15
+  # Схема тестовой базы поднимается миграциями с нуля. Это и есть основная
+  # проверка того, что baseline и всё, что за ним, работают на пустой базе.
+  migrate-test:
+    profiles: ["test"]
+    build:
+      context: .
+      target: dev
+    command: node scripts/migrate.mjs up
+    environment:
+      APP_ENV: local
+      DATABASE_URL: postgres://team_health:team_health@db-test:5432/team_health_test
+      DATABASE_SSL: disable
+    volumes: *source-mounts
+    depends_on:
+      db-test:
+        condition: service_healthy
+    restart: "no"
+  # Smoke-тесты рассчитывают на демо-данные, поэтому сидинг для тестового
+  # профиля запускается сам — между миграциями и приложением.
+  seed-test:
+    profiles: ["test"]
+    build:
+      context: .
+      target: dev
+    command: node scripts/seed.mjs
+    environment:
+      APP_ENV: local
+      DATABASE_URL: postgres://team_health:team_health@db-test:5432/team_health_test
+      DATABASE_SSL: disable
+      DEMO_USERNAME: demo
+      DEMO_PASSWORD: demo
+    volumes: *source-mounts
+    depends_on:
+      migrate-test:
+        condition: service_completed_successfully
+    restart: "no"
   api-test:
     profiles: ["test"]
     build:
@@ -116,14 +204,15 @@ services:
       PORT: 4173
       DATABASE_URL: postgres://team_health:team_health@db-test:5432/team_health_test
       DATABASE_SSL: disable
-      ADMIN_USERNAME: mgusev
-      ADMIN_PASSWORD: passwb121
+      # Значения тестовые и одноразовые: база эфемерная, в tmpfs.
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: test-admin-password
       DEMO_USERNAME: demo
       DEMO_PASSWORD: demo
       SURVEY_RESPONSE_SECRET: test-survey-secret
     depends_on:
-      db-test:
-        condition: service_healthy
+      seed-test:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4173/readyz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 5s
@@ -137,8 +226,8 @@ services:
       target: test
     environment:
       BASE_URL: http://api-test:4173
-      ADMIN_USERNAME: mgusev
-      ADMIN_PASSWORD: passwb121
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: test-admin-password
       DEMO_USERNAME: demo
       DEMO_PASSWORD: demo
     volumes:

@@ -1,8 +1,11 @@
 import { expect, test } from "@playwright/test";
 
 const baseURL = process.env.BASE_URL || "http://127.0.0.1:4173";
-const adminUsername = process.env.ADMIN_USERNAME || "mgusev";
-const adminPassword = process.env.ADMIN_PASSWORD || "passwb121";
+const adminUsername = process.env.ADMIN_USERNAME || "admin";
+// Без фолбэка: пароля по умолчанию не существует, и тест, который его
+// придумывает, проверяет не то приложение, которое поедет в прод.
+const adminPassword = process.env.ADMIN_PASSWORD;
+if (!adminPassword) throw new Error("ADMIN_PASSWORD обязателен для запуска тестов");
 
 async function loginAsAdmin(page) {
   await page.goto(baseURL);
