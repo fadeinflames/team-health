@@ -13,12 +13,12 @@ jobs:
     name: Секреты
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # gitleaks смотрит на историю, а не только на срез рабочего дерева.
           fetch-depth: 0
       - name: gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # Отдельная проверка: рабочих значений из старых дефолтов в дереве быть
@@ -38,8 +38,8 @@ jobs:
     name: Сборка
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -65,8 +65,8 @@ jobs:
       DATABASE_SSL: disable
       APP_ENV: local
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -148,6 +148,6 @@ jobs:
       SURVEY_RESPONSE_SECRET: ci-survey-secret
       PROD_ADMIN_PASSWORD: ci-prod-admin-password
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: make test-docker
         run: make test-docker
