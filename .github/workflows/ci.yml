@@ -28,24 +28,12 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # Отдельная проверка: рабочих значений из старых дефолтов в дереве быть
-      # не должно. Законные места ровно два: блок-листы скомпрометированных
-      # значений в server.js и scripts/secrets.mjs (они обязаны содержать сами
-      # значения, чтобы их запрещать). Исключаем эти файлы целиком через
-      # --exclude, а не фильтруем строки: прежний фильтр знал только server.js,
-      # и шаг падал сам на scripts/secrets.mjs. --exclude у grep сравнивает
-      # имя файла, а не путь, поэтому в других каталогах файлы с такими именами
-      # не заводим. Каталоги plans и .github (здесь же лежат сами шаблоны
-      # поиска) исключены и раньше.
+      # Отдельная проверка: скомпрометированные значения из старых дефолтов не
+      # должны вернуться ни в дерево, ни в историю. Сами значения в репозитории
+      # не хранятся: lib/burned-secrets.js содержит только их sha256, а
+      # scripts/check-burned.mjs хеширует слова файлов и сравнивает.
       - name: Сожжённые значения не вернулись
-        run: |
-          if grep -rn --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=plans \
-                --exclude-dir=.github \
-                --exclude=server.js --exclude=secrets.mjs \
-                -e 'passwb121' -e 'mgusev' .; then
-            echo "::error::В рабочем дереве снова есть скомпрометированные значения"
-            exit 1
-          fi
+        run: node scripts/check-burned.mjs
 
   build:
     name: Сборка
@@ -95,6 +83,11 @@ jobs:
       DATABASE_URL: postgres://team_health:team_health@127.0.0.1:5432/team_health
       DATABASE_SSL: disable
       APP_ENV: local
+      # На раннере уже есть pg_dump 16, и /usr/bin/pg_dump выбирает его, а не
+      # только что поставленный 17: pg_dump отказывается снимать дамп с более
+      # нового сервера. Путь к нужному бинарю задаём явно (его читает
+      # scripts/schema-dump.sh).
+      PGDUMP: /usr/lib/postgresql/17/bin/pg_dump
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -170,7 +163,7 @@ jobs:
         run: |
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "create database team_health_test"
           DATABASE_URL="$TEST_DATABASE_URL" node scripts/migrate.mjs up
-          node --test "tests/integration/*.test.mjs"
+          node --test --test-concurrency=1 "tests/integration/*.test.mjs"
 
   e2e:
     name: E2E

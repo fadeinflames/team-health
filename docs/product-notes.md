@@ -32,7 +32,8 @@ The schema is created by SQL migrations (`migrations/`), not by the application;
 - `competency_assessments`: structured case-interview reports with competency scores, grade, evidence, recommendations, and LPR-importable growth actions.
 - `surveys`: survey templates and live team surveys.
 - `survey_responses`: scoped or anonymous answers.
-- `manager_notes`: private manager note history.
+- `manager_notes`: private manager note history; each note remembers its author (`author_user_id`), and a regular lead sees only their own notes and notes without an author.
+- `audit_log`: audit trail of role, account and private-data actions (see `docs/adr/0005-privacy-model.md`).
 - `oncall_load`: optional Ops/on-call domain signal table.
 - `meeting_log`: generated 1:1 summaries and meeting history.
 - `meeting_drafts`: live shared protocol text for the current 1:1 by person.

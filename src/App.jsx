@@ -1093,6 +1093,17 @@ class ApiError extends Error {
   }
 }
 
+// Порог анонимности: ниже 3 ответов по одному вопросу личность респондента вычисляется
+// почти напрямую, поэтому сервер режет значение до 3..10, а UI не даёт выбрать меньше.
+const ANONYMOUS_MIN_RESPONSES = 3;
+const ANONYMOUS_MAX_RESPONSES = 10;
+
+function clampAnonymousMin(value) {
+  const number = Math.round(Number(value));
+  if (!Number.isFinite(number)) return ANONYMOUS_MIN_RESPONSES;
+  return Math.min(ANONYMOUS_MAX_RESPONSES, Math.max(ANONYMOUS_MIN_RESPONSES, number));
+}
+
 async function apiFetch(path, options = {}) {
   let response;
   try {
@@ -1243,6 +1254,7 @@ export default function App() {
     title: "",
     description: "",
     anonymous: false,
+    anonymousMinResponses: ANONYMOUS_MIN_RESPONSES,
     questions: [emptyQuestionFor("scale")]
   });
   const [theme, setTheme] = useState(() => (typeof window !== "undefined" ? readStoredTheme() : "system"));
@@ -3282,6 +3294,7 @@ export default function App() {
       title: "",
       description: "",
       anonymous: false,
+      anonymousMinResponses: ANONYMOUS_MIN_RESPONSES,
       questions: [emptyQuestionFor("scale")]
     });
     setShowSurveyComposer(false);
@@ -3297,6 +3310,7 @@ export default function App() {
     }));
     setSurveyComposer({
       ...template.survey,
+      anonymousMinResponses: clampAnonymousMin(template.survey.anonymousMinResponses),
       questions: reKeyed.length ? reKeyed : [emptyQuestionFor("scale")]
     });
     setShowSurveyComposer(true);
@@ -3316,6 +3330,8 @@ export default function App() {
       title: `${survey.title} (копия)`,
       description: survey.description,
       anonymous: survey.anonymous,
+      // В старых опросах порог мог быть 2: копия создаётся уже с допустимым минимумом.
+      anonymousMinResponses: clampAnonymousMin(survey.anonymousMinResponses),
       questions: reKeyed
     });
     setShowSurveyComposer(true);
@@ -3348,7 +3364,7 @@ export default function App() {
           title: surveyComposer.title.trim(),
           description: surveyComposer.description.trim(),
           anonymous: surveyComposer.anonymous,
-          anonymousMinResponses: 3,
+          anonymousMinResponses: clampAnonymousMin(surveyComposer.anonymousMinResponses),
           questions: cleanedQuestions
         })
       });
@@ -3371,7 +3387,9 @@ export default function App() {
       for (const q of survey.questions) {
         const stats = survey.aggregate?.perQuestion?.[q.id];
         if (!stats) continue;
-        if (q.type === "scale") {
+        if (stats.hidden) {
+          rows.push([`${q.prompt}: недостаточно ответов для показа (нужно не меньше ${stats.minResponses}, сейчас ${stats.count})`]);
+        } else if (q.type === "scale") {
           rows.push([`${q.prompt}: среднее ${stats.avg} (n=${stats.count})`]);
         } else if (q.type === "single" || q.type === "multi") {
           for (const item of stats.distribution || []) {
@@ -3810,6 +3828,12 @@ export default function App() {
       if (response.workspace) adoptServerWorkspace(response.workspace);
       setUserMessage("Заметка удалена");
     } catch (error) {
+      // 404 сервер отдаёт и для чужой заметки (не раскрывает её существование), и для уже
+      // удалённой: остаёмся в разделе и просто объясняем, что с этой заметкой ничего не сделать.
+      if (error?.status === 404) {
+        setUserError("Заметка не найдена или недоступна: удалить её может только автор или администратор платформы");
+        return;
+      }
       setUserError(error.message);
     }
   }
@@ -5891,9 +5915,37 @@ export default function App() {
                   />
                   <span>
                     <strong>Анонимный</strong>
-                    <small>Агрегаты откроются после 3 ответов, авторы не раскрываются</small>
+                    <small>
+                      Агрегаты откроются после {clampAnonymousMin(surveyComposer.anonymousMinResponses)} ответов, авторы не
+                      раскрываются
+                    </small>
                   </span>
                 </label>
+                {surveyComposer.anonymous && (
+                  <label>
+                    Минимум ответов для показа результатов
+                    <input
+                      type="number"
+                      min={ANONYMOUS_MIN_RESPONSES}
+                      max={ANONYMOUS_MAX_RESPONSES}
+                      step={1}
+                      value={surveyComposer.anonymousMinResponses ?? ANONYMOUS_MIN_RESPONSES}
+                      onChange={(event) =>
+                        setSurveyComposer((c) => ({ ...c, anonymousMinResponses: event.target.value }))
+                      }
+                      onBlur={() =>
+                        setSurveyComposer((c) => ({
+                          ...c,
+                          anonymousMinResponses: clampAnonymousMin(c.anonymousMinResponses)
+                        }))
+                      }
+                    />
+                    <small>
+                      Не меньше {ANONYMOUS_MIN_RESPONSES}: при двух ответах один респондент легко вычисляет ответ другого.
+                      Порог действует и на каждый вопрос отдельно.
+                    </small>
+                  </label>
+                )}
 
                 <div className="composer-questions">
                   {surveyComposer.questions.map((question, qIndex) => (
@@ -6197,7 +6249,15 @@ export default function App() {
                                 <span className="goal-chip muted">{surveyQuestionTypeLabel[question.type]}</span>
                                 <h4>{question.prompt}</h4>
                               </header>
-                              {!stats || stats.count === 0 ? (
+                              {stats?.hidden ? (
+                                <div className="empty-state compact-empty">
+                                  <LockKeyhole size={18} />
+                                  <span>
+                                    Недостаточно ответов для показа этого вопроса (нужно не меньше {stats.minResponses}).
+                                    Сейчас: {stats.count}.
+                                  </span>
+                                </div>
+                              ) : !stats || stats.count === 0 ? (
                                 <div className="empty-state compact-empty">
                                   <span>Ответов пока нет.</span>
                                 </div>

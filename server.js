@@ -32,6 +32,7 @@ import {
 import { HttpError } from "./lib/http-error.js";
 import { readJson } from "./lib/read-json.js";
 import { clientAddress as resolveClientAddress } from "./lib/client-address.js";
+import { isBurnedSecret } from "./lib/burned-secrets.js";
 import { syncWorkspace, snapshotRows, VersionConflictError } from "./db/repositories/workspace.js";
 import {
   findSessionUser,
@@ -39,6 +40,7 @@ import {
   createSession,
   deleteSession,
   deleteOtherSessions,
+  hashSessionToken,
   updateUserName,
   updateUserPassword
 } from "./db/repositories/auth.js";
@@ -92,16 +94,7 @@ let surveySecretVersion = 1;
 // Значения, которые успели утечь или никогда не были секретом. Держать
 // скомпрометированный пароль в коде ради его запрета нормально: это
 // блок-лист, а не секрет.
-const BURNED_SECRETS = new Set([
-  "passwb121",
-  "admin",
-  "password",
-  "changeme",
-  "change-me-locally",
-  "local-survey-secret",
-  "test-survey-secret",
-  "demo"
-]);
+
 
 let pgPool = null;
 const failedLogins = new Map();
@@ -424,7 +417,7 @@ function normalizeDb(rawDb = {}) {
     surveyResponses: [],
     managerNotes: Array.isArray(rawDb.managerNotes)
       ? rawDb.managerNotes
-          .map((note) => sanitizeManagerNote(note, personIds))
+          .map((note) => sanitizeManagerNote(note, personIds, new Set(users.map((user) => String(user.id)))))
           .filter(Boolean)
       : [],
     oncallLoad: Array.isArray(rawDb.oncallLoad)
@@ -645,7 +638,7 @@ function poolSslOption() {
 
 // Последняя миграция, на которую рассчитывает этот код. Поднимается вместе
 // с миграцией, добавляющей то, что код начал использовать.
-const EXPECTED_SCHEMA = "0026_pulse_as_view";
+const EXPECTED_SCHEMA = "0029_surveys_owner_without_fk";
 
 let schemaReady = false;
 
@@ -822,6 +815,11 @@ async function ensureAdminAccounts() {
     await ensureAdminPassword(client);
     await ensureSurveySecretVersion(client);
     await client.query("delete from sessions where expires_at < now()");
+    // Сессии, заведённые до перехода на хэши токенов, лежат в базе сырым
+    // значением cookie и всё равно уже не сопоставятся (ищется sha256 от
+    // cookie). Хранить чужие сырые токены незачем: чистим их сразу, а не ждём
+    // четырнадцать суток до истечения. Хэш — ровно 64 hex-символа.
+    await client.query("delete from sessions where id !~ '^[0-9a-f]{64}$'");
     await client.query("commit");
   } catch (error) {
     releaseError = await rollbackQuietly(client);
@@ -1116,6 +1114,7 @@ async function readDb(options = {}) {
             person_id as "personId",
             body,
             tags,
+            author_user_id as "authorUserId",
             created_at as "createdAt"
           from manager_notes
           ${scope}
@@ -1423,6 +1422,12 @@ async function deletePersonById(personId) {
       await client.query("BEGIN");
       await client.query("delete from sessions where user_id in (select id from users where person_id = $1)", [personId]);
       await client.query("delete from users where person_id = $1", [personId]);
+      // Именные ответы на опросы удаляются вместе с человеком. FK
+      // survey_responses.person_id — on delete set null: без явного удаления
+      // ответ остался бы в базе обезличенным, но с полным текстом, то есть
+      // «постоянное удаление» ничего бы не удаляло. Анонимные ответы с
+      // person_id не связаны и не затрагиваются.
+      await client.query("delete from survey_responses where person_id = $1", [personId]);
       await client.query("delete from people where id = $1", [personId]);
       await client.query("COMMIT");
     } catch (error) {
@@ -1456,6 +1461,37 @@ async function deletePersonById(personId) {
   await writeDb(db);
   return readDb();
 }
+
+// Журнал аудита: кто что сделал с учётками, людьми и опросами. Пишется после
+// успешной операции и «по возможности»: сбой журнала (недоступна таблица,
+// таймаут) логируется, но не должен откатывать и ронять уже выполненное
+// действие — пользователь не виноват, что журнал недоступен. Содержимое
+// заметок, ответов и пароли сюда не попадают, только идентификаторы и
+// метаданные. В файловом режиме журнала нет: это режим локальной разработки.
+async function recordAudit(actor, action, targetType = null, targetId = null, details = {}) {
+  if (storageMode !== "postgres" || !pgPool) return;
+  try {
+    await pgPool.query(
+      `
+        insert into audit_log (actor_user_id, actor_username, action, target_type, target_id, details)
+        values ($1, $2, $3, $4, $5, $6::jsonb)
+      `,
+      [
+        actor?.id || null,
+        actor?.username || null,
+        action,
+        targetType,
+        targetId == null ? null : String(targetId),
+        JSON.stringify(details || {})
+      ]
+    );
+  } catch (error) {
+    console.error(`Не удалось записать в журнал аудита (${action}):`, error.message);
+  }
+}
+
+const AUDIT_DEFAULT_LIMIT = 100;
+const AUDIT_MAX_LIMIT = 500;
 
 function publicUser(user) {
   return {
@@ -1509,9 +1545,9 @@ function validateProductionSecrets() {
   if (appEnv !== "local") {
     if (!adminPassword) fail("ADMIN_PASSWORD обязателен вне local. Отказываюсь стартовать без пароля администратора.");
     if (adminPassword.length < 12) fail("ADMIN_PASSWORD короче 12 символов.");
-    if (BURNED_SECRETS.has(adminPassword)) fail("ADMIN_PASSWORD входит в список скомпрометированных значений.");
+    if (isBurnedSecret(adminPassword)) fail("ADMIN_PASSWORD входит в список скомпрометированных значений.");
     if (!surveyResponseSecret) fail("SURVEY_RESPONSE_SECRET обязателен вне local.");
-    if (BURNED_SECRETS.has(surveyResponseSecret)) fail("SURVEY_RESPONSE_SECRET входит в список скомпрометированных значений.");
+    if (isBurnedSecret(surveyResponseSecret)) fail("SURVEY_RESPONSE_SECRET входит в список скомпрометированных значений.");
     if (surveyResponseSecret === adminPassword) {
       fail("SURVEY_RESPONSE_SECRET не может совпадать с ADMIN_PASSWORD: это делает анонимность опросов фиктивной.");
     }
@@ -1817,8 +1853,18 @@ function surveyOwner(db, survey) {
   return db.users.find((user) => user.id === survey.ownerUserId) || null;
 }
 
+// Владелец указан, а такой учётки уже нет: лид удалён. Раньше такой опрос
+// выпадал в ветку «без владельца» и становился доступен всей организации,
+// хотя создавался для одной команды. Теперь аудитория пуста, опрос видит и
+// ведёт только администратор платформы. Опрос, у которого владельца не было
+// вовсе (старые данные), работает как раньше.
+function isOrphanSurvey(db, survey) {
+  return Boolean(survey?.ownerUserId) && !surveyOwner(db, survey);
+}
+
 function surveyAudiencePersonIds(db, survey) {
   if (survey?.isDemoSeed) return new Set(["demo-sre"]);
+  if (isOrphanSurvey(db, survey)) return new Set();
   const owner = surveyOwner(db, survey);
   if (!owner || isPlatformAdmin(owner)) {
     return new Set(
@@ -1846,6 +1892,9 @@ function canAccessSurvey(db, user, survey) {
   const audienceIds = surveyAudiencePersonIds(db, survey);
   if (isAdmin(user)) {
     if (isPlatformAdmin(user)) return true;
+    // Сиротский опрос не открывается и бывшим коллегам владельца: пустая
+    // аудитория уже отсекает их, а явная проверка страхует от правки выше.
+    if (isOrphanSurvey(db, survey)) return false;
     return survey.ownerUserId === user.id || hasAnyPersonId(scopedPersonIds(db, user), audienceIds);
   }
 
@@ -1855,6 +1904,7 @@ function canAccessSurvey(db, user, survey) {
 function canManageSurvey(db, user, survey) {
   if (!survey || survey.isTemplate || !isAdmin(user)) return false;
   if (isPlatformAdmin(user)) return !survey.isDemoSeed;
+  if (isOrphanSurvey(db, survey)) return false;
   return survey.ownerUserId === user.id;
 }
 
@@ -1873,8 +1923,31 @@ function surveyRespondentHash(user, survey) {
     .digest("hex");
 }
 
+// Оценочные тексты лида о человеке. Участнику они не отдаются: это не данные
+// о нём для него, а рабочие формулировки руководителя (performance review,
+// план роста), и их утечка в ответ GET/POST — прямая цена за то, что person
+// отдавался целиком. managerFocus остаётся: он показывается в общем виде
+// встречи.
+function withoutLeadNarratives(person) {
+  const { performanceNarrative, growthNarrative, ...rest } = person;
+  return rest;
+}
+
+// Приватная заметка лида видна автору и администратору платформы. Заметка без
+// автора (создана до появления author_user_id) считается общей для лидов
+// скоупа — так было раньше, и молча прятать старые записи нельзя. Скоуп по
+// человеку проверяет вызывающий код.
+function canAccessManagerNote(user, note) {
+  if (isPlatformAdmin(user)) return true;
+  return !note.authorUserId || note.authorUserId === user.id;
+}
+
 function scopeWorkspace(db, user) {
   const ids = scopedPersonIds(db, user);
+  // Права лида на оценочные данные. Демо-пользователь исключён явно: он
+  // работает с лидовым демо-контентом как участник и не должен видеть
+  // черновики оценок и нарративы, даже если его роль когда-нибудь поменяют.
+  const seesLeadData = isAdmin(user) && !isDemoUser(user);
   const pickObject = (source) =>
     Object.fromEntries(Object.entries(source || {}).filter(([personId]) => ids.has(personId)));
 
@@ -1933,12 +2006,17 @@ function scopeWorkspace(db, user) {
   });
 
   return {
-    people: db.people.filter((person) => ids.has(person.id)),
+    people: db.people
+      .filter((person) => ids.has(person.id))
+      .map((person) => (seesLeadData ? person : withoutLeadNarratives(person))),
     lprs: (db.lprs || []).filter((lpr) => ids.has(lpr.personId)),
     cards: db.cards.filter((card) => ids.has(card.personId)),
     actions: db.actions.filter((action) => ids.has(action.personId)),
     goals: (db.goals || []).filter((goal) => ids.has(goal.personId)),
-    competencyAssessments: (db.competencyAssessments || []).filter((assessment) => ids.has(assessment.personId)),
+    // Участник видит только утверждённые оценки: черновик — рабочий материал лида.
+    competencyAssessments: (db.competencyAssessments || []).filter(
+      (assessment) => ids.has(assessment.personId) && (seesLeadData || assessment.status === "validated")
+    ),
     prep: pickObject(db.prep),
     pulse: pickObject(db.pulse),
     pulseHistory: (db.pulseHistory || []).filter((entry) => ids.has(entry.personId)),
@@ -1948,12 +2026,12 @@ function scopeWorkspace(db, user) {
       title: s.title,
       description: s.description,
       anonymous: s.anonymous,
-      anonymousMinResponses: s.anonymousMinResponses,
+      anonymousMinResponses: surveyMinResponses(s),
       questions: s.questions
     })),
     notes: isAdmin(user) ? pickObject(db.notes) : {},
     managerNotes: isAdmin(user)
-      ? (db.managerNotes || []).filter((note) => ids.has(note.personId))
+      ? (db.managerNotes || []).filter((note) => ids.has(note.personId) && canAccessManagerNote(user, note))
       : [],
     oncallLoad: (db.oncallLoad || []).filter((entry) => ids.has(entry.personId)),
     meetingLog: (db.meetingLog || []).filter((entry) => ids.has(entry.personId)),
@@ -1974,29 +2052,49 @@ function scopeWorkspace(db, user) {
   };
 }
 
+// Эффективный порог анонимного опроса. Меньше трёх не бывает: при двух
+// ответах каждый респондент знает, что второй — это все остальные, и по
+// своему ответу вычитает чужой. Math.max нужен для опросов, сохранённых до
+// ужесточения (порог 2 в базе): sanitizeSurvey их тоже поднимет, но агрегат
+// не должен зависеть от того, что чтение уже прошло через нормализацию.
+function surveyMinResponses(survey) {
+  return Math.max(3, Number(survey?.anonymousMinResponses) || 3);
+}
+
 function buildSurveyAggregate(survey, responses) {
   const totals = { count: responses.length, perQuestion: {} };
-  if (survey.anonymous && responses.length < (survey.anonymousMinResponses || 3)) {
+  const minResponses = surveyMinResponses(survey);
+  if (survey.anonymous && responses.length < minResponses) {
     return {
       ...totals,
       hidden: true,
-      minResponses: survey.anonymousMinResponses || 3
+      minResponses
     };
   }
+  // Общего порога мало. Вопрос необязательный, и на него могли ответить двое
+  // из десяти: распределение по двум ответам раскрывает их так же, как
+  // опрос из двух человек. Поэтому порог проверяется на каждый вопрос по
+  // числу ответивших именно на него, для всех типов вопросов.
+  const setQuestion = (question, count, build) => {
+    totals.perQuestion[question.id] =
+      survey.anonymous && count < minResponses ? { count, hidden: true, minResponses } : build();
+  };
   for (const question of survey.questions) {
     if (question.type === "scale") {
       const values = responses
         .map((response) => response.answers?.[question.id]?.value)
         .filter((value) => typeof value === "number");
-      const distribution = Array.from({ length: 10 }, (_, i) => ({ label: String(i + 1), value: 0 }));
-      values.forEach((v) => {
-        if (v >= 1 && v <= 10) distribution[v - 1].value += 1;
+      setQuestion(question, values.length, () => {
+        const distribution = Array.from({ length: 10 }, (_, i) => ({ label: String(i + 1), value: 0 }));
+        values.forEach((v) => {
+          if (v >= 1 && v <= 10) distribution[v - 1].value += 1;
+        });
+        return {
+          count: values.length,
+          avg: values.length ? +(values.reduce((a, b) => a + b, 0) / values.length).toFixed(1) : 0,
+          distribution
+        };
       });
-      totals.perQuestion[question.id] = {
-        count: values.length,
-        avg: values.length ? +(values.reduce((a, b) => a + b, 0) / values.length).toFixed(1) : 0,
-        distribution
-      };
     } else if (question.type === "single") {
       const counts = Object.fromEntries(question.options.map((option) => [option, 0]));
       let answered = 0;
@@ -2007,10 +2105,10 @@ function buildSurveyAggregate(survey, responses) {
           answered += 1;
         }
       }
-      totals.perQuestion[question.id] = {
+      setQuestion(question, answered, () => ({
         count: answered,
         distribution: question.options.map((option) => ({ label: option, value: counts[option] || 0 }))
-      };
+      }));
     } else if (question.type === "multi") {
       const counts = Object.fromEntries(question.options.map((option) => [option, 0]));
       let answered = 0;
@@ -2023,29 +2121,29 @@ function buildSurveyAggregate(survey, responses) {
           }
         }
       }
-      totals.perQuestion[question.id] = {
+      setQuestion(question, answered, () => ({
         count: answered,
         distribution: question.options.map((option) => ({ label: option, value: counts[option] || 0 }))
-      };
+      }));
     } else if (question.type === "text") {
       const texts = responses
         .map((response) => response.answers?.[question.id]?.value)
         .filter((value) => typeof value === "string" && value.length);
-      totals.perQuestion[question.id] = {
+      setQuestion(question, texts.length, () => ({
         count: texts.length,
         redacted: survey.anonymous,
         samples: survey.anonymous ? [] : texts.slice(0, 30)
-      };
+      }));
     } else if (question.type === "date") {
       const dates = responses
         .map((response) => response.answers?.[question.id]?.value)
         .filter((value) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value))
         .sort();
-      totals.perQuestion[question.id] = {
+      setQuestion(question, dates.length, () => ({
         count: dates.length,
         redacted: survey.anonymous,
         samples: survey.anonymous ? [] : dates.slice(0, 30)
-      };
+      }));
     }
   }
   return totals;
@@ -2115,9 +2213,11 @@ function sanitizeSurvey(survey, users = []) {
     .map((q, i) => sanitizeSurveyQuestion(q, `q${i + 1}`))
     .filter((q) => q.prompt.length > 0);
   const id = String(survey?.id || makeId("survey"));
-  const ownerUserId = survey?.ownerUserId && users.some((user) => user.id === survey.ownerUserId)
-    ? String(survey.ownerUserId)
-    : null;
+  // Владелец сохраняется, даже если такой учётки уже нет: «владелец указан,
+  // но не найден» — это сиротский опрос (см. isOrphanSurvey), а не опрос без
+  // владельца. Раньше id молча обнулялся, и опрос удалённого лида открывался
+  // всей организации. Параметр users оставлен ради вызывающих.
+  const ownerUserId = survey?.ownerUserId ? String(survey.ownerUserId).slice(0, 128) : null;
   return {
     id,
     title: String(survey?.title || "").slice(0, 200),
@@ -2129,7 +2229,8 @@ function sanitizeSurvey(survey, users = []) {
     isDemoSeed: Boolean(survey?.isDemoSeed) || demoSeedSurveyIds.has(id),
     isTemplate: Boolean(survey?.isTemplate),
     ownerUserId,
-    anonymousMinResponses: clampInt(survey?.anonymousMinResponses, 2, 10, 3),
+    // Нижняя граница 3, а не 2: см. surveyMinResponses.
+    anonymousMinResponses: clampInt(survey?.anonymousMinResponses, 3, 10, 3),
     createdAt:
       typeof survey?.createdAt === "string" && survey.createdAt
         ? survey.createdAt
@@ -2225,7 +2326,11 @@ const managerNoteTags = [
   "decision"
 ];
 
-function sanitizeManagerNote(note, personIds) {
+// userIds — известные учётки: автор, которого уже нет, обнуляется (в postgres
+// то же делает FK on delete set null), и заметка становится общей для лидов
+// скоупа. Без набора (вызов из обработчика, где автор — текущий пользователь)
+// значение берётся как есть.
+function sanitizeManagerNote(note, personIds, userIds = null) {
   if (!note || !personIds.has(note.personId)) return null;
   const tags = Array.isArray(note.tags)
     ? note.tags
@@ -2240,6 +2345,10 @@ function sanitizeManagerNote(note, personIds) {
     personId: String(note.personId),
     body,
     tags,
+    authorUserId:
+      typeof note.authorUserId === "string" && note.authorUserId && (!userIds || userIds.has(note.authorUserId))
+        ? note.authorUserId
+        : null,
     createdAt:
       typeof note.createdAt === "string" && note.createdAt
         ? note.createdAt
@@ -2814,7 +2923,57 @@ async function handleApi(request, response) {
       );
       await writeDb(context.db);
     }
+    await recordAudit(context.user, "user.password_change", "user", context.user.id);
     sendJson(response, 200, { ok: true });
+    return;
+  }
+
+  // Журнал аудита читает только администратор платформы. Рабочее пространство
+  // не нужно, поэтому базу целиком не читаем. Пагинация по убыванию id:
+  // before — id последней записи предыдущей страницы.
+  if (request.method === "GET" && url.pathname === "/api/audit-log") {
+    const context = await requireAuth(request, response, { withDb: false });
+    if (!context) return;
+    if (!isPlatformAdmin(context.user)) {
+      sendJson(response, 403, { error: "Журнал аудита доступен только администратору платформы" });
+      return;
+    }
+    if (storageMode !== "postgres") {
+      sendJson(response, 200, { entries: [] });
+      return;
+    }
+    const rawLimit = Number(url.searchParams.get("limit"));
+    const limit = Number.isFinite(rawLimit) && rawLimit >= 1
+      ? Math.min(Math.floor(rawLimit), AUDIT_MAX_LIMIT)
+      : AUDIT_DEFAULT_LIMIT;
+    const rawBefore = url.searchParams.get("before");
+    if (rawBefore !== null && rawBefore !== "" && !/^\d{1,18}$/.test(rawBefore)) {
+      sendJson(response, 400, { error: "Некорректный параметр before" });
+      return;
+    }
+    const { rows } = await pgPool.query(
+      `
+        select id, at, actor_user_id, actor_username, action, target_type, target_id, details
+        from audit_log
+        where ($1::bigint is null or id < $1::bigint)
+        order by id desc
+        limit $2
+      `,
+      [rawBefore ? rawBefore : null, limit]
+    );
+    sendJson(response, 200, {
+      entries: rows.map((row) => ({
+        // bigserial приходит строкой; до 2^53 записей это безопасное число.
+        id: Number(row.id),
+        at: row.at instanceof Date ? row.at.toISOString() : row.at,
+        actorUserId: row.actor_user_id,
+        actorUsername: row.actor_username,
+        action: row.action,
+        targetType: row.target_type,
+        targetId: row.target_id,
+        details: row.details && typeof row.details === "object" ? row.details : {}
+      }))
+    });
     return;
   }
 
@@ -2964,6 +3123,11 @@ async function handleApi(request, response) {
 
       context.db.users.push(user);
       await writeDb(context.db);
+      await recordAudit(context.user, "user.create", "user", user.id, {
+        username: user.username,
+        role: user.role,
+        personId: user.personId
+      });
       sendJson(response, 201, {
         user: publicUser(user),
         person: person || null,
@@ -3050,6 +3214,12 @@ async function handleApi(request, response) {
 
     context.db.users.push(user);
     await writeDb(context.db);
+    await recordAudit(context.user, "user.create", "user", user.id, {
+      username: user.username,
+      role: user.role,
+      personId: user.personId,
+      leadUserId: user.leadUserId
+    });
     // Return only what the caller needs: the freshly created user + person, plus
     // the scoped workspace. The duplicate `users` top-level array used to leak
     // the full directory into every create response and is not needed by the UI.
@@ -3096,6 +3266,8 @@ async function handleApi(request, response) {
     Object.assign(targetUser, await hashPassword(password));
     context.db.sessions = context.db.sessions.filter((session) => session.userId !== targetUser.id);
     await writeDb(context.db);
+    // В журнал идёт только id цели: ни пароль, ни его хэш туда не попадают.
+    await recordAudit(context.user, "user.password_reset", "user", targetUser.id, { username: targetUser.username });
     sendJson(response, 200, { user: publicUser(targetUser), users: scopedUsers(context.db, context.user) });
     return;
   }
@@ -3118,6 +3290,7 @@ async function handleApi(request, response) {
       return;
     }
     const body = await readJson(request);
+    const previousRole = target.role;
     if (["platform_admin", "lead", "employee"].includes(body.role)) {
       target.role = body.role;
     }
@@ -3133,6 +3306,13 @@ async function handleApi(request, response) {
       target.teamLabel = body.teamLabel.slice(0, 120);
     }
     await writeDb(context.db);
+    if (target.role !== previousRole) {
+      await recordAudit(context.user, "user.role_change", "user", target.id, {
+        username: target.username,
+        from: previousRole,
+        to: target.role
+      });
+    }
     const refreshed = await readDb();
     sendJson(response, 200, {
       user: publicUser(refreshed.users.find((u) => u.id === target.id)),
@@ -3169,6 +3349,12 @@ async function handleApi(request, response) {
     context.db.users = context.db.users.filter((item) => item.id !== targetUser.id);
     context.db.sessions = context.db.sessions.filter((session) => session.userId !== targetUser.id);
     await writeDb(context.db);
+    // Запись об удалении переживает пользователя: в audit_log нет внешних
+    // ключей, поэтому логин и роль фиксируются в details.
+    await recordAudit(context.user, "user.delete", "user", targetUser.id, {
+      username: targetUser.username,
+      role: targetUser.role
+    });
     sendJson(response, 200, { users: scopedUsers(context.db, context.user) });
     return;
   }
@@ -3315,20 +3501,30 @@ async function handleApi(request, response) {
     // goals, notes, oncall_load) so admin can fully restore them later. Linked
     // user accounts are removed because logins should not survive archiving.
     const permanent = url.searchParams.get("permanent") === "1";
+    // Учётки, которые уйдут вместе с человеком, считаем до удаления: после
+    // него их уже не назвать.
+    const removedUserIds = new Set(
+      context.db.users.filter((u) => u.personId === personId).map((u) => u.id)
+    );
     if (permanent) {
       const nextDb = await deletePersonById(personId);
+      await recordAudit(context.user, "person.delete_permanent", "person", personId, {
+        name: targetPerson.name,
+        removedUserIds: [...removedUserIds]
+      });
       sendJson(response, 200, { workspace: scopeWorkspace(nextDb, context.user) });
       return;
     }
 
     targetPerson.archivedAt = new Date().toISOString();
     // Remove logins linked to archived person so they can't sign in anymore.
-    const removedUserIds = new Set(
-      context.db.users.filter((u) => u.personId === personId).map((u) => u.id)
-    );
     context.db.users = context.db.users.filter((u) => u.personId !== personId);
     context.db.sessions = context.db.sessions.filter((s) => !removedUserIds.has(s.userId));
     await writeDb(context.db);
+    await recordAudit(context.user, "person.archive", "person", personId, {
+      name: targetPerson.name,
+      removedUserIds: [...removedUserIds]
+    });
     const refreshed = await readDb();
     sendJson(response, 200, { workspace: scopeWorkspace(refreshed, context.user) });
     return;
@@ -3350,6 +3546,7 @@ async function handleApi(request, response) {
     }
     target.archivedAt = null;
     await writeDb(context.db, { replaceAuth: false });
+    await recordAudit(context.user, "person.restore", "person", personId, { name: target.name });
     const refreshed = await readDb();
     sendJson(response, 200, { workspace: scopeWorkspace(refreshed, context.user) });
     return;
@@ -3421,6 +3618,9 @@ async function handleApi(request, response) {
         personId: body.personId,
         body: body.body,
         tags: body.tags,
+        // Автор берётся из сессии, а не из тела запроса: иначе заметку можно
+        // было бы записать от чужого имени.
+        authorUserId: context.user.id,
         createdAt: new Date().toISOString()
       },
       ids
@@ -3447,12 +3647,16 @@ async function handleApi(request, response) {
     const noteId = safeDecodeURIComponent(managerNoteMatch[1]);
     const ids = scopedPersonIds(context.db, context.user);
     const note = (context.db.managerNotes || []).find((item) => item.id === noteId);
-    if (!note || !ids.has(note.personId)) {
+    // Чужая заметка отвечает так же, как несуществующая: иначе по коду ответа
+    // можно было бы выяснить, что у коллеги есть заметка с таким id.
+    if (!note || !ids.has(note.personId) || !canAccessManagerNote(context.user, note)) {
       sendJson(response, 404, { error: "Заметка не найдена" });
       return;
     }
     context.db.managerNotes = (context.db.managerNotes || []).filter((note) => note.id !== noteId);
     await writeDb(context.db, { replaceAuth: false });
+    // Текст заметки в журнал не пишется.
+    await recordAudit(context.user, "manager_note.delete", "manager_note", noteId, { personId: note.personId });
     const refreshed = await readDb();
     sendJson(response, 200, { workspace: scopeWorkspace(refreshed, context.user) });
     return;
@@ -3531,6 +3735,9 @@ async function handleApi(request, response) {
       sendJson(response, 404, { error: "Опрос не найден" });
       return;
     }
+    const deletedResponseCount = (context.db.surveyResponses || []).filter(
+      (response) => response.surveyId === surveyId
+    ).length;
     // Admin delete is authoritative — even legacy demo-seed surveys are wiped so
     // they don't reappear after future reads of older workspace.json files.
     context.db.surveys = (context.db.surveys || []).filter((survey) => survey.id !== surveyId);
@@ -3538,6 +3745,11 @@ async function handleApi(request, response) {
     // Block seed re-injection for this id by replacing initialSurveys clone in DB
     // is not needed here: createSeedDb is only called on explicit /api/reset.
     await writeDb(context.db, { replaceAuth: false });
+    await recordAudit(context.user, "survey.delete", "survey", surveyId, {
+      title: survey.title,
+      anonymous: survey.anonymous,
+      responses: deletedResponseCount
+    });
     const refreshed = await readDb();
     sendJson(response, 200, { workspace: scopeWorkspace(refreshed, context.user) });
     return;
@@ -3649,7 +3861,9 @@ async function handleApi(request, response) {
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + sessionTtlMs).toISOString()
     };
-    nextDb.sessions = [session];
+    // В базе токен хранится хэшем (см. db/repositories/auth.js), в cookie
+    // уходит сырой. В файловом режиме хранится как есть.
+    nextDb.sessions = [storageMode === "postgres" ? { ...session, id: hashSessionToken(session.id) } : session];
     await writeDb(nextDb);
     sendJson(
       response,

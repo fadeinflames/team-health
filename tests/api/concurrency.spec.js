@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { test, expect, request as playwrightRequest } from "@playwright/test";
 
 // B1 из аудита 2026-10-04: параллельные сохранения от разных пользователей
@@ -12,7 +13,9 @@ if (!adminPassword) throw new Error("ADMIN_PASSWORD обязателен для 
 
 const EMPLOYEES = 8;
 const ROUNDS = 6;
-const password = "ConcurrencyPass123";
+// Пароль одноразовых пользователей генерируется на каждый прогон, чтобы в
+// репозитории не лежало ничего, похожего на секрет (его ловит gitleaks).
+const password = `Cc-${randomBytes(12).toString("hex")}`;
 
 test("параллельные сохранения сотрудников не стирают друг друга", async () => {
   const admin = await playwrightRequest.newContext({ baseURL });

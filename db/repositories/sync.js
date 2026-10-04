@@ -21,6 +21,7 @@
 //     immutable: ["created_at"],       // не перетирается при обновлении
 //     columns: [
 //       { name: "id", type: "text", value: (row) => row.id },
+//       // keepExisting: true — null на входе не затирает значение в базе
 //       // expr — если колонку надо получить не напрямую из массива
 //       { name: "tags", type: "jsonb", value: ..., expr: "array(select jsonb_array_elements_text(src.tags))" }
 //     ]
@@ -50,13 +51,19 @@ function upsertStatement(spec) {
     return `insert into ${spec.table} (${names.join(", ")}) ${source} on conflict (${keysOf(spec).join(", ")}) do nothing`;
   }
 
+  // keepExisting: пустое входящее значение не затирает то, что уже лежит в
+  // строке. Нужно для manager_notes.author_user_id: заметка, пришедшая из
+  // пути записи без автора, не должна «обезличить» заметку, у которой автор
+  // уже есть (иначе чужая приватная заметка стала бы общей для лидов).
+  const incoming = (column) =>
+    column.keepExisting ? `coalesce(excluded.${column.name}, ${spec.table}.${column.name})` : `excluded.${column.name}`;
   const tuple = (prefix) => updatable.map((column) => `${prefix}.${column.name}`).join(", ");
   return `
     insert into ${spec.table} (${names.join(", ")})
     ${source}
     on conflict (${keysOf(spec).join(", ")}) do update set
-      ${updatable.map((column) => `${column.name} = excluded.${column.name}`).join(",\n      ")}
-    where (${tuple(spec.table)}) is distinct from (${tuple("excluded")})
+      ${updatable.map((column) => `${column.name} = ${incoming(column)}`).join(",\n      ")}
+    where (${tuple(spec.table)}) is distinct from (${updatable.map(incoming).join(", ")})
   `;
 }
 

@@ -24,7 +24,19 @@ Schema management moves out of the application into migrations, secrets get a li
 - Password hashing is asynchronous (`scrypt`), so a login no longer blocks the event loop; the stored format is unchanged. A failed `ROLLBACK` no longer hides the original error or returns a broken connection to the pool.
 - Backups: `scripts/backup.mjs` (`dump`, `verify`, `restore-check`; npm `db:backup`, `db:backup:verify`). Runbook in `docs/runbook.md`; decisions in `docs/adr/`.
 
+### Changed (privacy and publication, wave 3)
+
+- **Participants no longer receive** `performanceNarrative` and `growthNarrative`, and see only validated competency assessments; leads and admins are unchanged.
+- **Anonymous surveys:** the minimum number of responses is at least 3 (older surveys saved with 2 behave as 3), and each question is hidden until at least that many people answered *it* (`perQuestion[id] = { count, hidden: true, minResponses }`). The real-time differencing risk between two views is a documented residual risk (`docs/adr/0005-privacy-model.md`).
+- **Private manager notes remember their author** (`manager_notes.author_user_id`, migration 0027): a regular lead sees their own notes and legacy notes without an author, `platform_admin` sees all notes in scope; deleting someone else's note answers 404.
+- Permanently deleting a person also deletes their named survey responses. A survey whose owner lead was deleted is no longer open to the whole organization: only `platform_admin` sees and manages it (migration 0029 drops the foreign key so the owner id survives the deletion).
+- **Audit log** (`audit_log`, migration 0028): account, role, person, survey and note deletion events; `GET /api/audit-log` for `platform_admin` only. No note text or passwords are logged.
+- Session tokens are stored hashed (sha256); the cookie keeps the raw token.
+- Published under the MIT license; `SECURITY.md` and `CONTRIBUTING.md` added. The list of compromised passwords is kept only as sha256 hashes (`lib/burned-secrets.js`) and `scripts/check-burned.mjs` finds them in the tree without storing them.
+
 ### Breaking
+
+- **Everyone signs in again after this release:** sessions created before it hold raw tokens that no longer match the stored hashes, and the server removes them at start.
 
 - **`POST /api/me/password` requires `currentPassword`.** A missing or wrong value answers 400 «Неверный текущий пароль» (not 401); attempts count towards the login rate limit.
 - **HSTS** (`Strict-Transport-Security`, six months, no subdomains) is sent when `APP_ENV=production`.
