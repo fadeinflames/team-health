@@ -15,6 +15,15 @@ Schema management moves out of the application into migrations, secrets get a li
 - Accessibility: visible focus on search and goal sliders, text contrast of muted and status colours raised to AA, reduced-motion respected.
 - CI: the burned-values check no longer fails on its own block list; jobs have timeouts and concurrency groups; unit tests run in CI. Scripts treat Railway as production (`scripts/lib/env.mjs`), `redo` follows the same guard as `down`, a held migration lock exits 1, and `up` on an unbaselined legacy database prints the baseline instruction instead of failing obscurely.
 
+### Fixed (audit 2026-10-04, wave 2)
+
+- **Lost updates under concurrency.** Writes are now diff-based: `readDb()` records the state of every row it read, and `writeDb()` upserts only rows that changed and deletes only rows that were in that base and disappeared. Rows created by other requests in between are no longer deleted, and unchanged rows are not rewritten with stale values (this also stops admin operations from rolling back password changes or resurrecting revoked sessions). A stress run with 8 employees saving 6 cards each in parallel lost 42 of 48 saves before and none after.
+- **Stale clients.** `POST /api/workspace` accepts `knownIds`; a row is deleted only if the client knew it. Without `knownIds` the old «absent means deleted» semantics apply. The client tracks the ids it has seen and refreshes row versions after a save that raced with new edits, so its own previous save no longer causes a false 409.
+- Version checks run only for rows the request changed and lock them (`for update`) for the transaction.
+- `/readyz` answers 503 `shutting_down` after SIGTERM while `/healthz` stays 200; `SHUTDOWN_DRAIN_MS` adds a drain pause. Railway's health check now uses `/readyz`.
+- Password hashing is asynchronous (`scrypt`), so a login no longer blocks the event loop; the stored format is unchanged. A failed `ROLLBACK` no longer hides the original error or returns a broken connection to the pool.
+- Backups: `scripts/backup.mjs` (`dump`, `verify`, `restore-check`; npm `db:backup`, `db:backup:verify`). Runbook in `docs/runbook.md`; decisions in `docs/adr/`.
+
 ### Breaking
 
 - **`POST /api/me/password` requires `currentPassword`.** A missing or wrong value answers 400 «Неверный текущий пароль» (not 401); attempts count towards the login rate limit.

@@ -1116,6 +1116,25 @@ async function apiFetch(path, options = {}) {
   return payload;
 }
 
+// Явный behavior в scrollIntoView/scrollTo перебивает CSS scroll-behavior, поэтому
+// prefers-reduced-motion из таблицы стилей на них не действует: уважаем настройку здесь.
+function scrollBehavior() {
+  return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+}
+
+// Таблицы, строки которых сервер удаляет по отсутствию в теле POST /api/workspace.
+// Клиент сообщает, какие id он видел (knownIds): чужая строка, появившаяся на
+// сервере после нашей загрузки, не должна исчезнуть от нашего снимка.
+const KNOWN_ID_TABLES = ["cards", "actions", "goals", "lprs", "competencyAssessments"];
+
+function collectRowIds(ws) {
+  const ids = {};
+  for (const table of KNOWN_ID_TABLES) {
+    ids[table] = new Set((ws?.[table] || []).map((row) => row.id));
+  }
+  return ids;
+}
+
 // Пауза между повторами сохранения: 1.6 с, затем вдвое дольше, но не более 30 с.
 const SAVE_RETRY_FIRST_MS = 1600;
 const SAVE_RETRY_MAX_MS = 30000;
@@ -1282,6 +1301,12 @@ export default function App() {
   const [revealSummary, setRevealSummary] = useState(false);
   const summaryPanelRef = useRef(null);
   const dirtyRef = useRef(false);
+  // id строк, которые клиент видел: пришли с сервера целиком или были нами
+  // успешно сохранены. Уходят в knownIds, см. saveWorkspace.
+  const knownIdsRef = useRef(collectRowIds(null));
+  // Номер сессии: растёт при выходе/401. Сохранение, начатое в прошлой сессии,
+  // не должно ни дополнить known, ни подменить пространство уже следующего человека.
+  const sessionEpochRef = useRef(0);
   const workspaceRef = useRef(null);
   const saveInFlightRef = useRef(false);
   // Почему автосохранение стоит: "conflict" ждёт решения человека, "rejected"
@@ -1424,7 +1449,7 @@ export default function App() {
   useEffect(() => {
     if (!revealSummary || activeView !== "outcomes") return undefined;
     const timeoutId = window.setTimeout(() => {
-      summaryPanelRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+      summaryPanelRef.current?.scrollIntoView({ block: "start", behavior: scrollBehavior() });
       setRevealSummary(false);
     }, 0);
     return () => window.clearTimeout(timeoutId);
@@ -1438,6 +1463,7 @@ export default function App() {
       setAuthState("ready");
     } catch {
       setUser(null);
+      knownIdsRef.current = collectRowIds(null);
       setWorkspace(null);
       setAuthState("ready");
     }
@@ -1447,7 +1473,7 @@ export default function App() {
     const data = await apiFetch("/api/workspace");
     const nextWorkspace = { ...emptyWorkspace, ...data };
     const defaultPersonId = nextWorkspace.people.find((person) => person.id !== "demo-sre")?.id || nextWorkspace.people[0]?.id || "";
-    setWorkspace(nextWorkspace);
+    adoptServerWorkspace(nextWorkspace);
     const firstPersonId = nextUser?.personId || defaultPersonId;
     setSelectedPersonId((current) => (nextWorkspace.people.some((person) => person.id === current) ? current : firstPersonId));
     setPasswordUpdate((current) => ({
@@ -1494,6 +1520,10 @@ export default function App() {
       timerRef.current = null;
     }
     meetingStateSaveQueueRef.current = {};
+    // Знание о строках тоже принадлежит прошлой сессии: следующий человек
+    // начнёт с пустого, иначе чужие id дали бы право удалять строки.
+    knownIdsRef.current = collectRowIds(null);
+    sessionEpochRef.current += 1;
     setConflict(null);
     setSaveError("");
   }
@@ -1526,13 +1556,27 @@ export default function App() {
     });
   }
 
+  // Единственная дверь, через которую целое рабочее пространство от сервера
+  // попадает в состояние: заодно известные id заменяются на id из него. Если
+  // принять пространство, не обновив known, клиент либо не сможет удалить то,
+  // что реально видел, либо получит право удалить то, чего не видел.
+  function adoptServerWorkspace(ws) {
+    const next = { ...emptyWorkspace, ...ws };
+    knownIdsRef.current = collectRowIds(next);
+    setWorkspace(next);
+    return next;
+  }
+
   // Версия строки — это её updated_at из базы, придуманная не клиентом. После
   // своего же сохранения подтягиваем версии в локальные строки: иначе следующая
   // правка той же строки уйдёт со старой версией и получит 409 от нашей записи.
   function mergeRowVersions(current, saved) {
     const next = { ...current };
     for (const table of ["cards", "actions", "goals", "lprs"]) {
-      const versions = new Map((saved[table] || []).map((row) => [row.id, row.updatedAt]));
+      // Только updatedAt и только у строк, что есть локально: содержимое несохранённых
+      // правок трогать нельзя, а чужие строки из ответа добавлять нельзя — клиент
+      // их не видел, и они не должны попасть в наш следующий снимок.
+      const versions = new Map((saved[table] || []).filter((row) => row.updatedAt).map((row) => [row.id, row.updatedAt]));
       next[table] = (current[table] || []).map((row) =>
         versions.has(row.id) ? { ...row, updatedAt: versions.get(row.id) } : row
       );
@@ -1552,24 +1596,38 @@ export default function App() {
 
   async function saveWorkspace(nextWorkspace) {
     saveInFlightRef.current = true;
+    const epoch = sessionEpochRef.current;
     try {
       setSaveError("");
       if (retrySaveTimerRef.current) {
         window.clearTimeout(retrySaveTimerRef.current);
         retrySaveTimerRef.current = null;
       }
+      const sentIds = collectRowIds(nextWorkspace);
+      const knownIds = {};
+      for (const table of KNOWN_ID_TABLES) knownIds[table] = [...knownIdsRef.current[table]];
       const saved = await apiFetch("/api/workspace", {
         method: "POST",
-        body: JSON.stringify(nextWorkspace)
+        body: JSON.stringify({ ...nextWorkspace, knownIds })
       });
+      // Сессия сменилась, пока шёл запрос: ответ принадлежит прошлому человеку.
+      if (epoch !== sessionEpochRef.current) return;
+      // Сервер принял всё, что мы прислали, — значит, эти строки мы «видели».
+      // Дополняем known до разбора ответа: он может и не приниматься (dirty).
+      for (const table of KNOWN_ID_TABLES) {
+        for (const id of sentIds[table]) knownIdsRef.current[table].add(id);
+      }
       saveRetryDelayRef.current = SAVE_RETRY_FIRST_MS;
       saveHaltRef.current = "";
       setConflict(null);
       // Apply server-sanitized state only when no further edits are pending —
       // otherwise we'd overwrite in-flight changes with a stale snapshot.
       if (!dirtyRef.current) {
-        setWorkspace({ ...emptyWorkspace, ...saved });
+        adoptServerWorkspace(saved);
       } else {
+        // Ответ не принимаем целиком, но версии строк из него подтягиваем: без
+        // этого следующее сохранение той же строки уйдёт со старым updatedAt и
+        // получит ложный 409 от нашей же предыдущей записи.
         setWorkspace((current) =>
           current ? { ...mergeRowVersions(current, saved), users: saved.users || current.users } : current
         );
@@ -1632,7 +1690,7 @@ export default function App() {
         saveHaltRef.current = "";
         setConflict(null);
         setSaveError("");
-        setWorkspace({ ...emptyWorkspace, ...latest });
+        adoptServerWorkspace(latest);
         return;
       }
       // Перезапись: у конфликтующих строк берём версию сервера, остальное
@@ -2452,7 +2510,7 @@ export default function App() {
     setActiveView("agenda");
     setActiveFilter("all");
     setSummaryText("");
-    window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" }));
+    window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: scrollBehavior() }));
   }
 
   function openSection(sectionId) {
@@ -2483,7 +2541,7 @@ export default function App() {
       personTeam: !canCreateLeadLogin && user?.teamLabel ? user.teamLabel : current.personTeam || "Product"
     }));
     window.requestAnimationFrame(() => {
-      createLoginPanelRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+      createLoginPanelRef.current?.scrollIntoView({ block: "start", behavior: scrollBehavior() });
     });
   }
 
@@ -3244,7 +3302,7 @@ export default function App() {
     setShowSurveyComposer(true);
     // Scroll the composer into view next tick
     window.requestAnimationFrame(() => {
-      document.querySelector(".survey-composer")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      document.querySelector(".survey-composer")?.scrollIntoView({ behavior: scrollBehavior(), block: "start" });
     });
   }
 
@@ -3262,7 +3320,7 @@ export default function App() {
     });
     setShowSurveyComposer(true);
     window.requestAnimationFrame(() => {
-      document.querySelector(".survey-composer")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      document.querySelector(".survey-composer")?.scrollIntoView({ behavior: scrollBehavior(), block: "start" });
     });
   }
 
@@ -3294,9 +3352,7 @@ export default function App() {
           questions: cleanedQuestions
         })
       });
-      setWorkspace((current) =>
-        response.workspace ? { ...emptyWorkspace, ...response.workspace } : current
-      );
+      if (response.workspace) adoptServerWorkspace(response.workspace);
       resetSurveyComposer();
       setUserMessage("Опрос создан");
     } catch (error) {
@@ -3364,9 +3420,7 @@ export default function App() {
         method: "POST",
         body: "{}"
       });
-      if (response.workspace) {
-        setWorkspace({ ...emptyWorkspace, ...response.workspace });
-      }
+      if (response.workspace) adoptServerWorkspace(response.workspace);
       setUserMessage("Сохранено как шаблон");
     } catch (error) {
       setUserError(error.message);
@@ -3377,9 +3431,7 @@ export default function App() {
     setUserMessage("");
     try {
       const response = await apiFetch(`/api/surveys/${encodeURIComponent(surveyId)}`, { method: "DELETE" });
-      setWorkspace((current) =>
-        response.workspace ? { ...emptyWorkspace, ...response.workspace } : current
-      );
+      if (response.workspace) adoptServerWorkspace(response.workspace);
       if (expandedSurveyId === surveyId) setExpandedSurveyId("");
       setUserMessage("Опрос удалён");
     } catch (error) {
@@ -3410,9 +3462,7 @@ export default function App() {
         method: "POST",
         body: JSON.stringify({ answers: merged })
       });
-      setWorkspace((current) =>
-        response.workspace ? { ...emptyWorkspace, ...response.workspace } : current
-      );
+      if (response.workspace) adoptServerWorkspace(response.workspace);
       setSurveyDrafts((current) => ({ ...current, [surveyId]: {} }));
       setExpandedSurveyId((current) => (current === surveyId ? "" : current));
       setUserMessage("Ответы сохранены");
@@ -3508,9 +3558,8 @@ export default function App() {
       setSaveError("");
       setUserMessage("");
       const response = await apiFetch("/api/reset", { method: "POST", body: "{}" });
-      const nextWorkspace = { ...emptyWorkspace, ...response.workspace };
       setUser(response.user);
-      setWorkspace(nextWorkspace);
+      const nextWorkspace = adoptServerWorkspace(response.workspace);
       setSelectedPersonId(nextWorkspace.people?.[0]?.id || "");
       setNewUser({
         role: "employee",
@@ -3578,8 +3627,7 @@ export default function App() {
           leadUserId: effectiveRole === "employee" ? newUser.leadUserId : ""
         })
       });
-      const nextWorkspace = userResponse.workspace ? { ...emptyWorkspace, ...userResponse.workspace } : null;
-      setWorkspace((current) => (nextWorkspace ? nextWorkspace : current));
+      if (userResponse.workspace) adoptServerWorkspace(userResponse.workspace);
       if (userResponse.user.personId) setSelectedPersonId(userResponse.user.personId);
       setUserMessage(`Логин ${userResponse.user.username} создан`);
       setShowCreateLoginForm(false);
@@ -3614,9 +3662,7 @@ export default function App() {
         body: JSON.stringify({ name })
       });
       setUser(response.user);
-      if (response.workspace) {
-        setWorkspace({ ...emptyWorkspace, ...response.workspace });
-      }
+      if (response.workspace) adoptServerWorkspace(response.workspace);
       setUserMessage("Имя сохранено");
     } catch (error) {
       setFormError("profile", error.message);
@@ -3702,8 +3748,7 @@ export default function App() {
       const response = await apiFetch(`/api/people/${encodeURIComponent(person.id)}`, {
         method: "DELETE"
       });
-      const nextWorkspace = { ...emptyWorkspace, ...response.workspace };
-      setWorkspace(nextWorkspace);
+      const nextWorkspace = adoptServerWorkspace(response.workspace);
       setSelectedPersonId(nextWorkspace.people[0]?.id || "");
       setPasswordUpdate((current) => ({
         ...current,
@@ -3730,9 +3775,7 @@ export default function App() {
           tags: newManagerNote.tags
         })
       });
-      if (response.workspace) {
-        setWorkspace({ ...emptyWorkspace, ...response.workspace });
-      }
+      if (response.workspace) adoptServerWorkspace(response.workspace);
       setNewManagerNote({ body: "", tags: [] });
       setUserMessage("Заметка сохранена");
     } catch (error) {
@@ -3753,9 +3796,7 @@ export default function App() {
           attended: true
         })
       });
-      if (response.workspace) {
-        setWorkspace({ ...emptyWorkspace, ...response.workspace });
-      }
+      if (response.workspace) adoptServerWorkspace(response.workspace);
     } catch (error) {
       setUserError(error.message);
     }
@@ -3766,9 +3807,7 @@ export default function App() {
       const response = await apiFetch(`/api/manager-notes/${encodeURIComponent(noteId)}`, {
         method: "DELETE"
       });
-      if (response.workspace) {
-        setWorkspace({ ...emptyWorkspace, ...response.workspace });
-      }
+      if (response.workspace) adoptServerWorkspace(response.workspace);
       setUserMessage("Заметка удалена");
     } catch (error) {
       setUserError(error.message);
@@ -3792,9 +3831,7 @@ export default function App() {
         method: "POST",
         body: "{}"
       });
-      if (response.workspace) {
-        setWorkspace({ ...emptyWorkspace, ...response.workspace });
-      }
+      if (response.workspace) adoptServerWorkspace(response.workspace);
       setUserMessage("Участник восстановлен");
     } catch (error) {
       setUserError(error.message);
@@ -3812,8 +3849,7 @@ export default function App() {
         method: "PATCH",
         body: JSON.stringify(personEditDraft)
       });
-      const nextWorkspace = response.workspace ? { ...emptyWorkspace, ...response.workspace } : null;
-      if (nextWorkspace) setWorkspace(nextWorkspace);
+      if (response.workspace) adoptServerWorkspace(response.workspace);
       setEditingPersonId("");
       setUserMessage(`Профиль ${response.person?.name || "участника"} обновлён`);
     } catch (error) {
@@ -3830,8 +3866,7 @@ export default function App() {
         method: "POST",
         body: JSON.stringify(newPerson)
       });
-      const nextWorkspace = { ...emptyWorkspace, ...response.workspace };
-      setWorkspace(nextWorkspace);
+      adoptServerWorkspace(response.workspace);
       setSelectedPersonId(response.person.id);
       setNewUser((current) => ({ ...current, personId: response.person.id }));
       setNewPerson({
@@ -6028,7 +6063,7 @@ export default function App() {
                         });
                         setShowSurveyComposer(true);
                         window.requestAnimationFrame(() => {
-                          document.querySelector(".survey-composer")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                          document.querySelector(".survey-composer")?.scrollIntoView({ behavior: scrollBehavior(), block: "start" });
                         });
                       }}
                     >

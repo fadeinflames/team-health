@@ -1,180 +1,187 @@
 # Team Health 1:1 Product Handbook
 
-Last updated: 2026-06-24
+Обновлено: 2026-10-04
 
-This handbook is the human-written companion for README, DeepWiki, and release reviews. It explains the product, the workflows it supports, and the implementation boundaries that matter before a production deploy.
+Handbook - рукописный спутник README, DeepWiki и релизных ревью. Он объясняет продукт, процессы, которые он поддерживает, и границы реализации, которые важно знать перед выкладкой в production. Всё, что здесь сказано об устройстве системы, сверено с кодом; если нашли расхождение, сначала проверьте код, а не подгоняйте код под текст.
 
-## 1. Product Thesis
+Связанные документы: [README](../README.md) (запуск и переменные окружения), [runbook](runbook.md) (эксплуатация), [ADR](adr/README.md) (принятые решения), [миграции](../migrations/README.md), [отчёт аудита 2026-10-04](audit/2026-10-04-audit.md).
 
-Team Health 1:1 is a lightweight team-management platform for managers, team leads, and employees who want recurring 1:1s to produce durable signal instead of scattered meeting notes.
+## 1. Продуктовый тезис
 
-The product connects:
+Team Health 1:1 - лёгкая платформа управления командой для менеджеров, тимлидов и сотрудников, которым нужно, чтобы регулярные 1:1 оставляли долговечный сигнал, а не россыпь заметок.
 
-- recurring 1:1 agendas;
-- participant and manager preparation;
-- live meeting protocol notes;
-- pulse signals: energy, load, clarity, trust;
-- action items with owners and dates;
-- LPRs, goals, and growth plans;
-- team surveys with scoped access and anonymous aggregates;
-- competency and case-interview reports;
-- team-level reporting for trends, risks, and follow-up.
+Продукт связывает:
 
-The product is intentionally not a generic CRM and not a narrow SRE-only tool. SRE/Ops/on-call data can be plugged in as a domain template, but the core model is universal: people, conversations, agreements, progress, and team health.
+- регулярные повестки 1:1;
+- подготовку участника и менеджера;
+- живой протокол встречи;
+- сигналы пульса: энергия, нагрузка, ясность, доверие;
+- следующие шаги с владельцами и сроками;
+- ЛПР, цели и планы роста;
+- опросы команды с scoped-доступом и анонимными агрегатами;
+- отчёты по компетенциям и кейс-интервью;
+- командные отчёты по трендам, рискам и следующим действиям.
 
-## 2. Roles
+Продукт намеренно не является универсальной CRM и не является узким SRE-инструментом. Данные SRE/Ops/on-call подключаются как доменный шаблон, а ядро модели универсально: люди, разговоры, договорённости, прогресс и здоровье команды.
 
-### Platform Admin
+## 2. Роли
 
-The platform admin can see the whole working team, create lead and employee logins, manage passwords, delete non-admin users, manage people, run reports, create surveys, and manage demo/local reset flows.
+### Администратор платформы
 
-Production safety: `/api/reset` is disabled when `RAILWAY_ENVIRONMENT` is set unless `ENABLE_DEMO_RESET=1` is also set. The UI receives `canResetDemo` from the server and hides the reset action when production reset is disabled.
+Видит всю рабочую команду, создаёт логины лидов и сотрудников, управляет паролями, удаляет не-админские логины, управляет людьми, запускает отчёты, создаёт опросы и управляет сбросом демо-данных.
 
-### Lead
+Защита production: `/api/reset` закрыт, когда окружение определено как production (`APP_ENV=production`, а без `APP_ENV` - наличие `RAILWAY_ENVIRONMENT`), если дополнительно не задан `ENABLE_DEMO_RESET=1`. Интерфейс получает `canResetDemo` от сервера и прячет кнопку сброса, когда сброс закрыт.
 
-A lead sees only their scoped team. They can work with their people, create employee logins for their scope, run 1:1s, create team surveys for their audience, manage LPRs/goals, and see reports only for visible people.
+Пароль администратора - пароль учётной записи `ADMIN_USERNAME` - принадлежит окружению: пароля по умолчанию нет ни в одном окружении, вне `local` без `ADMIN_PASSWORD` сервер не стартует (так же при длине меньше 12 символов или значении из блок-листа). Из интерфейса эту учётку нельзя ни удалить, ни сменить ей пароль. Ротация описана в [runbook](runbook.md#ротация-секретов).
 
-Lead scoping is based on explicit `leadUserId` and fallback team labels where needed.
+### Лид
 
-### Employee
+Видит только свою команду. Работает со своими людьми, создаёт логины сотрудников в своём скоупе, ведёт 1:1, создаёт опросы для своей аудитории, управляет ЛПР и целями и видит отчёты только по видимым людям.
 
-An employee sees only their own workspace:
+Скоуп лида определяется явным `leadUserId` и, где нужно, запасными метками команд.
 
-- own profile;
-- own agenda cards;
-- own actions;
-- own pulse and prep state;
-- own LPRs, goals, surveys, meeting drafts, and competency assessments;
-- no global users list;
-- no manager private notes;
-- no data for other people.
+### Сотрудник
 
-### Demo
+Видит только собственное рабочее пространство:
 
-The demo account is a seeded employee-like workspace with ready 1:1 data. Local defaults are `demo/demo`; production should set explicit `DEMO_USERNAME` and `DEMO_PASSWORD` if demo access is intended.
+- свой профиль;
+- свои карточки повестки;
+- свои следующие шаги;
+- свой пульс и состояние подготовки;
+- свои ЛПР, цели, опросы, черновики встреч и оценки компетенций;
+- без глобального списка пользователей;
+- без приватных заметок менеджера;
+- без данных других людей.
 
-## 3. Core 1:1 Workflow
+### Демо
 
-### 3.1 Agenda Between Meetings
+Демо-учётка - сотрудник-подобное пространство с готовыми данными 1:1. Логин - `DEMO_USERNAME` (по умолчанию `demo`), пароль - `DEMO_PASSWORD`. В docker-стеке `make env` генерирует случайный `DEMO_PASSWORD` и кладёт его в `.env`; учётку создаёт сидинг (`make seed`). Пара `demo` / `demo` действует только там, где `DEMO_PASSWORD` не задан: file-режим на хосте и тестовый профиль compose. Сидинг в production запрещён, поэтому в production демо-учётка появляется только если её создали иным способом осознанно.
 
-Both lead and employee can add agenda cards. Cards include title, details, source, priority, status, and optional links to development plans. This makes the meeting agenda an ongoing collection point, not a document created five minutes before the call.
+## 3. Базовый процесс 1:1
 
-### 3.2 Preparation
+### 3.1 Повестка между встречами
 
-Each person has a preparation checklist. Employees can mark their own agenda and pulse readiness; leads can prepare manager agenda, notes, and next steps. The checklist exists to make the 1:1 less dependent on memory and less likely to collapse into "how are things?"
+И лид, и сотрудник добавляют карточки повестки. У карточки есть заголовок, детали, источник, приоритет, статус и необязательные связи с планами развития. Повестка - постоянная точка сбора, а не документ, который создаётся за пять минут до звонка.
 
-### 3.3 Pulse
+### 3.2 Подготовка
 
-Pulse tracks four dimensions:
+У каждого человека есть чек-лист подготовки. Сотрудник отмечает готовность своей повестки и пульса; лид готовит повестку менеджера, заметки и следующие шаги. Чек-лист нужен, чтобы 1:1 меньше зависел от памяти и реже скатывался в «как дела?».
 
-- energy;
-- load;
-- clarity;
-- trust.
+### 3.3 Пульс
 
-The product keeps current pulse state and historical snapshots. Reports use this to surface risk, trend, and mismatch signals.
+Пульс отслеживает четыре измерения: энергия, нагрузка, ясность, доверие.
 
-### 3.4 Live Meeting Protocol
+Продукт хранит историю точек пульса по дням. Текущий пульс человека - это его последняя точка истории: в базе `pulse` является представлением (view) над `pulse_history` (миграция `0026`), а не отдельной таблицей. Отчёты используют историю для сигналов риска, тренда и расхождений. Хранение истории ограничено 365 днями, но последняя точка каждого человека при очистке сохраняется, иначе у того, кто давно не отмечал пульс, пропало бы текущее значение.
 
-`meetingDrafts` store a shared live protocol per person. The frontend saves it through a narrow meeting-state API:
+### 3.4 Живой протокол встречи
+
+`meetingDrafts` хранят общий живой протокол по человеку. Фронтенд сохраняет его через узкий API состояния встречи:
 
 ```http
 PATCH /api/people/:personId/meeting-state
 ```
 
-This endpoint updates only meeting-local fields: selected prep keys, pulse values, and the meeting draft. It avoids overwriting unrelated workspace data such as users, passwords, surveys, or other people's rows.
+Эндпоинт меняет только локальные поля встречи: выбранные ключи подготовки, значения пульса и черновик встречи. Он не перезаписывает несвязанные данные рабочего пространства: пользователей, пароли, опросы и строки других людей.
 
-### 3.5 Summary and Meeting Log
+### 3.5 Итоги и журнал встреч
 
-The "Итоги встречи" flow builds a summary from current agenda, protocol, and actions. Meeting summaries are saved in `meeting_log`. The current implementation can create duplicate log entries if the summary action is clicked repeatedly; this is a known release risk, not a data isolation issue.
+Сценарий «Итоги встречи» строит резюме из текущей повестки, протокола и следующих шагов. Резюме сохраняются в `meeting_log` (`POST /api/meetings/log`, только лид или админ). Повторный клик по сохранению итогов создаёт дубликаты записей журнала: защиты от дублей в коде нет, см. раздел «Известные ограничения».
 
-### 3.6 Action Items
+### 3.6 Следующие шаги
 
-Actions include title, owner, due date, status, and person scope. Agenda cards can be converted into action items, and duplicate quick actions are blocked in the UI where possible.
+У шага есть заголовок, владелец, срок, статус и скоуп человека. Карточки повестки можно превращать в следующие шаги; дубликаты быстрых действий по возможности блокируются в интерфейсе.
 
-## 4. Development, Goals, and Competencies
+## 4. Развитие, цели и компетенции
 
-### LPR
+### ЛПР
 
-LPRs connect recurring 1:1 topics to development focus. They have status and links to person-specific goals.
+ЛПР связывает повторяющиеся темы 1:1 с фокусом развития. У ЛПР есть статус и связи с целями конкретного человека.
 
-### Goals
+### Цели
 
-Goals track progress, status, due date, and optional LPR linkage. Reports include goal progress and overdue/open action signals.
+Цели отслеживают прогресс, статус, срок и необязательную связь с ЛПР. Отчёты включают прогресс целей и сигналы просроченных и открытых шагов.
 
-### Competency Assessments
+### Оценки компетенций
 
-Competency reports capture structured case-interview or review data:
+Отчёты по компетенциям фиксируют структурированные данные кейс-интервью или ревью:
 
-- person;
-- title and role context;
-- source: `case-ai`, `manual`, or `review`;
-- status: `draft` or `validated`;
-- competencies with category, score, target score, evidence, and recommendation;
-- case summaries;
-- recommendations that can become LPR growth actions.
+- человек;
+- название и контекст роли;
+- источник: `case-ai`, `manual` или `review`;
+- статус: `draft` или `validated`;
+- компетенции с категорией, оценкой, целевой оценкой, доказательствами и рекомендацией;
+- резюме кейсов;
+- рекомендации, которые можно превратить в зоны роста ЛПР.
 
-The frontend can parse table-like pasted rows and build an assessment. Reports aggregate assessments into a team matrix with strengths, weak spots, and bus-factor style coverage risks. CSV export is available for the matrix.
+Фронтенд умеет разбирать вставленные табличные строки и собирать из них оценку. Отчёты агрегируют оценки в командную матрицу с сильными сторонами, слабыми местами и рисками покрытия. Для матрицы доступен экспорт в CSV (с защитой от формульной инъекции, `src/csv.js`).
 
-## 5. Surveys
+## 5. Опросы
 
-Surveys support templates and custom questions. Question types include scale, single choice, multiple choice, text, and date.
+Опросы поддерживают шаблоны и собственные вопросы. Типы вопросов: шкала, один выбор, несколько вариантов, текст, дата.
 
-Access and privacy rules:
+Правила доступа и приватности:
 
-- surveys are scoped by owner/team audience;
-- leads cannot read/delete/copy unrelated surveys by direct id;
-- anonymous survey results stay hidden until `anonymousMinResponses` is reached;
-- repeated anonymous answers from the same user update the previous response through a server-side hash;
-- anonymous text/date answers are redacted in aggregate output and CSV export; only counts are shown.
+- опросы ограничены владельцем и командной аудиторией;
+- лиды не могут читать, удалять или копировать чужие опросы по прямому id;
+- анонимные результаты скрыты, пока не набран `anonymousMinResponses`;
+- повторный анонимный ответ того же пользователя обновляет предыдущий через server-side hash;
+- анонимные текстовые ответы и даты в агрегатах и CSV затираются, остаются только счётчики.
 
-This keeps anonymous mode closer to "aggregate signal" and avoids turning a small-team text answer into accidental identity disclosure.
+Хэш ответа зависит от `SURVEY_RESPONSE_SECRET`. Смена секрета повышает «поколение» хэшей (запись в `app_meta`): старые ответы остаются в своём поколении, а респонденты после смены могут ответить повторно. Секрет не может совпадать с паролем администратора: админ знает все `userId`, и общий секрет позволил бы сопоставить анонимный ответ с автором.
 
-## 6. Reports
+## 6. Отчёты
 
-Reports combine:
+Отчёты объединяют:
 
-- pulse averages and risk signals;
-- open agenda themes;
-- priorities;
-- action item status;
-- goals and LPR state;
-- meeting history;
-- survey aggregates;
-- competency matrix rows;
-- weak competencies and coverage risks.
+- средние значения пульса и сигналы риска;
+- открытые темы повестки;
+- приоритеты;
+- статус следующих шагов;
+- цели и состояние ЛПР;
+- историю встреч;
+- агрегаты опросов;
+- строки матрицы компетенций;
+- слабые компетенции и риски покрытия.
 
-The goal is not just dashboards. Reports should create the next management action: follow-up, development focus, survey, or process improvement.
+Цель не в дашбордах как таковых. Отчёты должны порождать следующее управленческое действие: follow-up, фокус развития, опрос или улучшение процесса.
 
-## 7. Backend Architecture
+## 7. Бэкенд
 
-The backend is a custom ESM Node.js HTTP server in `server.js`.
+Бэкенд - собственный ESM HTTP-сервер на Node.js в `server.js`, плюс небольшие модули в `lib/` (`read-json.js`, `client-address.js`, `http-error.js`) и слой записи в `db/repositories/` (раздел 9).
 
-Main responsibilities:
+Основные обязанности:
 
-- static serving of `dist`;
-- JSON parsing and API error handling;
-- auth and session cookies;
-- password hashing with Node.js `scrypt`;
-- login rate limiting by username and IP;
-- production secret validation;
-- PostgreSQL migration and seed data;
-- local file fallback for development;
-- workspace normalization and sanitization;
-- scoped workspace serialization;
-- survey anonymity and aggregation;
-- narrow meeting-state patches;
-- Railway health endpoint through `/`.
+- раздача статики `dist`;
+- разбор JSON и обработка ошибок API; тело читается байтами и декодируется один раз, лимит считается в байтах, тело не-объект даёт 400;
+- авторизация и cookie сессий; одна активная сессия на пользователя ([ADR 0002](adr/0002-single-session-per-user.md));
+- хэширование паролей через Node.js `scrypt`;
+- ограничение попыток входа по паре «адрес:логин» и по адресу; адрес за прокси берётся справа из `X-Forwarded-For` ([ADR 0003](adr/0003-trusted-proxy.md));
+- проверка секретов production при старте;
+- проверка версии схемы PostgreSQL при старте (схему создают миграции, не приложение);
+- локальный file-fallback для разработки;
+- нормализация и санитизация рабочего пространства;
+- скоупленная сериализация рабочего пространства и скоупленное чтение из PostgreSQL;
+- анонимность опросов и агрегация;
+- узкие патчи состояния встречи;
+- заголовки безопасности (CSP, `X-Frame-Options` и др.); в production дополнительно `Strict-Transport-Security: max-age=15552000`.
 
-Important API routes:
+Приложение не выполняет DDL: схема создаётся только миграциями из `migrations/`. При старте с PostgreSQL приложение читает последнюю запись журнала `pgmigrations` и, если база старше кода, завершается с ошибкой (процесс не стартует, `/readyz` не отвечает). База новее кода допустима (rolling update).
+
+Служебные эндпоинты (без авторизации, без кеша):
+
+- `GET /healthz` - liveness: `200`, пока жив процесс;
+- `GET /readyz` - readiness: `200`, если хранилище отвечает (`SELECT 1` для PostgreSQL, наличие файла для file-режима), иначе `503`; после `SIGTERM` сразу `503 shutting_down`;
+- `GET /metrics` - JSON: `uptimeSeconds`, `storage`, `schema`, `pool` (`total`, `idle`, `waiting`), `writes`, `readQueries`, `readRows`, `versionConflicts`. Счётчики живут в памяти процесса. Закрытия авторизацией нет.
+
+Маршруты API:
 
 - `POST /api/login`;
 - `POST /api/logout`;
 - `GET /api/me`;
 - `PATCH /api/me`;
-- `POST /api/me/password`;
+- `POST /api/me/password` - требует `currentPassword` (неверный или пустой даёт `400 «Неверный текущий пароль»`, а не 401; попытки идут в лимитер входа); новый пароль не короче 8 символов; остальные сессии пользователя после смены гаснут; пароль системного админа этим способом не меняется, пароль демо-учётки тоже (`403`);
 - `GET /api/workspace`;
-- `POST /api/workspace`;
+- `POST /api/workspace` - см. раздел 9;
 - `PATCH /api/people/:personId/meeting-state`;
 - `POST /api/users`;
 - `POST /api/users/:id/password`;
@@ -194,128 +201,192 @@ Important API routes:
 - `POST /api/surveys/:id/respond`;
 - `POST /api/reset`.
 
-## 8. Data Model
+Типичные ответы об ошибках: `400` - неверное тело, `401` - нет сессии, `403` - нет прав на ресурс, `404` - нет такого ресурса, `409` - конфликт версий при `POST /api/workspace`, `413` - тело больше 1 МБ, `429` - слишком много попыток входа.
 
-Production PostgreSQL tables are created idempotently on startup:
+## 8. Модель данных
 
-- `people`;
-- `users`;
-- `sessions`;
-- `pulse`;
-- `prep`;
-- `notes`;
-- `cards`;
-- `actions`;
-- `lprs`;
-- `goals`;
-- `competency_assessments`;
-- `pulse_history`;
-- `surveys`;
-- `survey_responses`;
-- `manager_notes`;
-- `oncall_load`;
-- `meeting_log`;
-- `meeting_drafts`.
+Схема PostgreSQL создаётся миграциями `migrations/0001`-`0026` (журнал - таблица `pgmigrations`) и сохраняется снимком `db/schema.sql`. Правила миграций, откат и baseline - в [migrations/README.md](../migrations/README.md). Таблицы:
 
-Local development uses `.data/workspace.json` when `DATABASE_URL` is absent. Production on Railway refuses file storage unless `ALLOW_FILE_STORAGE=1` is explicitly set.
+- `people`, `users`, `sessions`, `teams`;
+- `cards`, `actions`, `lprs`, `goals`, `competency_assessments`;
+- `prep` - чек-лист подготовки по человеку;
+- `meeting_drafts` - живой протокол встречи по человеку;
+- `meeting_log` - история итогов встреч;
+- `notes` - текущий текст приватной заметки лида о человеке (одна строка на человека); история приватных заметок хранится в `manager_notes`;
+- `manager_notes` - история приватных заметок руководителя;
+- `pulse_history` - точки пульса по дням; `pulse` - представление над ней (последняя точка человека), писать в него нельзя;
+- `surveys`, `survey_responses`;
+- `oncall_load` - необязательный сигнал Ops/on-call;
+- `app_meta` - служебные записи (отпечаток пароля администратора, версия и отпечаток секрета опросов);
+- `teams` - команда как объект: заполняется из `users.lead_user_id` и `team_label` при каждой записи вместе с учётными данными; `team_id` у `users` и `people` пока служебный, скоуп доступа по нему не вычисляется.
 
-## 9. Frontend Architecture
+Миграции `0021`-`0024` - expand-шаги (новые колонки и `teams`), их contract-шаги ещё не выполнены; констрейнты `0025` добавлены без валидации существующих данных. Это штатное состояние по политике expand/contract, подробности в migrations/README.md.
 
-The React app lives mostly in `src/App.jsx` with styling in `src/styles.css`.
+Локальная разработка использует `.data/workspace.json`, когда `DATABASE_URL` не задан. Production на Railway отказывается от файлового хранилища, если явно не задан `ALLOW_FILE_STORAGE=1`.
 
-Sections:
+Демо-данные не заливаются при старте с PostgreSQL: это отдельная команда `make seed` (`scripts/seed.mjs`), в production она запрещена безусловно.
 
-- Home;
-- 1:1 meetings;
-- LPR;
-- Goals;
-- Surveys;
-- Reports;
-- Team;
-- Admin;
-- Settings.
+## 9. Слой `db/repositories` и модель записи
 
-State model:
+Запись в PostgreSQL вынесена из `server.js` в `db/repositories/`; чтение рабочего пространства (`readDb`, `readDbForUser`) остаётся в `server.js`.
 
-- `workspace` contains server-scoped data;
-- `commitWorkspace` saves full workspace snapshots;
-- `queueMeetingStateSave` saves live meeting fields through the narrow meeting-state API;
-- form drafts are local React state;
-- role flags (`isPlatformAdmin`, `isAdmin`, `canCreateLeadLogin`, `canResetDemo`) derive UI permissions from the server-provided user object.
+- `tables.js` - описания таблиц: колонки, типы, функции `value()`, ключи. Один источник и для upsert, и для расчёта подписей строк.
+- `sync.js` - общие операции над таблицей: upsert только реально изменившихся строк (без этого триггер `updated_at` бампает версии и оптимистичная блокировка ловит конфликты там, где никто ничего не менял), удаление по ключам, разница с базовым состоянием, поиск устаревших версий.
+- `workspace.js` - `syncWorkspace`: запись рабочего пространства в одной транзакции; `snapshotRows`: базовое состояние; `VersionConflictError`; поддержка `teams`.
+- `auth.js` - сессии и учётные записи: поиск сессии одним запросом, `createSession`, удаление сессий, смена пароля и имени.
 
-The frontend should not be treated as the security boundary. Server scoping and sanitization are the source of truth.
+Ключевое решение - как клиентский `POST /api/workspace` превращается в записи (подробнее в [ADR 0001](adr/0001-write-model.md)):
 
-## 10. Deployment
+1. **Запись разностью.** Чтение из PostgreSQL вешает на результат базовое состояние строк (`snapshotRows`: по каждой таблице ключ -> подпись значений колонок). `writeDb()` передаёт его в `syncWorkspace({ base })`: пишутся только новые и изменённые строки, удаляются только ключи, которые были в базовом состоянии и исчезли. Строки, появившиеся параллельно (чужая карточка, свежая сессия, новый пароль), запись не затрагивает. Без базового состояния работает прежний режим полного снимка.
+2. **`knownIds`.** Тело `POST /api/workspace` может содержать `knownIds = { cards, actions, goals, lprs, competencyAssessments }` - id строк, которые клиент видел. Строка из базы, которой нет в теле, удаляется только если её id входит в `knownIds` своей таблицы. Если `knownIds` не прислан или поле таблицы не массив, действует прежняя семантика «нет в теле - удалено» (старые клиенты, API-тесты). Работает в обеих ветках слияния: админ и лид по всем пяти таблицам, сотрудник по карточкам, шагам, целям и ЛПР (оценки компетенций сотрудник не записывает). Лимиты: до 20000 id на таблицу, длина id до 200.
+3. **Оптимистичная блокировка.** Версия строки карточек, шагов, целей и ЛПР - её `updated_at`, на клиенте `updatedAt`. Если строку, которую это сохранение меняет, успели изменить, сервер отвечает `409` с `conflicts` (таблица и id) и актуальным `workspace`, а счётчик `versionConflicts` растёт. Версии нетронутых строк не проверяются.
 
-Railway config:
+Остаётся как есть: две правки одной и той же строки решает блокировка (проигравший получает 409), слияния полей нет; клиент по-прежнему отправляет рабочее пространство целиком (лимит тела 1 МБ). Гранулярные PATCH по сущностям - сознательно отложенная смена API.
 
-- build command: `npm run build`;
-- start command: `npm run start`;
-- healthcheck path: `/`;
-- restart policy: `ON_FAILURE`;
-- PostgreSQL required through `DATABASE_URL` for normal production.
+## 10. Фронтенд
 
-Required or recommended environment variables:
+React-приложение живёт в основном в `src/App.jsx`, стили - в `src/styles.css`.
 
-- `PORT`: set by Railway;
-- `DATABASE_URL`: Railway PostgreSQL;
-- `ADMIN_USERNAME`;
-- `ADMIN_PASSWORD`: must not be default in Railway;
-- `DEMO_USERNAME`;
-- `DEMO_PASSWORD`;
-- `SURVEY_RESPONSE_SECRET`;
-- `TRUST_PROXY=1` if running behind a proxy outside Railway;
-- `ENABLE_DEMO_RESET=1` only for an intentional resettable demo environment;
-- `ALLOW_FILE_STORAGE=1` only for a conscious production file-storage exception.
+Разделы:
 
-## 11. Verification
+- Главная;
+- 1:1 встречи;
+- ЛПР;
+- Цели;
+- Опросы;
+- Отчёты;
+- Команда;
+- Админка;
+- Настройки.
 
-Local release checks:
+Модель состояния:
+
+- `workspace` содержит данные, скоупленные сервером;
+- `commitWorkspace` меняет локальное состояние, автосохранение отправляет рабочее пространство целиком вместе с `knownIds` (id, которые клиент получил с сервера или сам создал и успешно сохранил); любой ответ сервера с целым рабочим пространством проходит через одну функцию, которая заодно обновляет множество известных id;
+- при `409` автосохранение останавливается и показывается баннер конфликта (`data-testid="conflict-banner"`) с выбором «загрузить актуальные данные» или «перезаписать моими»; повтор не бесконечный: прочие `4xx` тоже останавливают повтор, сетевые ошибки и `5xx` повторяются с паузой от 1,6 до 30 с;
+- закрытие вкладки с несохранёнными правками предупреждает;
+- `queueMeetingStateSave` сохраняет живые поля встречи через узкий API состояния встречи;
+- черновики форм - локальное состояние React;
+- флаги ролей (`isPlatformAdmin`, `isAdmin`, `canCreateLeadLogin`, `canResetDemo`) выводят права интерфейса из объекта пользователя от сервера.
+
+Смена своего пароля в настройках требует ввода текущего пароля.
+
+Фронтенд не считается границей безопасности. Источник истины - скоупинг и санитизация на сервере.
+
+## 11. Деплой
+
+Конфигурация Railway (`railway.json`):
+
+- build command: `npm ci --include=dev && npm run build`;
+- start command: `npm run migrate && npm run start` - миграции выполняются перед стартом приложения при каждом запуске контейнера;
+- healthcheck: `/readyz`, таймаут 30 с;
+- политика перезапуска: `ON_FAILURE`, не более 10 раз;
+- для нормальной работы нужен PostgreSQL через `DATABASE_URL`.
+
+Docker-образ (`Dockerfile`, стадия `runtime`) содержит `server.js`, `lib/`, `migrations/`, `scripts/`, `fixtures/`, `db/` и собранный `dist`; запускается от непривилегированного пользователя с `APP_ENV=production`; встроенный `HEALTHCHECK` ходит на `/healthz`.
+
+Обязательные и рекомендуемые переменные окружения (полный список с описаниями - в README):
+
+- `PORT` - задаёт Railway;
+- `DATABASE_URL` - Railway PostgreSQL;
+- `DATABASE_SSL`, `DATABASE_POOL_MAX` - при необходимости;
+- `ADMIN_USERNAME`, `ADMIN_PASSWORD` - пароль обязателен вне `local`, не короче 12 символов, не из блок-листа;
+- `SURVEY_RESPONSE_SECRET` - обязателен вне `local`, не равен `ADMIN_PASSWORD`;
+- `DEMO_USERNAME`, `DEMO_PASSWORD` - только если нужен демо-доступ (и учётку создаёт не production-сидинг);
+- `APP_ENV` - обычно не нужен: на Railway production определяется по `RAILWAY_ENVIRONMENT`;
+- `TRUST_PROXY`, `TRUSTED_PROXY_HOPS` - сколько доверенных прокси перед приложением; по умолчанию 1. В production доверие к `X-Forwarded-For` включено само;
+- `SHUTDOWN_TIMEOUT_MS`, `SHUTDOWN_DRAIN_MS` - остановка;
+- `WORKSPACE_SCOPED_READ=0` - только как рычаг отката скоупленного чтения;
+- `ENABLE_DEMO_RESET=1` - только для сознательно сбрасываемого демо-окружения;
+- `ALLOW_FILE_STORAGE=1` - только для осознанного исключения (production без PostgreSQL).
+
+Первый деплой на уже существующую живую базу требует разового ручного baseline перед первым запуском миграций, иначе деплой не стартует. Порядок деплоя, откат, ротация секретов и действия при инциденте - в [runbook](runbook.md).
+
+### Резервные копии
+
+`node scripts/backup.mjs dump` снимает `pg_dump -Fc` базы из `DATABASE_URL` (во временный файл с переименованием при успехе), `verify` проверяет оглавление дампа, `restore-check` восстанавливает дамп в отдельную тестовую базу (имя содержит `test`) и сравнивает число строк ключевых таблиц (`users`, `people`, `cards`, `actions`, `goals`, `pgmigrations`) с содержимым дампа. Дамп содержит хэши паролей и ответы опросов - это секрет. Расписания и хранилища вне хоста в репозитории нет; включены ли резервные копии на уровне платформы Railway, из репозитория не проверить. `make db-dump` / `make db-restore` работают только с локальной базой compose.
+
+## 12. CI
+
+`.github/workflows/ci.yml`, на каждый PR и push в `main`, новый пуш в PR отменяет устаревший прогон:
+
+- **Секреты** - gitleaks по всей истории и поиск скомпрометированных значений в рабочем дереве;
+- **Сборка** - `npm ci`, `npm run build`;
+- **Юнит-тесты** - `node --test "tests/unit/*.test.mjs"`;
+- **Миграции** - на настоящем PostgreSQL 17: up с чистой базы; соответствие `db/schema.sql` результату миграций; down/up последней миграции; baseline + up на схеме старого кода (`fixtures/schema-baseline.sql`) даёт ту же схему; сидинг; интеграционные тесты в отдельной базе с `test` в имени;
+- **E2E** - `make test-docker` (весь playwright против отдельного стека), при падении сохраняются отчёты.
+
+## 13. Проверка
+
+Локальные релизные проверки:
 
 ```bash
 npm run build
+npm run test:unit
 npm run test:smoke
 npm run test:ui
 npm audit --audit-level=high
 git diff --check
 ```
 
-Smoke coverage includes:
+Остальные слои:
 
-- unauthenticated API rejection;
-- login and reset flows;
-- admin team creation;
-- lead and employee scoping;
-- password reset/session invalidation;
-- meeting draft save through full workspace and meeting-state APIs;
-- forbidden cross-person meeting-state updates;
-- demo scoping;
-- lead/team isolation;
-- competency assessment scoping;
-- survey anonymity and text redaction.
+- `npm run test:integration` - репозитории на настоящем PostgreSQL (в том числе запись разностью, `tests/integration/sync-diff.test.mjs`), нужен `TEST_DATABASE_URL` (база с `test` в имени, миграции применены);
+- `npm run test:api` - API-тесты защиты (`tests/api`): данные не фильтруются по словам, UTF-8 на границе чанков, анонимные запросы не ходят в базу, смена пароля требует текущий; `tests/api/sync.spec.js` - `knownIds`: чужая новая карточка переживает сохранение устаревшего снимка, без `knownIds` действует прежняя семантика;
+- `npm run test:conflict` - UI-сценарий: `409` показывает баннер, а не бесконечный повтор;
+- `make test-docker` - всё Playwright в docker со своей базой, миграциями с нуля и сидингом.
 
-UI audit coverage includes:
+Playwright-тесты требуют `ADMIN_PASSWORD` (пароля по умолчанию нет) и запущенный сервер с `APP_ENV=local`.
 
-- desktop and mobile viewport checks;
-- main section navigation;
-- no browser console errors;
-- no horizontal overflow offenders.
+Smoke-покрытие включает:
 
-Important: smoke and UI tests mutate shared local state and must run sequentially against the same local server.
+- отказ неавторизованным запросам API;
+- вход и сброс;
+- создание команды администратором;
+- скоупинг лидов и сотрудников;
+- сброс пароля и инвалидацию сессий;
+- сохранение черновика встречи через полное рабочее пространство и через API состояния встречи;
+- запрет межперсональных обновлений состояния встречи;
+- скоупинг демо;
+- изоляцию лидов и команд;
+- скоупинг оценок компетенций;
+- анонимность опросов и затирание текста.
 
-## 12. Known Release Risks
+Покрытие UI-аудита:
 
-Current known risks before a larger production rollout:
+- проверки десктопного и мобильного viewport;
+- навигация по основным разделам;
+- отсутствие ошибок консоли браузера;
+- отсутствие элементов с горизонтальным переполнением.
 
-- full `POST /api/workspace` saves are still last-write-wins snapshots, so concurrent broad edits can overwrite unrelated changes;
-- repeated "Итоги встречи" clicks can create duplicate meeting-log entries;
-- demo credentials must be intentionally configured before exposing a public demo;
-- CSS was covered by UI audit across main screens, but not every possible long-content edge case has visual regression coverage.
+Важно: smoke- и UI-тесты меняют общее состояние и должны идти последовательно против одного сервера.
 
-## 13. Source Notes for 1:1 Process Positioning
+## 14. Известные ограничения
 
-The product process is aligned with public 1:1 management material used during content preparation:
+Полный перечень находок и их статус - в [отчёте аудита 2026-10-04](audit/2026-10-04-audit.md). Здесь то, что осознанно отложено или остаётся риском.
 
-- TeamLead Conf abstract for "One-to-One-встречи и культура доверия" frames 1:1s as a retention and trust tool, including development management and prevention of drama, resentment, and unmet expectations.
-- KOTELOV podcast notes for "Почему one-to-one — это не просто формальность?" emphasize avoiding a shallow "как дела?" format, preparing context before the meeting, and aiming for win-win outcomes.
-- The other referenced YouTube videos are used by title/topic because transcripts were not accessible from the current environment.
+Осознанно отложено (нужно решение владельца или смена архитектуры):
+
+- **Демо-фикстуры в `normalizeDb`.** Нормализация при чтении и записи достраивает демо-данные (демо-людей, карточки, шаги, цели, ЛПР, опросы), и при первой записи они могут попасть в боевую базу; от пользователей они скрываются фильтрами по идентификаторам демо-людей. Это расходится с принципом «демо создаётся только сидингом» (находка arch-5 аудита). Вынос фикстур из `normalizeDb` и разовая чистка боевых баз отложены.
+- **Приватность участника.** Что участник видит о себе (`performanceNarrative`, оценки компетенций), порог анонимности и обновление в реальном времени - продуктовая политика, не решена.
+- **Монолитный фронтенд и бэкенд.** `src/App.jsx` и `server.js` остаются большими файлами без границ модулей; разнос на модули и общие константы клиент/сервер отложены.
+- **Хэширование токенов сессий.** Идентификатор сессии хранится в `sessions` в том же виде, что лежит в cookie; хэширование не сделано.
+- **Гранулярные PATCH по сущностям** вместо отправки рабочего пространства целиком отложены (см. ADR 0001).
+
+Остаётся как риск:
+
+- гонки двух правок одной строки решает оптимистичная блокировка и баннер `409`, а не слияние полей;
+- повторный клик «Итоги встречи» создаёт дубликаты записей `meeting_log`;
+- `GET /metrics` без авторизации, счётчики в памяти процесса; ограничение попыток входа тоже живёт в памяти и не масштабируется на несколько реплик;
+- тело `POST /api/workspace` ограничено 1 МБ, клиент шлёт рабочее пространство целиком, поэтому на очень больших командах сохранение упрётся в `413`;
+- логов запросов и алертов в коде нет (только строки `console.*`), расписания резервных копий нет;
+- демо-учётки нужно сознательно настраивать до публичного показа;
+- CSS покрыт UI-аудитом на основных экранах, но не каждый крайний случай длинного контента имеет визуальную регрессию.
+
+## 15. Источники для позиционирования процесса 1:1
+
+Процесс продукта согласован с публичными материалами по управлению 1:1, использованными при подготовке контента:
+
+- Тезисы TeamLead Conf «One-to-One-встречи и культура доверия» рассматривают 1:1 как инструмент удержания и доверия, включая управление развитием и предотвращение драмы, обид и неоправданных ожиданий.
+- Заметки подкаста KOTELOV «Почему one-to-one - это не просто формальность?» подчёркивают отказ от формального «как дела?», подготовку контекста до встречи и ориентацию на win-win.
+- Остальные упомянутые видео используются по названию и теме, потому что расшифровки из текущего окружения были недоступны.

@@ -11,7 +11,8 @@ import {
 import { createServer } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, scrypt, scryptSync, timingSafeEqual } from "node:crypto";
+import { promisify } from "node:util";
 import {
   people,
   initialCards,
@@ -31,7 +32,7 @@ import {
 import { HttpError } from "./lib/http-error.js";
 import { readJson } from "./lib/read-json.js";
 import { clientAddress as resolveClientAddress } from "./lib/client-address.js";
-import { syncWorkspace, VersionConflictError } from "./db/repositories/workspace.js";
+import { syncWorkspace, snapshotRows, VersionConflictError } from "./db/repositories/workspace.js";
 import {
   findSessionUser,
   findUserByUsername,
@@ -109,13 +110,7 @@ const failedLoginsByIp = new Map();
 // Pre-computed dummy hash so the login handler always runs scrypt, even when the
 // username does not exist. Without this, response time leaks whether a username
 // is registered (see /api/login).
-const dummyPasswordRecord = (() => {
-  const salt = randomBytes(16).toString("hex");
-  return {
-    salt,
-    passwordHash: scryptSync("dummy-password-for-constant-time", salt, 64).toString("hex")
-  };
-})();
+const dummyPasswordRecord = hashPasswordSync("dummy-password-for-constant-time");
 
 const securityHeaders = {
   "Content-Security-Policy":
@@ -153,17 +148,35 @@ const adminWritablePrepKeys = new Set(prepKeys);
 const employeeWritablePrepKeys = new Set(["employeeAgenda", "pulse", "lastActions", "growth", "commitments"]);
 const pulseKeys = ["energy", "load", "clarity", "trust"];
 
-function hashPassword(password, salt = randomBytes(16).toString("hex")) {
+// scrypt намеренно медленный (десятки миллисекунд CPU). Синхронный вариант
+// держал бы event loop на всё это время, и вход нескольких пользователей
+// подряд стопорил все остальные запросы, поэтому на путях запросов хеш
+// считается асинхронно, в пуле потоков libuv. Параметры и формат хранения
+// те же, что у scryptSync по умолчанию: уже сохранённые хеши проверяются.
+const scryptAsync = promisify(scrypt);
+
+async function hashPassword(password, salt = randomBytes(16).toString("hex")) {
+  return {
+    salt,
+    passwordHash: (await scryptAsync(password, salt, 64)).toString("hex")
+  };
+}
+
+async function verifyPassword(password, user) {
+  const candidate = await scryptAsync(password, user.salt, 64);
+  const stored = Buffer.from(user.passwordHash, "hex");
+  return stored.length === candidate.length && timingSafeEqual(stored, candidate);
+}
+
+// Синхронный вариант только для мест, где вызывающий код синхронен по
+// построению: normalizeDb (через ensureSeedLogin и seedUser) и сидирование.
+// Это старт процесса, /api/reset и файловый режим для локальной разработки;
+// на горячем пути запросов postgres-режима не выполняется.
+function hashPasswordSync(password, salt = randomBytes(16).toString("hex")) {
   return {
     salt,
     passwordHash: scryptSync(password, salt, 64).toString("hex")
   };
-}
-
-function verifyPassword(password, user) {
-  const candidate = scryptSync(password, user.salt, 64);
-  const stored = Buffer.from(user.passwordHash, "hex");
-  return stored.length === candidate.length && timingSafeEqual(stored, candidate);
 }
 
 function makeId(prefix) {
@@ -180,7 +193,7 @@ function seedUser({ username, password, name, role, personId = null, leadUserId 
     leadUserId,
     teamLabel,
     createdAt: new Date().toISOString(),
-    ...hashPassword(password)
+    ...hashPasswordSync(password)
   };
 }
 
@@ -598,7 +611,7 @@ function ensureSeedLogin(db, config) {
       leadUserId,
       teamLabel,
       createdAt: new Date().toISOString(),
-      ...hashPassword(config.password)
+      ...hashPasswordSync(config.password)
     });
     return;
   }
@@ -611,7 +624,7 @@ function ensureSeedLogin(db, config) {
     personId: config.personId,
     leadUserId,
     teamLabel,
-    ...(storageMode === "file" ? hashPassword(config.password) : {})
+    ...(storageMode === "file" ? hashPasswordSync(config.password) : {})
   };
 }
 
@@ -739,7 +752,7 @@ async function ensureAdminPassword(client) {
   const fingerprint = secretFingerprint(adminUsername, adminPassword);
   const stored = await readMeta(client, "admin_password_fingerprint");
   const existing = await client.query("select id from users where lower(username) = lower($1)", [adminUsername]);
-  const { salt, passwordHash } = hashPassword(adminPassword);
+  const { salt, passwordHash } = await hashPassword(adminPassword);
 
   if (!existing.rows[0]) {
     await client.query(
@@ -794,6 +807,7 @@ async function ensureSurveySecretVersion(client) {
 
 async function ensureAdminAccounts() {
   const client = await pgPool.connect();
+  let releaseError;
   try {
     await client.query("begin");
     // В local секрет опросов может не быть задан вовсе — тогда он один раз
@@ -810,16 +824,27 @@ async function ensureAdminAccounts() {
     await client.query("delete from sessions where expires_at < now()");
     await client.query("commit");
   } catch (error) {
-    await client.query("rollback");
+    releaseError = await rollbackQuietly(client);
     throw error;
   } finally {
-    client.release();
+    client.release(releaseError);
   }
 }
 
 // Признак того, что снимок неполон. Symbol, а не обычное поле: он не должен
 // попадать ни в JSON, ни в перебор ключей.
 const READ_ONLY = Symbol("readOnlySnapshot");
+
+// Базовое состояние строк, с которым снимок был прочитан из postgres (см.
+// snapshotRows). Запись снимка по нему идёт разностью: пишется только то,
+// что изменилось, удаляется только то, что снимок видел и потерял.
+// Параллельная запись соседа (чужая новая строка, свежий пароль, новая
+// сессия) не затирается, потому что в базе её просто не трогают.
+//
+// Symbol и enumerable: копия `{ ...db }` в обработчиках должна нести базу
+// дальше (иначе защита молча отключилась бы), а в JSON и Object.keys
+// символьный ключ не попадает.
+const BASE_ROWS = Symbol("baseRows");
 
 // Список колонок вынесен, потому что фаза вычисления скоупа читает те же
 // таблицы отдельным запросом, и разъехавшиеся списки дали бы разный скоуп на
@@ -1141,7 +1166,7 @@ async function readDb(options = {}) {
       meetingLogResult.rowCount + meetingDraftsResult.rowCount + notesResult.rowCount +
       usersResult.rowCount + sessionsResult.rowCount;
 
-    return normalizeDb({
+    const rawDb = {
       people: peopleResult.rows,
       lprs: lprsResult.rows.map((row) => ({
         ...row,
@@ -1217,11 +1242,43 @@ async function readDb(options = {}) {
         createdAt: session.createdAt?.toISOString?.() || session.createdAt,
         expiresAt: session.expiresAt?.toISOString?.() || session.expiresAt
       }))
-    });
+    };
+    const db = normalizeDb(rawDb);
+
+    // База для записи разностью. Считается по сырым строкам, а не по
+    // результату normalizeDb: нормализация достраивает демо-фикстуры, которых
+    // в базе может не быть, и «база» из нормализованного снимка объявила бы
+    // их уже записанными — они бы никогда не доехали до таблиц. Только
+    // полное чтение с учётными данными: усечённый снимок (скоуп, без
+    // salt/password_hash) базой быть не может, его запись и так запрещена.
+    // Подписи считаются один раз здесь, снимок не клонируется.
+    if (!personIds && !omitCredentials) {
+      Object.defineProperty(db, BASE_ROWS, {
+        value: snapshotRows(rawDb, { surveySecretVersion }),
+        enumerable: true,
+        writable: true,
+        configurable: true
+      });
+    }
+    return db;
   }
 
   const parsed = JSON.parse(readFileSync(dataFile, "utf8"));
   return normalizeDb(parsed);
+}
+
+// ROLLBACK не должен затирать исходную ошибку записи: если откат сам упал
+// (соединение оборвано), наверх должна уйти первопричина, а не «Connection
+// terminated». Вторая ошибка логируется и возвращается — её передают в
+// client.release(), чтобы пул выбросил сломанное соединение.
+async function rollbackQuietly(client) {
+  try {
+    await client.query("ROLLBACK");
+    return undefined;
+  } catch (rollbackError) {
+    console.error("ROLLBACK не удался, соединение будет уничтожено:", rollbackError);
+    return rollbackError;
+  }
 }
 
 async function writeDb(db, options = {}) {
@@ -1236,20 +1293,27 @@ async function writeDb(db, options = {}) {
 
   if (storageMode === "postgres") {
     const client = await pgPool.connect();
+    // Не-undefined значение отдаётся в client.release(): соединение с
+    // неоткатившейся транзакцией возвращать в пул нельзя, его уничтожают.
+    let releaseError;
     try {
       await client.query("BEGIN");
       await syncWorkspace(client, normalized, {
         replaceAuth,
         pulseHistoryRetentionDays,
         surveySecretVersion,
-        checkVersions: options.checkVersions === true
+        checkVersions: options.checkVersions === true,
+        // Базовое состояние, с которым снимок был прочитан. Есть только у
+        // снимков из полного readDb(); без него syncWorkspace работает как
+        // раньше (полный снимок: отсутствие строки = удаление).
+        base: db?.[BASE_ROWS]
       });
       await client.query("COMMIT");
     } catch (error) {
-      await client.query("ROLLBACK");
+      releaseError = await rollbackQuietly(client);
       throw error;
     } finally {
-      client.release();
+      client.release(releaseError);
     }
     return;
   }
@@ -1354,6 +1418,7 @@ async function upsertMeetingDraft(client, personId, body) {
 async function deletePersonById(personId) {
   if (storageMode === "postgres") {
     const client = await pgPool.connect();
+    let releaseError;
     try {
       await client.query("BEGIN");
       await client.query("delete from sessions where user_id in (select id from users where person_id = $1)", [personId]);
@@ -1361,10 +1426,10 @@ async function deletePersonById(personId) {
       await client.query("delete from people where id = $1", [personId]);
       await client.query("COMMIT");
     } catch (error) {
-      await client.query("ROLLBACK");
+      releaseError = await rollbackQuietly(client);
       throw error;
     } finally {
-      client.release();
+      client.release(releaseError);
     }
     return readDb();
   }
@@ -2262,6 +2327,7 @@ function applyMeetingStatePatch(db, user, personId, body = {}) {
 async function persistMeetingStatePatch(db, personId, state, changed) {
   if (storageMode === "postgres") {
     const client = await pgPool.connect();
+    let releaseError;
     try {
       await client.query("BEGIN");
       if (changed.prep) {
@@ -2277,10 +2343,10 @@ async function persistMeetingStatePatch(db, personId, state, changed) {
       }
       await client.query("COMMIT");
     } catch (error) {
-      await client.query("ROLLBACK");
+      releaseError = await rollbackQuietly(client);
       throw error;
     } finally {
-      client.release();
+      client.release(releaseError);
     }
     return;
   }
@@ -2414,8 +2480,45 @@ function sanitizeCompetencyAssessment(assessment = {}, personId) {
   };
 }
 
+// knownIds — идентификаторы, которые клиент видел (получил с сервера или сам
+// создал и успешно сохранил). Снимок от клиента без строки означает «удалил»
+// только для строки, которую клиент видел. Строка, появившаяся в базе уже
+// после его чтения (её создал сосед), ему неизвестна: её отсутствие в теле —
+// не удаление, и без этой защиты каждое сохранение стирало бы чужие новые
+// карточки. Без knownIds (старые клиенты, API-тесты) остаётся прежняя
+// семантика «нет в теле — удалено».
+//
+// Таблица отсутствует в результате, если поле не прислано или не массив:
+// тогда для неё действует прежнее поведение.
+const KNOWN_IDS_TABLES = ["cards", "actions", "goals", "lprs", "competencyAssessments"];
+const KNOWN_IDS_LIMIT = 20000;
+const KNOWN_ID_MAX_LENGTH = 200;
+
+function sanitizeKnownIds(raw) {
+  const known = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return known;
+  for (const table of KNOWN_IDS_TABLES) {
+    if (!Array.isArray(raw[table])) continue;
+    const idsForTable = new Set();
+    // Лимит на размер входа, а не на число принятых: мусор в начале списка не
+    // должен позволять провести через проверку 20000 элементов хвоста.
+    for (const id of raw[table].slice(0, KNOWN_IDS_LIMIT)) {
+      if (typeof id === "string" && id.length <= KNOWN_ID_MAX_LENGTH) idsForTable.add(id);
+    }
+    known[table] = idsForTable;
+  }
+  return known;
+}
+
+// Строку из базы, которой нет в теле, надо оставить: клиент её не видел.
+function keepUnseen(known, table, row) {
+  return Boolean(known[table]) && !known[table].has(String(row.id));
+}
+
 function mergeWorkspaceUpdate(db, user, incoming) {
   const ids = scopedPersonIds(db, user);
+  const known = sanitizeKnownIds(incoming.knownIds);
+  const idsOf = (rows) => new Set(rows.map((row) => String(row.id)));
   const incomingHasLprs = Array.isArray(incoming.lprs);
   const incomingLprs = incomingHasLprs ? incoming.lprs : [];
   const incomingCards = Array.isArray(incoming.cards) ? incoming.cards : [];
@@ -2429,33 +2532,42 @@ function mergeWorkspaceUpdate(db, user, incoming) {
     const visibleLprs = (incomingHasLprs ? incomingLprs : (db.lprs || []).filter((lpr) => ids.has(lpr.personId)))
       .filter((lpr) => ids.has(lpr.personId))
       .map((lpr) => sanitizeLpr(lpr, lpr.personId));
-    const visibleLprIds = new Set(visibleLprs.map((lpr) => lpr.id));
+    // Видимое администратору из базы, чего нет в теле и клиент об этом не
+    // знал (см. sanitizeKnownIds), остаётся как есть.
+    const unseenOf = (table, rows, sent) =>
+      rows.filter((row) => ids.has(row.personId) && !sent.has(String(row.id)) && keepUnseen(known, table, row));
+    const unseenLprs = incomingHasLprs ? unseenOf("lprs", db.lprs || [], idsOf(visibleLprs)) : [];
+    // Сохранённые ЛПР тоже считаются существующими: карточка, ссылающаяся на
+    // ЛПР, которого клиент не видел, не должна терять lprId.
+    const visibleLprIds = new Set([...visibleLprs, ...unseenLprs].map((lpr) => lpr.id));
     const hiddenCards = db.cards.filter((card) => !ids.has(card.personId));
     const hiddenActions = db.actions.filter((action) => !ids.has(action.personId));
     const hiddenGoals = (db.goals || []).filter((goal) => !ids.has(goal.personId));
     const hiddenAssessments = (db.competencyAssessments || []).filter((assessment) => !ids.has(assessment.personId));
-    db.lprs = [...hiddenLprs, ...visibleLprs];
-    db.cards = incomingCards
+    db.lprs = [...hiddenLprs, ...unseenLprs, ...visibleLprs];
+    const nextCards = incomingCards
       .filter((card) => ids.has(card.personId))
       .map((card) => sanitizeCard(card, card.personId, null, visibleLprIds));
-    db.cards = [...hiddenCards, ...db.cards];
-    db.actions = incomingActions
+    db.cards = [...hiddenCards, ...unseenOf("cards", db.cards, idsOf(nextCards)), ...nextCards];
+    const nextActions = incomingActions
       .filter((action) => ids.has(action.personId))
       .map((action) => sanitizeAction(action, action.personId));
-    db.actions = [...hiddenActions, ...db.actions];
-    db.goals = [
-      ...hiddenGoals,
-      ...incomingGoals
-        .filter((goal) => ids.has(goal.personId))
-        .map((goal) => sanitizeGoal(goal, goal.personId, visibleLprIds))
-    ];
+    db.actions = [...hiddenActions, ...unseenOf("actions", db.actions, idsOf(nextActions)), ...nextActions];
+    const nextGoals = incomingGoals
+      .filter((goal) => ids.has(goal.personId))
+      .map((goal) => sanitizeGoal(goal, goal.personId, visibleLprIds));
+    db.goals = [...hiddenGoals, ...unseenOf("goals", db.goals || [], idsOf(nextGoals)), ...nextGoals];
+    const nextAssessments = (incomingHasAssessments
+      ? incomingAssessments
+      : (db.competencyAssessments || []).filter((assessment) => ids.has(assessment.personId)))
+      .filter((assessment) => assessment && ids.has(assessment.personId))
+      .map((assessment) => sanitizeCompetencyAssessment(assessment, assessment.personId));
     db.competencyAssessments = [
       ...hiddenAssessments,
       ...(incomingHasAssessments
-        ? incomingAssessments
-        : (db.competencyAssessments || []).filter((assessment) => ids.has(assessment.personId)))
-        .filter((assessment) => assessment && ids.has(assessment.personId))
-        .map((assessment) => sanitizeCompetencyAssessment(assessment, assessment.personId))
+        ? unseenOf("competencyAssessments", db.competencyAssessments || [], idsOf(nextAssessments))
+        : []),
+      ...nextAssessments
     ];
     db.prep = mergePrepUpdate(db.prep, incoming.prep, ids, adminWritablePrepKeys);
     db.pulse = mergePulseUpdate(db.pulse, incoming.pulse, ids);
@@ -2472,8 +2584,13 @@ function mergeWorkspaceUpdate(db, user, incoming) {
   const personLprs = (incomingHasLprs ? incomingLprs : (db.lprs || []).filter((lpr) => lpr.personId === personId))
     .filter((lpr) => lpr.personId === personId)
     .map((lpr) => sanitizeLpr(lpr, personId));
-  const personLprIds = new Set(personLprs.map((lpr) => lpr.id));
-  db.lprs = [...otherLprs, ...personLprs];
+  const sentLprIds = idsOf(personLprs);
+  // ЛПР сотрудника, которого он не видел (создан параллельно), остаётся.
+  const unseenLprs = incomingHasLprs
+    ? (db.lprs || []).filter((lpr) => lpr.personId === personId && !sentLprIds.has(String(lpr.id)) && keepUnseen(known, "lprs", lpr))
+    : [];
+  const personLprIds = new Set([...personLprs, ...unseenLprs].map((lpr) => lpr.id));
+  db.lprs = [...otherLprs, ...unseenLprs, ...personLprs];
 
   const nextCardsById = new Map(incomingCards.filter((card) => card.personId === personId).map((card) => [String(card.id), card]));
   const preservedCards = [];
@@ -2497,6 +2614,8 @@ function mergeWorkspaceUpdate(db, user, incoming) {
     if (incomingCard) {
       employeeCardIds.add(String(card.id));
       preservedCards.push(sanitizeCard(incomingCard, personId, "employee", personLprIds));
+    } else if (keepUnseen(known, "cards", card)) {
+      preservedCards.push(card);
     }
   }
 
@@ -2526,6 +2645,8 @@ function mergeWorkspaceUpdate(db, user, incoming) {
     if (incomingAction) {
       employeeActionIds.add(String(action.id));
       preservedActions.push(sanitizeAction(incomingAction, personId, "employee"));
+    } else if (keepUnseen(known, "actions", action)) {
+      preservedActions.push(action);
     }
   }
 
@@ -2540,7 +2661,11 @@ function mergeWorkspaceUpdate(db, user, incoming) {
   const personGoals = incomingGoals
     .filter((goal) => goal.personId === personId)
     .map((goal) => sanitizeGoal(goal, personId, personLprIds));
-  db.goals = [...otherGoals, ...personGoals];
+  const sentGoalIds = idsOf(personGoals);
+  const unseenGoals = (db.goals || []).filter(
+    (goal) => goal.personId === personId && !sentGoalIds.has(String(goal.id)) && keepUnseen(known, "goals", goal)
+  );
+  db.goals = [...otherGoals, ...unseenGoals, ...personGoals];
 
   db.prep[personId] = sanitizePrepPatch(db.prep[personId] || {}, incoming.prep?.[personId] || {}, employeeWritablePrepKeys);
   db.pulse[personId] = sanitizePulsePatch(db.pulse[personId] || {}, incoming.pulse?.[personId] || {});
@@ -2567,7 +2692,7 @@ async function handleApi(request, response) {
         : (await readDb()).users.find((item) => item.username.toLowerCase() === username.toLowerCase());
     // Run scrypt unconditionally so response time does not reveal whether the
     // username exists.
-    const passwordOk = verifyPassword(String(body.password || ""), user || dummyPasswordRecord);
+    const passwordOk = await verifyPassword(String(body.password || ""), user || dummyPasswordRecord);
 
     if (!user || !passwordOk) {
       recordFailedLogin(request, username);
@@ -2665,7 +2790,7 @@ async function handleApi(request, response) {
     }
     const currentPassword = String(body.currentPassword || "");
     // 400, а не 401: клиент разлогинивает по тексту «авторизация» в ошибке.
-    if (!currentPassword || !verifyPassword(currentPassword, context.user)) {
+    if (!currentPassword || !(await verifyPassword(currentPassword, context.user))) {
       recordFailedLogin(request, context.user.username);
       sendJson(response, 400, { error: "Неверный текущий пароль" });
       return;
@@ -2676,7 +2801,7 @@ async function handleApi(request, response) {
       sendJson(response, 400, { error: "Пароль должен быть не короче 8 символов" });
       return;
     }
-    const credentials = hashPassword(password);
+    const credentials = await hashPassword(password);
     Object.assign(context.user, credentials);
     if (storageMode === "postgres") {
       await updateUserPassword(pgPool, context.user.id, credentials);
@@ -2834,7 +2959,7 @@ async function handleApi(request, response) {
         leadUserId: null,
         teamLabel: teamLabel.slice(0, 120),
         createdAt: new Date().toISOString(),
-        ...hashPassword(password)
+        ...(await hashPassword(password))
       };
 
       context.db.users.push(user);
@@ -2920,7 +3045,7 @@ async function handleApi(request, response) {
       leadUserId,
       teamLabel: String(isPlainLead(context.user) ? callerTeamLabel || person.team : body.teamLabel || body.personTeam || person.team || "").slice(0, 120),
       createdAt: new Date().toISOString(),
-      ...hashPassword(password)
+      ...(await hashPassword(password))
     };
 
     context.db.users.push(user);
@@ -2968,7 +3093,7 @@ async function handleApi(request, response) {
       return;
     }
 
-    Object.assign(targetUser, hashPassword(password));
+    Object.assign(targetUser, await hashPassword(password));
     context.db.sessions = context.db.sessions.filter((session) => session.userId !== targetUser.id);
     await writeDb(context.db);
     sendJson(response, 200, { user: publicUser(targetUser), users: scopedUsers(context.db, context.user) });
@@ -3599,6 +3724,14 @@ async function handleHealth(pathname, request, response) {
     return;
   }
 
+  // /readyz: после SIGTERM инстанс должен выйти из ротации балансировщика
+  // раньше, чем перестанет принимать соединения. /healthz при этом остаётся
+  // 200 — процесс жив, и рестарт по liveness в разгар остановки не нужен.
+  if (shuttingDown) {
+    sendJson(response, 503, { status: "shutting_down" });
+    return;
+  }
+
   try {
     const ready = await isStorageReady();
     sendJson(response, ready ? 200 : 503, {
@@ -3692,18 +3825,37 @@ server.listen(port, "0.0.0.0", () => {
 });
 
 const shutdownTimeoutMs = Number(process.env.SHUTDOWN_TIMEOUT_MS) || 10_000;
+// Пауза между «/readyz отвечает 503» и закрытием слушателя: балансировщику
+// нужно время, чтобы заметить 503 и перестать слать сюда новые запросы.
+// Без неё запросы, уже летящие к инстансу, получают connection refused.
+// Локально и в тестах паузы нет — не замедляем перезапуск и Playwright.
+const shutdownDrainMs = process.env.SHUTDOWN_DRAIN_MS !== undefined && process.env.SHUTDOWN_DRAIN_MS !== ""
+  ? Math.max(0, Number(process.env.SHUTDOWN_DRAIN_MS) || 0)
+  : isProduction
+    ? 3000
+    : 0;
 let shuttingDown = false;
 
-function shutdown(signal) {
+async function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`${signal} received, shutting down`);
 
+  // Таймер общий и стартует до паузы дренажа: дренаж входит в бюджет
+  // остановки, а не прибавляется к нему.
   const forceExit = setTimeout(() => {
     console.error(`Graceful shutdown exceeded ${shutdownTimeoutMs}ms, forcing exit`);
     process.exit(1);
   }, shutdownTimeoutMs);
   forceExit.unref();
+
+  // Не дольше половины бюджета: иначе при коротком SHUTDOWN_TIMEOUT_MS
+  // принудительный выход срабатывал бы раньше server.close(), и остановка
+  // всегда заканчивалась бы кодом 1 без закрытия соединений.
+  const drainMs = Math.min(shutdownDrainMs, shutdownTimeoutMs / 2);
+  if (drainMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, drainMs));
+  }
 
   server.close(async () => {
     try {

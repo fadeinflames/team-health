@@ -4,7 +4,7 @@
       "content": "Team Health 1:1 is a Node.js + React product for recurring team-management workflows: 1:1 agendas, live meeting notes, pulse, action items, development plans, goals, surveys, competency assessments, reports, and role-scoped access. The main implementation lives in server.js, src/App.jsx, and src/styles.css. The generated wiki should explain product flows as well as code architecture."
     },
     {
-      "content": "server.js is intentionally a compact custom Node HTTP server. It owns auth, sessions, PostgreSQL schema migration, local file fallback, data normalization, role scoping, API routes, survey anonymity, meeting-state patches, and Railway production safety checks."
+      "content": "server.js is intentionally a compact custom Node HTTP server. It owns auth, sessions, schema-version check (the schema itself is created by migrations/ via scripts/migrate.mjs, never by the app), diff-based workspace writes (db/repositories/*), local file fallback, data normalization, role scoping, API routes, survey anonymity, meeting-state patches, and Railway production safety checks."
     },
     {
       "content": "src/App.jsx is a single React application shell with sections for Home, 1:1 meetings, LPR, Goals, Surveys, Reports, Team, Admin, and Settings. The wiki should call out the live meeting protocol, competency matrix, lead-scoped team management, anonymous survey behavior, and production reset guard."

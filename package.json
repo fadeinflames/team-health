@@ -25,6 +25,8 @@
     "migrate:baseline": "node scripts/migrate.mjs baseline",
     "migrate:new": "node scripts/migrate.mjs create",
     "seed": "node scripts/seed.mjs",
+    "db:backup": "node scripts/backup.mjs dump",
+    "db:backup:verify": "node scripts/backup.mjs verify",
     "secrets": "node scripts/secrets.mjs init",
     "secrets:check": "node scripts/secrets.mjs check",
     "admin-password": "node scripts/admin-password.mjs rotate"

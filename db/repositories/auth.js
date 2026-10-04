@@ -67,6 +67,9 @@ export async function findUserByUsername(pool, username) {
 // это делалось на каждом запросе, теперь на одном из самых редких.
 export async function createSession(pool, session) {
   const client = await pool.connect();
+  // Если откат сам упал, соединение возвращать в пул нельзя, а наверх должна
+  // уйти исходная ошибка, а не ошибка отката.
+  let releaseError;
   try {
     await client.query("begin");
     await client.query("delete from sessions where user_id = $1", [session.userId]);
@@ -77,10 +80,15 @@ export async function createSession(pool, session) {
     await client.query("delete from sessions where expires_at < now()");
     await client.query("commit");
   } catch (error) {
-    await client.query("rollback");
+    try {
+      await client.query("rollback");
+    } catch (rollbackError) {
+      console.error("ROLLBACK не удался, соединение будет уничтожено:", rollbackError);
+      releaseError = rollbackError;
+    }
     throw error;
   } finally {
-    client.release();
+    client.release(releaseError);
   }
 }
 

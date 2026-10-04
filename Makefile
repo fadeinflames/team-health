@@ -21,7 +21,7 @@ IN_DB_URL = postgresql:///$(or $(DB_NAME),team_health)?host=/var/run/postgresql&
 .PHONY: help env secrets secrets-force secrets-check install dev dev-api dev-web build start preview check reset-data clean \
         up up-prod down down-v logs ps rebuild sh db-shell \
         migrate migrate-status migrate-new migrate-down migrate-baseline seed \
-        db-schema db-drift db-dump db-restore db-vacuum db-bloat admin-password \
+        db-schema db-drift db-dump db-restore db-backup db-backup-verify db-vacuum db-bloat admin-password \
         test-install test test-smoke test-ui test-docker \
         image image-push
 
@@ -168,6 +168,16 @@ db-dump: ## Снять полный бэкап локальной базы в ba
 		echo "pg_dump завершился ошибкой, бэкап не создан" >&2; \
 		exit 1; \
 	fi
+
+# Бэкап по DATABASE_URL (боевая или любая внешняя база), а не из контейнера
+# compose. Логика и защиты в scripts/backup.mjs; нужен pg_dump в PATH.
+# DATABASE_URL берётся из окружения shell, .env Makefile не читает.
+db-backup: ## Снять бэкап базы из DATABASE_URL в backups/ (нужен pg_dump)
+	@node scripts/backup.mjs dump
+
+db-backup-verify: ## Проверить бэкап: make db-backup-verify file=backups/....dump
+	@test -n "$(file)" || (echo "Укажи файл: make db-backup-verify file=backups/team-health-....dump" && exit 1)
+	@node scripts/backup.mjs verify "$(file)"
 
 db-vacuum: ## Разовая чистка после перехода на точечные записи (окно обслуживания)
 	@echo "VACUUM FULL блокирует таблицы целиком. Делайте это в окне обслуживания."

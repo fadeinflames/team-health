@@ -266,6 +266,9 @@ export const usersTable = {
   // lead_user_id проставляется вторым проходом: ссылка на другого
   // пользователя может указывать на строку, которой в базе ещё нет.
   immutable: ["created_at", "lead_user_id"],
+  // lead_user_id не едет через upsert, но смена руководителя — это изменение
+  // строки, и запись разностью обязана его заметить.
+  extraSignature: (u) => [u.leadUserId || null],
   columns: [
     { name: "id", type: "text", value: (u) => u.id },
     { name: "username", type: "text", value: (u) => u.username },
