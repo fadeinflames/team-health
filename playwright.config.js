@@ -4,6 +4,8 @@ import { defineConfig, devices } from "@playwright/test";
 // поэтому параллелизм выключен намеренно.
 export default defineConfig({
   testDir: "tests",
+  // tests/unit и tests/integration запускает node:test, а не Playwright.
+  testMatch: "**/*.spec.js",
   timeout: 120_000,
   workers: 1,
   fullyParallel: false,

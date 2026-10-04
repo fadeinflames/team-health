@@ -13,10 +13,13 @@
   --track-muted: #e1e8e1;
   --ink: #17201d;
   --ink-soft: #2c3a35;
-  --muted: #6f7871;
+  /* #6f7871 давал 4.06-4.24:1 на bg/soft/tint; #5f6862 держит >=4.5:1 на всех подложках */
+  --muted: #5f6862;
   --muted-soft: #98a39c;
   --line: #dce3dc;
   --line-strong: #c7d1c8;
+  /* Граница полей ввода: --line даёт 1.2-1.3:1, а граница — единственное, что выделяет поле (WCAG 1.4.11, >=3:1) */
+  --field-border: #848e87;
   --teal: #4f8879;
   --teal-dark: #2f665a;
   --teal-soft: rgba(79, 136, 121, 0.12);
@@ -28,6 +31,11 @@
   --rose-soft: rgba(179, 107, 104, 0.14);
   --blue: #597c90;
   --blue-soft: rgba(89, 124, 144, 0.14);
+  /* Цвета текста для статусов: заливочные --rose/--amber/--green/--blue дают 2.8-4.0:1 на своих soft-плашках */
+  --rose-text: #8b4946;
+  --amber-text: #86521e;
+  --green-text: #4e682e;
+  --blue-text: #365f73;
   --shadow: 0 18px 50px rgba(23, 32, 29, 0.08);
   --shadow-soft: 0 6px 20px rgba(23, 32, 29, 0.05);
   --shadow-elev: 0 24px 70px rgba(23, 32, 29, 0.12);
@@ -55,9 +63,11 @@
   --ink: #ecf3ee;
   --ink-soft: #c2cfc7;
   --muted: #8b9b94;
-  --muted-soft: #6a7973;
+  /* плейсхолдеры в тёмной теме: #6a7973 давал 3.67:1 на surface */
+  --muted-soft: #7f8e87;
   --line: #2a322f;
   --line-strong: #3e4844;
+  --field-border: #6e7d76;
   --teal: #6fae9e;
   --teal-dark: #4f8879;
   --teal-soft: rgba(111, 174, 158, 0.18);
@@ -69,6 +79,12 @@
   --rose-soft: rgba(201, 136, 133, 0.2);
   --blue: #88a7ba;
   --blue-soft: rgba(136, 167, 186, 0.2);
+  /* Светлее базовых --rose/--green/--amber/--blue: полупрозрачные soft-плашки в тёмной теме
+     (в т.ч. двойная заливка в карточке достигнутой цели) давали 3.8-4.4:1 */
+  --rose-text: #d9a3a0;
+  --amber-text: #dba978;
+  --green-text: #acc799;
+  --blue-text: #94b0c1;
   --shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
   --shadow-soft: 0 6px 20px rgba(0, 0, 0, 0.32);
   --shadow-elev: 0 28px 80px rgba(0, 0, 0, 0.55);
@@ -159,7 +175,7 @@
 :root[data-theme="dark"] select {
   background: var(--surface);
   color: var(--ink);
-  border-color: var(--line);
+  border-color: var(--field-border);
 }
 
 :root[data-theme="dark"] input::placeholder,
@@ -196,11 +212,18 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  /* html { scroll-behavior: smooth } объявлен ниже по файлу с той же специфичностью, поэтому нужен !important */
+  html {
+    scroll-behavior: auto !important;
+  }
+
   *,
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 
@@ -585,9 +608,17 @@ h4 {
   margin-bottom: 16px;
   padding: 11px 12px;
   color: var(--muted);
-  border: 1px solid var(--line);
+  border: 1px solid var(--field-border);
   border-radius: var(--radius);
   background: var(--surface);
+}
+
+/* Рамка у самого input скрыта (он без границы внутри контейнера), поэтому фокус
+   показываем на контейнере, иначе кольцо рисовалось бы вокруг голого текста */
+.search-field:focus-within {
+  border-color: var(--teal-dark);
+  outline: 2px solid var(--teal-dark);
+  outline-offset: 2px;
 }
 
 .search-field input {
@@ -595,8 +626,16 @@ h4 {
   min-width: 0;
   color: var(--ink);
   border: 0;
-  outline: 0;
   background: transparent;
+}
+
+.search-field input:focus-visible {
+  outline: 0;
+}
+
+/* кольцо рисует контейнер; базовое input:focus добавляло бы ещё и свечение вокруг голого текста */
+.search-field input:focus {
+  box-shadow: none;
 }
 
 .search-field input:disabled {
@@ -1660,7 +1699,7 @@ h4 {
 }
 
 .urgent-meta em {
-  color: var(--amber);
+  color: var(--amber-text);
   font-style: normal;
 }
 
@@ -2185,7 +2224,7 @@ textarea {
   margin-top: 7px;
   padding: 11px 12px;
   color: var(--ink);
-  border: 1px solid var(--line);
+  border: 1px solid var(--field-border);
   border-radius: var(--radius);
   outline: none;
   background: var(--surface-control);
@@ -2225,9 +2264,16 @@ textarea:focus {
 }
 
 .form-error {
-  color: var(--rose);
+  color: var(--rose-text);
   border: 1px solid var(--rose-soft);
   background: var(--rose-soft);
+}
+
+/* Подложка #edf7f2 остаётся светлой и в тёмной теме, а --teal-dark там #4f8879 (3.74:1);
+   берём светлотемное значение токена */
+:root[data-theme="dark"] .access-note,
+:root[data-theme="dark"] .form-hint {
+  color: #2f665a;
 }
 
 .inline-error {
@@ -2329,6 +2375,9 @@ textarea:focus {
 input[type="range"] {
   accent-color: var(--teal-dark);
   padding: 0;
+  /* базовая граница полей стала контрастной (--field-border); у ползунка рамки быть не должно,
+     иначе вокруг трека проступает серый прямоугольник */
+  border-color: transparent;
 }
 
 .health-insights {
@@ -2992,6 +3041,16 @@ input[type="range"] {
   color: var(--muted);
 }
 
+/* --teal-dark в тёмной теме тёмный (#4f8879) и на teal-soft даёт 2.98:1 */
+:root[data-theme="dark"] .goal-chip {
+  color: var(--teal);
+}
+
+/* специфичность выше, чем у .goal-chip.muted, поэтому приглушённый вариант возвращаем явно */
+:root[data-theme="dark"] .goal-chip.muted {
+  color: var(--muted);
+}
+
 .goal-status {
   margin-left: auto;
   font-size: 11px;
@@ -3000,28 +3059,28 @@ input[type="range"] {
   padding: 3px 10px;
   border-radius: var(--radius-pill);
   background: var(--blue-soft);
-  color: var(--blue);
+  color: var(--blue-text);
   font-weight: 600;
 }
 
 .goal-status.status-achieved {
   background: var(--green-soft);
-  color: var(--green);
+  color: var(--green-text);
 }
 
 .goal-status.status-abandoned {
   background: var(--rose-soft);
-  color: var(--rose);
+  color: var(--rose-text);
 }
 
 .goal-status.status-paused {
   background: var(--amber-soft);
-  color: var(--amber);
+  color: var(--amber-text);
 }
 
 .goal-status.status-done {
   background: var(--green-soft);
-  color: var(--green);
+  color: var(--green-text);
 }
 
 .goal-card.status-paused {
@@ -3159,8 +3218,11 @@ input[type="range"] {
   cursor: pointer;
 }
 
-.goal-progress-range:focus {
-  outline: none;
+.goal-progress-range:focus-visible {
+  /* Без этого остался бы только scale(1.1) у бегунка, а его не видно на фоне трека */
+  outline: 2px solid var(--teal-dark);
+  outline-offset: 3px;
+  border-radius: var(--radius-pill);
 }
 
 .goal-progress-range::-webkit-slider-runnable-track {
@@ -3445,6 +3507,19 @@ button.heatmap-row:hover {
   background: var(--surface-soft);
 }
 
+/* Цифры выше заданы тёмными оттенками под светлую тему; в тёмной они дают ~1.8:1 на
+   полупрозрачных soft-заливках. Смысл несёт заливка, поэтому цифры берём --ink (8+:1,
+   в т.ч. на tint при hover строки), а светлую подложку .watch заменяем на soft-токен. */
+:root[data-theme="dark"] .heatmap-cell.good,
+:root[data-theme="dark"] .heatmap-cell.watch,
+:root[data-theme="dark"] .heatmap-cell.risk {
+  color: var(--ink);
+}
+
+:root[data-theme="dark"] .heatmap-cell.watch {
+  background: var(--amber-soft);
+}
+
 .recommendation-list {
   display: grid;
   gap: 8px;
@@ -3568,6 +3643,13 @@ button.heatmap-row:hover {
   color: #8b4946;
   background: var(--rose-soft);
   border-color: rgba(179, 107, 104, 0.34);
+}
+
+/* Тот же дефект, что у .heatmap-cell: жёсткий тёмный цвет на полупрозрачной заливке */
+:root[data-theme="dark"] .competency-score.good,
+:root[data-theme="dark"] .competency-score.watch,
+:root[data-theme="dark"] .competency-score.risk {
+  color: var(--ink);
 }
 
 .competency-score.empty {
@@ -3839,7 +3921,7 @@ button.heatmap-row:hover {
   padding: 11px 12px;
   background: var(--surface-control);
   color: var(--ink);
-  border: 1px solid var(--line);
+  border: 1px solid var(--field-border);
   border-radius: var(--radius);
   font: inherit;
   cursor: pointer;
@@ -3923,7 +4005,7 @@ button.heatmap-row:hover {
 }
 
 .date-picker-weekdays .weekend {
-  color: var(--rose);
+  color: var(--rose-text);
 }
 
 .date-picker-grid {
@@ -3960,7 +4042,7 @@ button.heatmap-row:hover {
 }
 
 .date-picker-day.weekend:not(.selected):not(.out) {
-  color: var(--rose);
+  color: var(--rose-text);
 }
 
 .date-picker-day.today {
@@ -4245,6 +4327,13 @@ button.heatmap-row:hover {
 .action-row:hover .action-row-buttons,
 .action-row:focus-within .action-row-buttons {
   opacity: 1;
+}
+
+/* На тач-экранах hover не бывает, и кнопки «Изменить/Удалить» остались бы невидимыми при том, что нажимаются */
+@media (hover: none) {
+  .action-row .action-row-buttons {
+    opacity: 1;
+  }
 }
 
 .action-edit-fields {
@@ -4733,7 +4822,7 @@ button.heatmap-row:hover {
 }
 
 .survey-question em {
-  color: var(--rose);
+  color: var(--rose-text);
   font-style: normal;
   margin-left: 2px;
 }

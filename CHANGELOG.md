@@ -4,7 +4,22 @@
 
 Schema management moves out of the application into migrations, secrets get a lifecycle, and mutations stop rewriting the whole database.
 
+### Fixed (audit 2026-10-04, wave 1)
+
+- Text containing «продаж», «sales» or «биллинг» is no longer silently dropped from cards, actions and notes (and, in PostgreSQL, deleted on the next write). The word filter is gone.
+- Request bodies are decoded once from bytes, so Cyrillic split across network chunks is no longer corrupted; the size limit counts bytes; a body that is not a JSON object answers 400.
+- The login rate limit can no longer be bypassed by forging the left side of `X-Forwarded-For`: the client address is taken from the right (`TRUSTED_PROXY_HOPS`, default 1). A successful login resets only the `ip:username` counter, the counters are bounded in size and key length.
+- An unauthenticated request no longer reads the whole database (including password hashes) before answering 401.
+- The client no longer retries a rejected save forever: a 409 shows a conflict banner with «load current data» / «overwrite with mine»; other 4xx stop retrying; network errors and 5xx back off up to 30 s. Changing an LPR status no longer forges a client-side `updatedAt` that caused a false 409.
+- CSV exports are protected against formula injection (`src/csv.js`); destructive deletes ask for confirmation; save errors and toasts are announced (`role=alert` / `role=status`); closing the tab with unsaved edits warns; an error boundary replaces the blank screen after a render crash.
+- Accessibility: visible focus on search and goal sliders, text contrast of muted and status colours raised to AA, reduced-motion respected.
+- CI: the burned-values check no longer fails on its own block list; jobs have timeouts and concurrency groups; unit tests run in CI. Scripts treat Railway as production (`scripts/lib/env.mjs`), `redo` follows the same guard as `down`, a held migration lock exits 1, and `up` on an unbaselined legacy database prints the baseline instruction instead of failing obscurely.
+
 ### Breaking
+
+- **`POST /api/me/password` requires `currentPassword`.** A missing or wrong value answers 400 «Неверный текущий пароль» (not 401); attempts count towards the login rate limit.
+- **HSTS** (`Strict-Transport-Security`, six months, no subdomains) is sent when `APP_ENV=production`.
+- **`lib/` is part of the runtime image** (`server.js` imports it); the Dockerfile copies it.
 
 - **Demo data is no longer recreated on start.** `seedPostgres()` used to run on every boot, so deleted demo people, cards and goals came back after a restart — including in production. Seeding is now `make seed` / `npm run seed`, refuses to run outside `local` without `--force`, and demo fixtures live in `fixtures/demo.json`. If you relied on demo data reappearing, run the seed explicitly.
 - **The default admin login changed to `admin`, and the default password is gone.** There is no default password in any environment: outside `local` a missing `ADMIN_PASSWORD` refuses the start, in `local` one is generated on first run and printed once. Set `ADMIN_USERNAME` explicitly before upgrading if you were relying on the old default. The previous default password must be treated as compromised — it is in the public git history — and rotated anywhere it was reused.

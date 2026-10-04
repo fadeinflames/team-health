@@ -54,6 +54,8 @@ ENV NODE_ENV=production \
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY server.js ./
+# server.js импортирует ./lib/*: без каталога контейнер падает на старте.
+COPY lib ./lib
 # Миграции едут в том же образе, что и код, который их ожидает. Отдельный
 # образ для миграций рано или поздно разъедется по версиям.
 COPY migrations ./migrations

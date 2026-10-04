@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { toCsv } from "./csv.js";
 import {
   Activity,
   AlertTriangle,
@@ -647,7 +648,14 @@ function formatRuDate(iso) {
 const sectionRegistry = {
   home: { label: "Главная", eyebrow: "Сводка команды", title: "Дашборд команды", icon: Home },
   meetings: { label: "1:1 встречи", eyebrow: "Повестка и шаги", title: "1:1", icon: MessageSquarePlus },
-  lprs: { label: "ЛПР", eyebrow: "1:1 -> ЛПР -> цели", title: "ЛПР", icon: ClipboardCheck },
+  // Аббревиатуру нигде больше не расшифровывали: новый человек не понимал, что за раздел.
+  lprs: {
+    label: "ЛПР",
+    hint: "ЛПР — личный план развития",
+    eyebrow: "Личный план развития: 1:1 -> ЛПР -> цели",
+    title: "ЛПР",
+    icon: ClipboardCheck
+  },
   goals: { label: "Цели", eyebrow: "Развитие и фокус", title: "Цели", icon: Target },
   surveys: { label: "Опросы", eyebrow: "Регулярная обратная связь", title: "Опросы", icon: ClipboardList },
   reports: { label: "Отчёты", eyebrow: "Аналитика и тренды", title: "Отчёты", icon: BarChart3 },
@@ -1073,22 +1081,50 @@ function isProtectedAccess(user) {
   return isPlatformAdminRole(user);
 }
 
+// Клиент решает, что делать с ошибкой (разлогин, конфликт, повтор), по коду
+// ответа, а не по тексту: тексты меняются, а «авторизация» в чужом сообщении
+// уже один раз разлогинила человека. status 0 — до сервера запрос не дошёл.
+class ApiError extends Error {
+  constructor(status, payload, message) {
+    super(message || payload?.error || "Ошибка запроса");
+    this.name = "ApiError";
+    this.status = status;
+    this.payload = payload || {};
+  }
+}
+
 async function apiFetch(path, options = {}) {
-  const response = await fetch(path, {
-    credentials: "same-origin",
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {})
-    },
-    ...options
-  });
+  let response;
+  try {
+    response = await fetch(path, {
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers || {})
+      },
+      ...options
+    });
+  } catch {
+    throw new ApiError(0, {}, "Нет связи с сервером");
+  }
 
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(payload.error || "Ошибка запроса");
+    throw new ApiError(response.status, payload);
   }
 
   return payload;
+}
+
+// Пауза между повторами сохранения: 1.6 с, затем вдвое дольше, но не более 30 с.
+const SAVE_RETRY_FIRST_MS = 1600;
+const SAVE_RETRY_MAX_MS = 30000;
+
+// Повторять имеет смысл только то, что может пройти само: сеть и 5xx. 4xx
+// означает, что сервер отказался именно от этого запроса, и тот же снимок
+// будет отвергнут снова.
+function isRetryableError(error) {
+  return !(error instanceof ApiError) || error.status === 0 || error.status >= 500;
 }
 
 export default function App() {
@@ -1103,6 +1139,8 @@ export default function App() {
   const [loginError, setLoginError] = useState("");
   const [saveError, setSaveError] = useState("");
   const [saveRetryTick, setSaveRetryTick] = useState(0);
+  // 409 при сохранении: {conflicts, workspace} с актуальным состоянием сервера.
+  const [conflict, setConflict] = useState(null);
   const [newCard, setNewCard] = useState({
     source: "employee",
     category: "checkin",
@@ -1136,7 +1174,11 @@ export default function App() {
     nextMeeting: "нужно запланировать",
     managerFocus: ""
   });
-  const [userMessage, setUserMessage] = useState("");
+  // Ошибки отделены от успехов: успех сам гаснет и озвучивается вежливо
+  // (role="status"), ошибка висит до следующего действия и озвучивается сразу.
+  const [userNotice, setUserNotice] = useState({ text: "", error: false });
+  const setUserMessage = (text) => setUserNotice({ text, error: false });
+  const setUserError = (text) => setUserNotice({ text, error: true });
   const [formErrors, setFormErrors] = useState({});
   const [profileName, setProfileName] = useState("");
   const [showCreateLoginForm, setShowCreateLoginForm] = useState(false);
@@ -1152,6 +1194,8 @@ export default function App() {
     });
   const [peopleSearch, setPeopleSearch] = useState("");
   const [pendingDeletePersonId, setPendingDeletePersonId] = useState("");
+  // Подтверждение остальных удалений: «вид:id» объекта, ждущего второго клика.
+  const [pendingDeleteKey, setPendingDeleteKey] = useState("");
   const [newGoal, setNewGoal] = useState({
     personId: "",
     lprId: "",
@@ -1188,6 +1232,7 @@ export default function App() {
   const [editingActionId, setEditingActionId] = useState("");
   const [actionEditDraft, setActionEditDraft] = useState({ title: "", due: "", dueDate: "" });
   const [expandedMeetingId, setExpandedMeetingId] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
   const [myPassword, setMyPassword] = useState("");
   const [newManagerNote, setNewManagerNote] = useState({ body: "", tags: [] });
   const [pulseDrafts, setPulseDrafts] = useState({});
@@ -1237,6 +1282,14 @@ export default function App() {
   const [revealSummary, setRevealSummary] = useState(false);
   const summaryPanelRef = useRef(null);
   const dirtyRef = useRef(false);
+  const workspaceRef = useRef(null);
+  const saveInFlightRef = useRef(false);
+  // Почему автосохранение стоит: "conflict" ждёт решения человека, "rejected"
+  // — сервер отклонил снимок (4xx), ждём правки или «Повторить».
+  const saveHaltRef = useRef("");
+  const saveRetryDelayRef = useRef(SAVE_RETRY_FIRST_MS);
+  const meetingStateInFlightRef = useRef(false);
+  const meetingStateRetryDelayRef = useRef(SAVE_RETRY_FIRST_MS);
   const retrySaveTimerRef = useRef(null);
   const meetingStateSaveTimerRef = useRef(null);
   const meetingStateSaveQueueRef = useRef({});
@@ -1255,16 +1308,59 @@ export default function App() {
     bootstrap();
   }, []);
 
+  workspaceRef.current = workspace;
+
   // Coalesce rapid edits (slider drags, typing) into a single trailing save.
   useEffect(() => {
-    if (!workspace || !dirtyRef.current) return undefined;
+    if (!workspace || !dirtyRef.current || saveHaltRef.current) return undefined;
     const snapshot = workspace;
     const timeoutId = window.setTimeout(() => {
+      // Пока предыдущее сохранение в полёте, новое не шлём: оно ушло бы со
+      // старой версией строк и получило бы 409 от собственной же записи.
+      // Правки остаются dirty, а saveWorkspace по завершении запустит цикл заново.
+      if (!dirtyRef.current || saveInFlightRef.current) return;
       dirtyRef.current = false;
       void saveWorkspace(snapshot);
     }, 350);
     return () => window.clearTimeout(timeoutId);
   }, [workspace, saveRetryTick]);
+
+  // Закрытие вкладки с несохранёнными правками или записью в полёте теряет
+  // данные молча; браузер хотя бы переспросит. А когда вкладку прячут
+  // (переключение, закрытие на телефоне), пробуем отправить правки сразу.
+  useEffect(() => {
+    const hasUnsavedChanges = () =>
+      dirtyRef.current ||
+      saveInFlightRef.current ||
+      meetingStateInFlightRef.current ||
+      Object.keys(meetingStateSaveQueueRef.current).length > 0;
+
+    function handleBeforeUnload(event) {
+      if (!hasUnsavedChanges()) return;
+      event.preventDefault();
+      event.returnValue = "";
+    }
+
+    function handleVisibilityChange() {
+      if (document.visibilityState !== "hidden") return;
+      if (meetingStateSaveTimerRef.current) {
+        window.clearTimeout(meetingStateSaveTimerRef.current);
+        void flushMeetingStateSaves();
+      }
+      // Остановленное сохранение (конфликт, отказ сервера) вслепую не шлём.
+      if (dirtyRef.current && !saveInFlightRef.current && !saveHaltRef.current && workspaceRef.current) {
+        dirtyRef.current = false;
+        void saveWorkspace(workspaceRef.current);
+      }
+    }
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -1278,10 +1374,11 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!userMessage) return undefined;
+    // Ошибку не гасим по таймеру: человек мог не успеть её прочитать.
+    if (!userNotice.text || userNotice.error) return undefined;
     const timeoutId = window.setTimeout(() => setUserMessage(""), 3600);
     return () => window.clearTimeout(timeoutId);
-  }, [userMessage]);
+  }, [userNotice]);
 
   useEffect(() => {
     setProfileName(user?.name || "");
@@ -1384,8 +1481,26 @@ export default function App() {
     }
   }
 
+  // Состояние сохранения принадлежит прошлой сессии (выход, 401) и не должно
+  // перейти к следующему человеку на этом экране: ни правки, ни остановка
+  // автосохранения, ни очередь meeting-state, ни таймеры повтора.
+  function resetSaveState() {
+    dirtyRef.current = false;
+    saveHaltRef.current = "";
+    saveRetryDelayRef.current = SAVE_RETRY_FIRST_MS;
+    meetingStateRetryDelayRef.current = SAVE_RETRY_FIRST_MS;
+    for (const timerRef of [retrySaveTimerRef, meetingStateSaveTimerRef]) {
+      if (timerRef.current) window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    meetingStateSaveQueueRef.current = {};
+    setConflict(null);
+    setSaveError("");
+  }
+
   async function logout() {
     await apiFetch("/api/logout", { method: "POST", body: "{}" }).catch(() => {});
+    resetSaveState();
     setUser(null);
     setWorkspace(null);
     setSummaryText("");
@@ -1395,6 +1510,9 @@ export default function App() {
 
   function commitWorkspace(updater) {
     dirtyRef.current = true;
+    // Новая правка может исправить то, из-за чего сервер отказал, — пробуем
+    // снова. Конфликт так не снимается: он ждёт решения человека.
+    if (saveHaltRef.current === "rejected") saveHaltRef.current = "";
     setWorkspace((current) => {
       if (!current) return current;
       return typeof updater === "function" ? updater(current) : updater;
@@ -1408,7 +1526,32 @@ export default function App() {
     });
   }
 
+  // Версия строки — это её updated_at из базы, придуманная не клиентом. После
+  // своего же сохранения подтягиваем версии в локальные строки: иначе следующая
+  // правка той же строки уйдёт со старой версией и получит 409 от нашей записи.
+  function mergeRowVersions(current, saved) {
+    const next = { ...current };
+    for (const table of ["cards", "actions", "goals", "lprs"]) {
+      const versions = new Map((saved[table] || []).map((row) => [row.id, row.updatedAt]));
+      next[table] = (current[table] || []).map((row) =>
+        versions.has(row.id) ? { ...row, updatedAt: versions.get(row.id) } : row
+      );
+    }
+    return next;
+  }
+
+  function scheduleSaveRetry() {
+    if (retrySaveTimerRef.current) return;
+    const delay = saveRetryDelayRef.current;
+    saveRetryDelayRef.current = Math.min(delay * 2, SAVE_RETRY_MAX_MS);
+    retrySaveTimerRef.current = window.setTimeout(() => {
+      retrySaveTimerRef.current = null;
+      setSaveRetryTick((tick) => tick + 1);
+    }, delay);
+  }
+
   async function saveWorkspace(nextWorkspace) {
+    saveInFlightRef.current = true;
     try {
       setSaveError("");
       if (retrySaveTimerRef.current) {
@@ -1419,27 +1562,103 @@ export default function App() {
         method: "POST",
         body: JSON.stringify(nextWorkspace)
       });
+      saveRetryDelayRef.current = SAVE_RETRY_FIRST_MS;
+      saveHaltRef.current = "";
+      setConflict(null);
       // Apply server-sanitized state only when no further edits are pending —
       // otherwise we'd overwrite in-flight changes with a stale snapshot.
       if (!dirtyRef.current) {
         setWorkspace({ ...emptyWorkspace, ...saved });
       } else {
-        setWorkspace((current) => (current ? { ...current, users: saved.users || current.users } : current));
+        setWorkspace((current) =>
+          current ? { ...mergeRowVersions(current, saved), users: saved.users || current.users } : current
+        );
       }
     } catch (error) {
-      setSaveError(error.message);
-      if (error.message.includes("авторизация")) {
+      if (error instanceof ApiError && error.status === 401) {
+        resetSaveState();
         setUser(null);
         setWorkspace(null);
         return;
       }
       dirtyRef.current = true;
-      if (!retrySaveTimerRef.current) {
-        retrySaveTimerRef.current = window.setTimeout(() => {
-          retrySaveTimerRef.current = null;
-          setSaveRetryTick((tick) => tick + 1);
-        }, 1600);
+      if (error instanceof ApiError && error.status === 409) {
+        // Автоповтор запрещён: тот же снимок снова получит 409, а повтор
+        // «в обход» затёр бы чужие правки. Решает человек.
+        saveHaltRef.current = "conflict";
+        setConflict({ conflicts: error.payload.conflicts || [], workspace: error.payload.workspace || null });
+        return;
       }
+      setSaveError(error.message);
+      if (isRetryableError(error)) {
+        scheduleSaveRetry();
+      } else {
+        saveHaltRef.current = "rejected";
+      }
+    } finally {
+      saveInFlightRef.current = false;
+      // Правки, набранные за время запроса, ждали его конца.
+      if (dirtyRef.current && !saveHaltRef.current && !retrySaveTimerRef.current) {
+        setSaveRetryTick((tick) => tick + 1);
+      }
+    }
+  }
+
+  // «Повторить» после отказа сервера: пауза и счётчик пауз начинаются заново.
+  function retrySaveNow() {
+    // Конфликт «Повторить» не снимает: он ждёт решения в баннере.
+    if (saveHaltRef.current === "rejected") saveHaltRef.current = "";
+    saveRetryDelayRef.current = SAVE_RETRY_FIRST_MS;
+    if (retrySaveTimerRef.current) {
+      window.clearTimeout(retrySaveTimerRef.current);
+      retrySaveTimerRef.current = null;
+    }
+    setSaveRetryTick((tick) => tick + 1);
+    if (Object.keys(meetingStateSaveQueueRef.current).length) {
+      if (meetingStateSaveTimerRef.current) window.clearTimeout(meetingStateSaveTimerRef.current);
+      meetingStateRetryDelayRef.current = SAVE_RETRY_FIRST_MS;
+      void flushMeetingStateSaves();
+    }
+  }
+
+  async function resolveConflict(mode) {
+    if (!conflict) return;
+    try {
+      const latest = conflict.workspace || (await apiFetch("/api/workspace"));
+      saveRetryDelayRef.current = SAVE_RETRY_FIRST_MS;
+      if (mode === "reload") {
+        // Локальные правки сбрасываем: снимок сервера становится единственным.
+        dirtyRef.current = false;
+        saveHaltRef.current = "";
+        setConflict(null);
+        setSaveError("");
+        setWorkspace({ ...emptyWorkspace, ...latest });
+        return;
+      }
+      // Перезапись: у конфликтующих строк берём версию сервера, остальное
+      // остаётся нашим, и сервер примет снимок как правку поверх актуальной.
+      const versions = new Map(
+        conflict.conflicts.map(({ table, id }) => [
+          `${table}:${id}`,
+          (latest[table] || []).find((row) => row.id === id)?.updatedAt
+        ])
+      );
+      setWorkspace((current) => {
+        if (!current) return current;
+        const next = { ...current };
+        for (const table of new Set(conflict.conflicts.map((item) => item.table))) {
+          next[table] = (current[table] || []).map((row) =>
+            versions.get(`${table}:${row.id}`) ? { ...row, updatedAt: versions.get(`${table}:${row.id}`) } : row
+          );
+        }
+        return next;
+      });
+      dirtyRef.current = true;
+      saveHaltRef.current = "";
+      setConflict(null);
+      setSaveRetryTick((tick) => tick + 1);
+    } catch (error) {
+      setSaveError(error.message);
     }
   }
 
@@ -1477,6 +1696,7 @@ export default function App() {
     const entries = Object.entries(queued);
     if (!entries.length) return;
 
+    meetingStateInFlightRef.current = true;
     try {
       setSaveError("");
       let latestWorkspace = null;
@@ -1487,6 +1707,7 @@ export default function App() {
         });
         latestWorkspace = response.workspace || latestWorkspace;
       }
+      meetingStateRetryDelayRef.current = SAVE_RETRY_FIRST_MS;
       if (latestWorkspace) {
         setWorkspace((current) =>
           current
@@ -1501,23 +1722,30 @@ export default function App() {
         );
       }
     } catch (error) {
-      setSaveError(error.message);
-      if (error.message.includes("авторизация")) {
+      if (error instanceof ApiError && error.status === 401) {
+        resetSaveState();
         setUser(null);
         setWorkspace(null);
         return;
       }
+      setSaveError(error.message);
       for (const [personId, patch] of entries) {
         meetingStateSaveQueueRef.current[personId] = mergeMeetingStatePatch(
           patch,
           meetingStateSaveQueueRef.current[personId]
         );
       }
-      if (!meetingStateSaveTimerRef.current) {
+      // После отказа сервера (4xx) тот же запрос уйдёт снова только вместе с
+      // новой правкой или по «Повторить»; сеть и 5xx повторяем с нарастающей паузой.
+      if (isRetryableError(error) && !meetingStateSaveTimerRef.current) {
+        const delay = meetingStateRetryDelayRef.current;
+        meetingStateRetryDelayRef.current = Math.min(delay * 2, SAVE_RETRY_MAX_MS);
         meetingStateSaveTimerRef.current = window.setTimeout(() => {
           void flushMeetingStateSaves();
-        }, 1600);
+        }, delay);
       }
+    } finally {
+      meetingStateInFlightRef.current = false;
     }
   }
 
@@ -2234,6 +2462,7 @@ export default function App() {
     if (meta.platformAdminOnly && !isPlatformAdminRole(user)) return;
     setUserMessage("");
     setPendingDeletePersonId("");
+    setPendingDeleteKey("");
     setActiveSection(sectionId);
     if (sectionId === "meetings") {
       setActiveView((current) => (["agenda", "health", "outcomes"].includes(current) ? current : "agenda"));
@@ -2417,6 +2646,41 @@ export default function App() {
       ...current,
       cards: current.cards.map((card) => (card.id === cardId ? { ...card, ...patch } : card))
     }));
+  }
+
+  // Двухшаговое удаление, как у участника: первый клик только просит
+  // подтверждения и называет объект, удаляет второй. Исчезновение карточки или
+  // цели одним случайным кликом откатить нечем.
+  function requestDelete(key, label) {
+    setPendingDeleteKey(key);
+    setUserMessage(`Подтвердите удаление ${label}`);
+  }
+
+  function cancelDelete() {
+    setPendingDeleteKey("");
+    setUserMessage("");
+  }
+
+  function renderDeleteConfirm(label, onConfirm) {
+    return (
+      <span className="confirm-actions" role="group" aria-label={`Подтверждение удаления ${label}`}>
+        <button
+          className="soft-button danger-button"
+          type="button"
+          onClick={() => {
+            setPendingDeleteKey("");
+            onConfirm();
+          }}
+        >
+          <Trash2 size={15} />
+          Подтвердить удаление
+        </button>
+        <button className="soft-button" type="button" onClick={cancelDelete}>
+          <X size={15} />
+          Отмена
+        </button>
+      </span>
+    );
   }
 
   function deleteCard(cardId) {
@@ -2642,15 +2906,14 @@ export default function App() {
     event.preventDefault();
     const targetPersonId = isAdmin ? newLpr.personId || selectedPersonId : user?.personId;
     if (!targetPersonId || !newLpr.title.trim()) return;
-    const now = new Date().toISOString();
+    // updatedAt у строки — её версия из базы: новой строке версию даёт сервер.
     const lpr = {
       id: makeId("lpr"),
       personId: targetPersonId,
       title: newLpr.title.trim(),
       focus: newLpr.focus.trim(),
       status: "active",
-      createdAt: now,
-      updatedAt: now
+      createdAt: new Date().toISOString()
     };
 
     commitWorkspace((current) => ({
@@ -2669,7 +2932,9 @@ export default function App() {
     commitWorkspace((current) => ({
       ...current,
       lprs: (current.lprs || []).map((lpr) =>
-        lpr.id === lprId ? { ...lpr, status, updatedAt: new Date().toISOString() } : lpr
+        // updatedAt не трогаем: это версия строки из базы, по ней сервер
+        // замечает, что ЛПР успели изменить в другом месте.
+        lpr.id === lprId ? { ...lpr, status } : lpr
       )
     }));
     setLprFilter((current) => (current.status === "all" || current.status === status ? current : { ...current, status }));
@@ -2771,8 +3036,7 @@ export default function App() {
         "Источник: структурированный отчёт кейс-интервью по компетенциям."
       ].join("\n"),
       status: "active",
-      createdAt: now,
-      updatedAt: now
+      createdAt: now
     };
     const goals = selectedGaps.slice(0, 3).map((competency) => {
       const matchingAction = (assessment.recommendations || []).find(
@@ -2819,11 +3083,7 @@ export default function App() {
       "evidence",
       "recommendation"
     ];
-    const escape = (value) => {
-      const s = String(value ?? "");
-      return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    };
-    const rows = [headers.map(escape).join(",")];
+    const rows = [headers];
     for (const assessment of workspace?.competencyAssessments || []) {
       const person = peopleMap.get(assessment.personId);
       for (const competency of assessment.competencies || []) {
@@ -2844,10 +3104,10 @@ export default function App() {
           gap,
           competency.evidence,
           competency.recommendation
-        ].map(escape).join(","));
+        ]);
       }
     }
-    const blob = new Blob(["﻿" + rows.join("\n")], { type: "text/csv;charset=utf-8" });
+    const blob = new Blob(["\uFEFF" + toCsv(rows)], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -2868,8 +3128,7 @@ export default function App() {
       title: `ЛПР: ${card.title}`,
       focus: card.body || "План создан из темы 1:1. Уточните фокус и привяжите цели.",
       status: "active",
-      createdAt: now,
-      updatedAt: now
+      createdAt: now
     };
     commitWorkspace((current) => ({
       ...current,
@@ -3041,40 +3300,33 @@ export default function App() {
       resetSurveyComposer();
       setUserMessage("Опрос создан");
     } catch (error) {
-      setUserMessage(error.message);
+      setUserError(error.message);
     }
   }
 
   function exportSurveyCsv(survey) {
     const responses = survey.responses || [];
     const headers = ["submittedAt", "personId", ...survey.questions.map((q) => q.prompt)];
-    const escape = (value) => {
-      const s = String(value ?? "");
-      if (/[",\n;]/.test(s)) {
-        return `"${s.replace(/"/g, '""')}"`;
-      }
-      return s;
-    };
-    const rows = [headers.map(escape).join(",")];
+    const rows = [headers];
 
     if (responses.length === 0 && survey.aggregate) {
       // Anonymous mode — no per-row data, only aggregate summary
-      rows.push(`# aggregate-only export (анонимный опрос)`);
+      rows.push(["# aggregate-only export (анонимный опрос)"]);
       for (const q of survey.questions) {
         const stats = survey.aggregate?.perQuestion?.[q.id];
         if (!stats) continue;
         if (q.type === "scale") {
-          rows.push(escape(`${q.prompt}: среднее ${stats.avg} (n=${stats.count})`));
+          rows.push([`${q.prompt}: среднее ${stats.avg} (n=${stats.count})`]);
         } else if (q.type === "single" || q.type === "multi") {
           for (const item of stats.distribution || []) {
-            rows.push(escape(`${q.prompt} → ${item.label}`) + "," + item.value);
+            rows.push([`${q.prompt} → ${item.label}`, item.value]);
           }
         } else if (q.type === "text" || q.type === "date") {
           if (stats.redacted) {
-            rows.push(escape(`${q.prompt}: ответов ${stats.count}`));
+            rows.push([`${q.prompt}: ответов ${stats.count}`]);
           } else {
             for (const sample of stats.samples || []) {
-              rows.push(escape(`${q.prompt}`) + "," + escape(sample));
+              rows.push([q.prompt, sample]);
             }
           }
         }
@@ -3089,11 +3341,11 @@ export default function App() {
           else if (Array.isArray(a.values)) cells.push(a.values.join("; "));
           else cells.push(a.value);
         }
-        rows.push(cells.map(escape).join(","));
+        rows.push(cells);
       }
     }
 
-    const blob = new Blob(["﻿" + rows.join("\n")], { type: "text/csv;charset=utf-8" });
+    const blob = new Blob(["\uFEFF" + toCsv(rows)], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -3117,7 +3369,7 @@ export default function App() {
       }
       setUserMessage("Сохранено как шаблон");
     } catch (error) {
-      setUserMessage(error.message);
+      setUserError(error.message);
     }
   }
 
@@ -3131,7 +3383,7 @@ export default function App() {
       if (expandedSurveyId === surveyId) setExpandedSurveyId("");
       setUserMessage("Опрос удалён");
     } catch (error) {
-      setUserMessage(error.message);
+      setUserError(error.message);
     }
   }
 
@@ -3376,13 +3628,19 @@ export default function App() {
     setUserMessage("");
     clearFormError("myPassword");
     try {
+      if (!currentPassword) {
+        throw new Error("Введите текущий пароль");
+      }
       if (myPassword.length < 8) {
         throw new Error("Пароль должен быть не короче 8 символов");
       }
+      // Неверный текущий пароль сервер отвечает 400 «Неверный текущий пароль»,
+      // и ошибка показывается рядом с формой, а не разлогинивает.
       await apiFetch("/api/me/password", {
         method: "POST",
-        body: JSON.stringify({ password: myPassword })
+        body: JSON.stringify({ currentPassword, password: myPassword })
       });
+      setCurrentPassword("");
       setMyPassword("");
       setUserMessage("Пароль обновлён. Старые сессии закрыты");
     } catch (error) {
@@ -3422,7 +3680,7 @@ export default function App() {
       }));
       setUserMessage(`Логин ${targetUser.username} удален`);
     } catch (error) {
-      setUserMessage(error.message);
+      setUserError(error.message);
     }
   }
 
@@ -3454,7 +3712,7 @@ export default function App() {
       setPendingDeletePersonId("");
       setUserMessage(`Участник ${person.name} удален`);
     } catch (error) {
-      setUserMessage(error.message);
+      setUserError(error.message);
     }
   }
 
@@ -3478,7 +3736,7 @@ export default function App() {
       setNewManagerNote({ body: "", tags: [] });
       setUserMessage("Заметка сохранена");
     } catch (error) {
-      setUserMessage(error.message);
+      setUserError(error.message);
     }
   }
 
@@ -3499,7 +3757,7 @@ export default function App() {
         setWorkspace({ ...emptyWorkspace, ...response.workspace });
       }
     } catch (error) {
-      setUserMessage(error.message);
+      setUserError(error.message);
     }
   }
 
@@ -3513,7 +3771,7 @@ export default function App() {
       }
       setUserMessage("Заметка удалена");
     } catch (error) {
-      setUserMessage(error.message);
+      setUserError(error.message);
     }
   }
 
@@ -3539,7 +3797,7 @@ export default function App() {
       }
       setUserMessage("Участник восстановлен");
     } catch (error) {
-      setUserMessage(error.message);
+      setUserError(error.message);
     }
   }
 
@@ -3587,7 +3845,7 @@ export default function App() {
       });
       setUserMessage(`Участник ${response.person.name} добавлен`);
     } catch (error) {
-      setUserMessage(error.message);
+      setUserError(error.message);
     }
   }
 
@@ -3819,6 +4077,7 @@ export default function App() {
                   className={activeSection === sectionId ? "active" : ""}
                   type="button"
                   aria-current={activeSection === sectionId ? "page" : undefined}
+                  title={item.hint}
                   onClick={() => openSection(sectionId)}
                 >
                   <Icon size={17} />
@@ -3918,8 +4177,50 @@ export default function App() {
           )}
         </header>
 
-        {saveError && <div className="form-error inline-error">{saveError}</div>}
-        {userMessage && <div className="form-hint inline-message">{userMessage}</div>}
+        {conflict && (
+          <div className="form-error inline-error" role="alert" data-testid="conflict-banner">
+            <p>
+              Данные изменились в другом месте
+              {conflict.conflicts.length > 0 ? ` (записей: ${conflict.conflicts.length})` : ""}. Ваши правки ещё не
+              сохранены: загрузите актуальную версию или перезапишите её своими правками.
+            </p>
+            <div className="confirm-actions">
+              <button
+                className="soft-button"
+                type="button"
+                data-testid="conflict-reload"
+                onClick={() => resolveConflict("reload")}
+              >
+                Загрузить актуальные данные
+              </button>
+              <button
+                className="soft-button danger-button"
+                type="button"
+                data-testid="conflict-overwrite"
+                onClick={() => resolveConflict("overwrite")}
+              >
+                Перезаписать моими правками
+              </button>
+            </div>
+          </div>
+        )}
+        {saveError && (
+          <div className="form-error inline-error" role="alert" data-testid="save-error">
+            <strong>{saveError}</strong> — изменения пока не сохранены.{" "}
+            <button className="soft-button" type="button" data-testid="save-retry" onClick={retrySaveNow}>
+              Повторить
+            </button>
+          </div>
+        )}
+        {/* Контейнер статуса стоит в DOM всегда: читалки объявляют текст, который появился внутри уже существующей live-области. */}
+        <div role="status" aria-live="polite">
+          {userNotice.text && !userNotice.error && <div className="form-hint inline-message">{userNotice.text}</div>}
+        </div>
+        {userNotice.text && userNotice.error && (
+          <div className="form-error inline-error" role="alert">
+            {userNotice.text}
+          </div>
+        )}
 
         {activeSection === "meetings" && selectedPerson && filteredMeetingPeople.length > 1 && (
           <label className="meeting-person-switcher">
@@ -4581,14 +4882,18 @@ export default function App() {
                                     <Pencil size={15} />
                                     Изменить
                                   </button>
-                                  <button
-                                    className="soft-button danger-button"
-                                    type="button"
-                                    onClick={() => deleteCard(card.id)}
-                                    title="Удалить тему"
-                                  >
-                                    <Trash2 size={15} />
-                                  </button>
+                                  {pendingDeleteKey === `card:${card.id}` ? (
+                                    renderDeleteConfirm(`темы «${card.title}»`, () => deleteCard(card.id))
+                                  ) : (
+                                    <button
+                                      className="soft-button danger-button"
+                                      type="button"
+                                      onClick={() => requestDelete(`card:${card.id}`, `темы «${card.title}»`)}
+                                      title="Удалить тему"
+                                    >
+                                      <Trash2 size={15} />
+                                    </button>
+                                  )}
                                 </>
                               )}
                             </>
@@ -4931,14 +5236,18 @@ export default function App() {
                               >
                                 <Pencil size={14} />
                               </button>
-                              <button
-                                className="icon-button danger-button"
-                                type="button"
-                                onClick={() => deleteAction(action.id)}
-                                title="Удалить"
-                              >
-                                <Trash2 size={14} />
-                              </button>
+                              {pendingDeleteKey === `action:${action.id}` ? (
+                                renderDeleteConfirm(`шага «${action.title}»`, () => deleteAction(action.id))
+                              ) : (
+                                <button
+                                  className="icon-button danger-button"
+                                  type="button"
+                                  onClick={() => requestDelete(`action:${action.id}`, `шага «${action.title}»`)}
+                                  title="Удалить"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              )}
                             </span>
                           )}
                         </>
@@ -5157,10 +5466,18 @@ export default function App() {
                                 Завершить
                               </button>
                             )}
-                            <button className="soft-button danger-button" type="button" onClick={() => deleteLpr(lpr.id)}>
-                              <Trash2 size={15} />
-                              Удалить
-                            </button>
+                            {pendingDeleteKey === `lpr:${lpr.id}` ? (
+                              renderDeleteConfirm(`ЛПР «${lpr.title}»`, () => deleteLpr(lpr.id))
+                            ) : (
+                              <button
+                                className="soft-button danger-button"
+                                type="button"
+                                onClick={() => requestDelete(`lpr:${lpr.id}`, `ЛПР «${lpr.title}»`)}
+                              >
+                                <Trash2 size={15} />
+                                Удалить
+                              </button>
+                            )}
                           </div>
                         )}
                       </article>
@@ -5383,14 +5700,18 @@ export default function App() {
                                 Снять
                               </button>
                             )}
-                            <button
-                              className="soft-button danger-button"
-                              type="button"
-                              onClick={() => deleteGoal(goal.id)}
-                            >
-                              <Trash2 size={15} />
-                              Удалить
-                            </button>
+                            {pendingDeleteKey === `goal:${goal.id}` ? (
+                              renderDeleteConfirm(`цели «${goal.title}»`, () => deleteGoal(goal.id))
+                            ) : (
+                              <button
+                                className="soft-button danger-button"
+                                type="button"
+                                onClick={() => requestDelete(`goal:${goal.id}`, `цели «${goal.title}»`)}
+                              >
+                                <Trash2 size={15} />
+                                Удалить
+                              </button>
+                            )}
                           </div>
                         )}
                       </article>
@@ -5804,14 +6125,20 @@ export default function App() {
                               <ClipboardList size={15} />
                               В шаблоны
                             </button>
-                            <button
-                              className="soft-button danger-button"
-                              type="button"
-                              onClick={() => deleteSurvey(survey.id)}
-                              title="Удалить опрос"
-                            >
-                              <Trash2 size={15} />
-                            </button>
+                            {pendingDeleteKey === `survey:${survey.id}` ? (
+                              renderDeleteConfirm(`опроса «${survey.title}»: ответы тоже будут удалены`, () => deleteSurvey(survey.id))
+                            ) : (
+                              <button
+                                className="soft-button danger-button"
+                                type="button"
+                                onClick={() =>
+                                  requestDelete(`survey:${survey.id}`, `опроса «${survey.title}»: ответы тоже будут удалены`)
+                                }
+                                title="Удалить опрос"
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            )}
                           </>
                         )}
                       </div>
@@ -6277,9 +6604,18 @@ export default function App() {
                               <ClipboardCheck size={14} />
                               В ЛПР
                             </button>
-                            <button className="icon-button" type="button" title="Удалить отчёт" onClick={() => deleteCompetencyAssessment(assessment.id)}>
-                              <Trash2 size={14} />
-                            </button>
+                            {pendingDeleteKey === `assessment:${assessment.id}` ? (
+                              renderDeleteConfirm(`отчёта «${assessment.title}»`, () => deleteCompetencyAssessment(assessment.id))
+                            ) : (
+                              <button
+                                className="icon-button"
+                                type="button"
+                                title="Удалить отчёт"
+                                onClick={() => requestDelete(`assessment:${assessment.id}`, `отчёта «${assessment.title}»`)}
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            )}
                           </div>
                         )}
                       </article>
@@ -6930,6 +7266,15 @@ export default function App() {
               </div>
               <form className="settings-inline-form" onSubmit={updateMyPassword}>
                 <label>
+                  Текущий пароль
+                  <input
+                    type="password"
+                    value={currentPassword}
+                    onChange={(event) => setCurrentPassword(event.target.value)}
+                    autoComplete="current-password"
+                  />
+                </label>
+                <label>
                   Новый пароль
                   <input
                     type="password"
@@ -6939,8 +7284,12 @@ export default function App() {
                     autoComplete="new-password"
                   />
                 </label>
-                {formErrors.myPassword && <div className="form-error inline-form-error">{formErrors.myPassword}</div>}
-                <button className="primary-button" type="submit" disabled={!myPassword}>
+                {formErrors.myPassword && (
+                  <div className="form-error inline-form-error" role="alert">
+                    {formErrors.myPassword}
+                  </div>
+                )}
+                <button className="primary-button" type="submit" disabled={!currentPassword || !myPassword}>
                   <KeyRound size={16} />
                   Сменить пароль
                 </button>
@@ -7103,14 +7452,18 @@ export default function App() {
                   <article className="note-entry" key={note.id}>
                     <header>
                       <time>{formatRuDate(note.createdAt)}</time>
-                      <button
-                        className="icon-button danger-button"
-                        type="button"
-                        title="Удалить заметку"
-                        onClick={() => deleteManagerNote(note.id)}
-                      >
-                        <Trash2 size={13} />
-                      </button>
+                      {pendingDeleteKey === `note:${note.id}` ? (
+                        renderDeleteConfirm(`заметки от ${formatRuDate(note.createdAt)}`, () => deleteManagerNote(note.id))
+                      ) : (
+                        <button
+                          className="icon-button danger-button"
+                          type="button"
+                          title="Удалить заметку"
+                          onClick={() => requestDelete(`note:${note.id}`, `заметки от ${formatRuDate(note.createdAt)}`)}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      )}
                     </header>
                     <p>{note.body}</p>
                     {note.tags.length > 0 && (

@@ -5,6 +5,11 @@ dist/
 .data/
 test-results/
 playwright-report/
+# Дампы базы: содержат боевые данные и не должны попадать ни в контекст
+# сборки, ни в слои образа.
+backups/
+*.dump
+*.sql.gz
 plans/
 .claude/
 .serena/

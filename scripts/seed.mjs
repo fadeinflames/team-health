@@ -10,7 +10,8 @@
 // Теперь это ручная операция:
 //   npm run seed        (или make seed)
 //
-// Вне APP_ENV=local отказывается работать без явного --force.
+// Вне local отказывается работать без явного --force, а в production
+// (APP_ENV=production или Railway) не работает вообще, даже с --force.
 //
 // Вставка идёт через unnest, а не построчным циклом: один round-trip вместо
 // N. На пяти демо-персонах разницы не видно, но тот же приём нужен для
@@ -30,13 +31,26 @@ import {
   initialPulse,
   buildSeedPulseHistory
 } from "../fixtures/demo.mjs";
+import { appEnv, isProductionEnv } from "./lib/env.mjs";
 
 const force = process.argv.includes("--force");
-const appEnv = process.env.APP_ENV || "local";
+const env = appEnv();
 
-if (appEnv !== "local" && !force) {
+// Окружение берём общей функцией, как в server.js: на Railway APP_ENV не
+// задан, и прежняя проверка `APP_ENV || "local"` считала боевую базу локальной.
+// В production отказ безусловный: --force там не лечит, а только отключил бы
+// последнюю защиту от слабой демо-учётки и перезаписи записей по id.
+if (isProductionEnv()) {
   console.error(
-    `APP_ENV=${appEnv}: сидинг демо-данными вне local надо подтвердить явно.\n` +
+    `Окружение ${env}: сидинг демо-данными в production запрещён, --force его не разрешает.\n` +
+      "Демо-данные льют только в local или в отдельное тестовое окружение."
+  );
+  process.exit(1);
+}
+
+if (env !== "local" && !force) {
+  console.error(
+    `APP_ENV=${env}: сидинг демо-данными вне local надо подтвердить явно.\n` +
       "Если вы правда хотите залить демо-людей в это окружение: node scripts/seed.mjs --force"
   );
   process.exit(1);
@@ -391,9 +405,10 @@ async function seedSurveys(client) {
   );
 }
 
-// Демо-учётка заводится только на пустой базе и только если её ещё нет.
-// Пароль у неё слабый по определению — это витрина, а не доступ, и вне
-// local такого пользователя быть не должно.
+// Демо-учётка заводится только если её ещё нет. Пароль у неё слабый по
+// определению — это витрина, а не доступ, и вне local такого пользователя
+// быть не должно. Сам пароль нигде не печатаем: лог сидинга попадает в CI и
+// в терминалы с общим доступом, поэтому сообщаем только факт создания.
 async function seedDemoLogin(client) {
   const existing = await client.query("select id from users where lower(username) = lower($1)", [demoUsername]);
   if (existing.rows[0]) return false;

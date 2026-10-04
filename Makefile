@@ -137,9 +137,17 @@ migrate-new: ## Создать файл миграции: make migrate-new name=
 seed: ## Залить демо-фикстуры в локальную базу
 	$(COMPOSE) --profile seed run --rm seed
 
+# Снимок пишем во временный файл и подменяем db/schema.sql только при успехе:
+# прямое `> db/schema.sql` обнуляет закоммиченную схему, если дамп упал.
 db-schema: ## Обновить db/schema.sql из локальной базы
-	@PGDUMP="$(COMPOSE) exec -T db pg_dump" DATABASE_URL="$(IN_DB_URL)" scripts/schema-dump.sh > db/schema.sql
-	@echo "db/schema.sql обновлён"
+	@if PGDUMP="$(COMPOSE) exec -T db pg_dump" DATABASE_URL="$(IN_DB_URL)" scripts/schema-dump.sh > db/schema.sql.tmp \
+		&& test -s db/schema.sql.tmp; then \
+		mv db/schema.sql.tmp db/schema.sql && echo "db/schema.sql обновлён"; \
+	else \
+		rm -f db/schema.sql.tmp; \
+		echo "Не удалось снять схему, db/schema.sql не тронут" >&2; \
+		exit 1; \
+	fi
 
 db-drift: ## Сравнить db/schema.sql с реальной схемой локальной базы
 	@PGDUMP="$(COMPOSE) exec -T db pg_dump" DATABASE_URL="$(IN_DB_URL)" scripts/schema-dump.sh > /tmp/th-schema-actual.sql
@@ -147,11 +155,19 @@ db-drift: ## Сравнить db/schema.sql с реальной схемой л�
 		&& echo "Схема совпадает с db/schema.sql" \
 		|| (echo ""; echo "Схема разошлась с db/schema.sql: либо не применены миграции, либо схему правили руками."; exit 1)
 
+# Дамп сначала во временный файл: пустой или обрезанный .dump в backups/
+# выглядит настоящим бэкапом, и об обмане узнаёшь только при восстановлении.
 db-dump: ## Снять полный бэкап локальной базы в backups/
 	@mkdir -p backups
-	@$(COMPOSE) exec -T db pg_dump --format=custom --no-owner --no-privileges "$(IN_DB_URL)" \
-		> backups/team-health-$$(date +%Y%m%d-%H%M%S).dump
-	@ls -la backups | tail -1
+	@f=backups/team-health-$$(date +%Y%m%d-%H%M%S).dump; \
+	if $(COMPOSE) exec -T db pg_dump --format=custom --no-owner --no-privileges "$(IN_DB_URL)" > "$$f.tmp" \
+		&& test -s "$$f.tmp"; then \
+		mv "$$f.tmp" "$$f" && ls -la "$$f"; \
+	else \
+		rm -f "$$f.tmp"; \
+		echo "pg_dump завершился ошибкой, бэкап не создан" >&2; \
+		exit 1; \
+	fi
 
 db-vacuum: ## Разовая чистка после перехода на точечные записи (окно обслуживания)
 	@echo "VACUUM FULL блокирует таблицы целиком. Делайте это в окне обслуживания."

@@ -28,6 +28,9 @@ import {
   buildSeedPulseHistory,
   buildSeedOncallLoad
 } from "./fixtures/demo.mjs";
+import { HttpError } from "./lib/http-error.js";
+import { readJson } from "./lib/read-json.js";
+import { clientAddress as resolveClientAddress } from "./lib/client-address.js";
 import { syncWorkspace, VersionConflictError } from "./db/repositories/workspace.js";
 import {
   findSessionUser,
@@ -55,6 +58,13 @@ const failedLoginWindowMs = 1000 * 60 * 15;
 const maxFailedLoginAttempts = 8;
 const maxFailedLoginAttemptsPerIp = 30;
 const trustProxy = isProduction || process.env.TRUST_PROXY === "1";
+// Сколько доверенных прокси стоит перед приложением: адрес клиента берётся из
+// X-Forwarded-For на этой позиции справа. Невалидное значение — один прокси.
+const trustedProxyHops = (() => {
+  const hops = Number(process.env.TRUSTED_PROXY_HOPS);
+  return Number.isInteger(hops) && hops >= 1 ? hops : 1;
+})();
+const maxLoginAttemptEntries = 10_000;
 const allowFileStorageInProduction = process.env.ALLOW_FILE_STORAGE === "1";
 const demoResetAllowed = !isProduction || process.env.ENABLE_DEMO_RESET === "1";
 
@@ -154,13 +164,6 @@ function verifyPassword(password, user) {
   const candidate = scryptSync(password, user.salt, 64);
   const stored = Buffer.from(user.passwordHash, "hex");
   return stored.length === candidate.length && timingSafeEqual(stored, candidate);
-}
-
-class HttpError extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
 }
 
 function makeId(prefix) {
@@ -360,7 +363,7 @@ function normalizeDb(rawDb = {}) {
           updatedAt: existing?.updatedAt || null
         };
       }),
-      ...cards.filter((card) => !seedCardIds.has(card.id) && !hasLegacyBusinessText(card.title, card.body))
+      ...cards.filter((card) => !seedCardIds.has(card.id))
     ],
     actions: [
       ...initialActions.map((action) => {
@@ -372,7 +375,7 @@ function normalizeDb(rawDb = {}) {
           updatedAt: existing?.updatedAt || null
         };
       }),
-      ...actions.filter((action) => !seedActionIds.has(action.id) && !hasLegacyBusinessText(action.title, action.due))
+      ...actions.filter((action) => !seedActionIds.has(action.id))
     ],
     goals: [
       ...initialGoals.map((goal) => {
@@ -538,18 +541,10 @@ function mergeNotesUpdate(currentNotes = {}, incomingNotes = {}, personIds) {
   return next;
 }
 
-function hasLegacyBusinessText(...parts) {
-  const legacyWords = ["прод" + "аж", "sa" + "les", "билл" + "инг"];
-  const haystack = parts.filter(Boolean).join(" ").toLowerCase();
-  return legacyWords.some((word) => haystack.includes(word));
-}
-
+// Текст пользователя не фильтруется по словам: прежняя проверка подстрок
+// молча выбрасывала чужие карточки, шаги и заметки.
 function mergeNotes(rawNotes) {
-  const merged = { ...initialNotes };
-  for (const [personId, body] of Object.entries(rawNotes)) {
-    merged[personId] = hasLegacyBusinessText(body) ? initialNotes[personId] || "" : body;
-  }
-  return merged;
+  return { ...initialNotes, ...rawNotes };
 }
 
 function mergeMeetingDrafts(rawDrafts, personIds) {
@@ -1477,44 +1472,61 @@ function validateProductionSecrets() {
 }
 
 function clientAddress(request) {
-  if (trustProxy) {
-    const forwardedFor = String(request.headers["x-forwarded-for"] || "").split(",")[0].trim();
-    if (forwardedFor) return forwardedFor;
-  }
-  return request.socket?.remoteAddress || "unknown";
+  return resolveClientAddress(request, { trustProxy, trustedProxyHops });
 }
 
+// Username в ключе обрезается: иначе мегабайтное имя раздувало бы память
+// счётчиков. Глобального счётчика только по username нет намеренно: любой
+// смог бы заблокировать чужую учётку, просто набирая её логин с неверным
+// паролем. Защита от перебора по username — счётчик пары ip:username плюс
+// счётчик по IP.
 function loginAttemptKey(request, username) {
-  return `${clientAddress(request)}:${String(username || "").toLowerCase()}`;
+  return `${clientAddress(request)}:${String(username || "").trim().toLowerCase().slice(0, 100)}`;
 }
 
-function pruneLoginAttempt(entry, now = Date.now()) {
+function liveLoginAttempt(map, key, now = Date.now()) {
+  const entry = map.get(key);
   if (!entry || entry.resetAt <= now) return { count: 0, resetAt: now + failedLoginWindowMs };
   return entry;
 }
 
+// Map счётчиков ограничен по размеру: с подменой адресов и имён его иначе
+// можно раздувать до исчерпания памяти. Сначала выбрасываем просроченные,
+// затем самые старые (Map хранит порядок вставки).
+function makeRoomForLoginAttempt(map, key) {
+  if (map.has(key) || map.size < maxLoginAttemptEntries) return;
+  const now = Date.now();
+  for (const [oldKey, entry] of map) {
+    if (entry.resetAt <= now) map.delete(oldKey);
+  }
+  for (const oldKey of map.keys()) {
+    if (map.size < maxLoginAttemptEntries) break;
+    map.delete(oldKey);
+  }
+}
+
 function isLoginRateLimited(request, username) {
-  const userKey = loginAttemptKey(request, username);
-  const ipKey = clientAddress(request);
-  const userEntry = pruneLoginAttempt(failedLogins.get(userKey));
-  const ipEntry = pruneLoginAttempt(failedLoginsByIp.get(ipKey));
-  failedLogins.set(userKey, userEntry);
-  failedLoginsByIp.set(ipKey, ipEntry);
+  const userEntry = liveLoginAttempt(failedLogins, loginAttemptKey(request, username));
+  const ipEntry = liveLoginAttempt(failedLoginsByIp, clientAddress(request));
   return userEntry.count >= maxFailedLoginAttempts || ipEntry.count >= maxFailedLoginAttemptsPerIp;
 }
 
 function recordFailedLogin(request, username) {
   const userKey = loginAttemptKey(request, username);
   const ipKey = clientAddress(request);
-  const userEntry = pruneLoginAttempt(failedLogins.get(userKey));
-  const ipEntry = pruneLoginAttempt(failedLoginsByIp.get(ipKey));
+  const userEntry = liveLoginAttempt(failedLogins, userKey);
+  const ipEntry = liveLoginAttempt(failedLoginsByIp, ipKey);
+  makeRoomForLoginAttempt(failedLogins, userKey);
+  makeRoomForLoginAttempt(failedLoginsByIp, ipKey);
   failedLogins.set(userKey, { count: userEntry.count + 1, resetAt: userEntry.resetAt });
   failedLoginsByIp.set(ipKey, { count: ipEntry.count + 1, resetAt: ipEntry.resetAt });
 }
 
+// Успешный вход сбрасывает только пару ip:username. Счётчик по IP не
+// трогаем: иначе атакующий с одним валидным логином обнулял бы свой лимит
+// перебора чужих учёток после каждой удачной попытки.
 function clearFailedLogins(request, username) {
   failedLogins.delete(loginAttemptKey(request, username));
-  failedLoginsByIp.delete(clientAddress(request));
 }
 
 function pruneRateLimitMaps() {
@@ -1557,6 +1569,10 @@ function applySecurityHeaders(response) {
   for (const [name, value] of Object.entries(securityHeaders)) {
     response.setHeader(name, value);
   }
+  // Только в production: на http в local заголовок игнорируется, а на
+  // localhost с https он закрепил бы https для всех локальных сервисов.
+  // Без includeSubDomains и preload: их не отозвать, пока не истечёт срок.
+  if (isProduction) response.setHeader("Strict-Transport-Security", "max-age=15552000");
 }
 
 function sendJson(response, status, payload, headers = {}) {
@@ -1569,41 +1585,6 @@ function sendJson(response, status, payload, headers = {}) {
   response.end(JSON.stringify(payload));
 }
 
-function readJson(request) {
-  return new Promise((resolve, reject) => {
-    let body = "";
-    let settled = false;
-    request.on("data", (chunk) => {
-      if (settled) return;
-      body += chunk;
-      if (body.length > 1_000_000) {
-        settled = true;
-        request.destroy();
-        reject(new HttpError(413, "Слишком большой запрос"));
-      }
-    });
-    request.on("end", () => {
-      if (settled) return;
-      settled = true;
-      if (!body) {
-        resolve({});
-        return;
-      }
-
-      try {
-        resolve(JSON.parse(body));
-      } catch (error) {
-        reject(new HttpError(400, "Некорректный JSON"));
-      }
-    });
-    request.on("error", (error) => {
-      if (settled) return;
-      settled = true;
-      reject(error);
-    });
-  });
-}
-
 // withDb: false для endpoint'ов, которым рабочее пространство не нужно.
 // Раньше выбора не было — каждый запрос вычитывал базу целиком, включая
 // таблицу users с salt и password_hash, ради проверки одной куки.
@@ -1612,8 +1593,10 @@ async function getAuthContext(request, options = {}) {
   const sessionId = parseCookies(request.headers.cookie).th_session;
 
   if (storageMode === "postgres") {
+    // Без куки или с невалидной сессией базу не читаем: анонимный запрос
+    // иначе вычитывал все таблицы до ответа 401.
     const auth = await findSessionUser(pgPool, sessionId);
-    if (!auth) return { db: withDb ? await readDb() : null, user: null, session: null };
+    if (!auth) return { db: null, user: null, session: null };
     return { db: withDb ? await readDb() : null, user: auth.user, session: auth.session };
   }
 
@@ -2313,7 +2296,7 @@ function sanitizeLpr(lpr, personId) {
     focus: String(lpr.focus || "").slice(0, 2000),
     status: lprStatuses.includes(lpr.status) ? lpr.status : "active",
     createdAt: typeof lpr.createdAt === "string" && lpr.createdAt ? lpr.createdAt : new Date().toISOString(),
-    updatedAt: typeof lpr.updatedAt === "string" && lpr.updatedAt ? lpr.updatedAt : new Date().toISOString()
+    updatedAt: typeof lpr.updatedAt === "string" && lpr.updatedAt ? lpr.updatedAt : null
   };
 }
 
@@ -2674,6 +2657,20 @@ async function handleApi(request, response) {
       return;
     }
     const body = await readJson(request);
+    // Тот же лимитер, что у входа: иначе украденная сессия позволяла бы
+    // подбирать текущий пароль без ограничений.
+    if (isLoginRateLimited(request, context.user.username)) {
+      sendJson(response, 429, { error: "Слишком много попыток входа. Попробуйте позже" });
+      return;
+    }
+    const currentPassword = String(body.currentPassword || "");
+    // 400, а не 401: клиент разлогинивает по тексту «авторизация» в ошибке.
+    if (!currentPassword || !verifyPassword(currentPassword, context.user)) {
+      recordFailedLogin(request, context.user.username);
+      sendJson(response, 400, { error: "Неверный текущий пароль" });
+      return;
+    }
+    clearFailedLogins(request, context.user.username);
     const password = String(body.password || "");
     if (password.length < 8) {
       sendJson(response, 400, { error: "Пароль должен быть не короче 8 символов" });
@@ -3681,6 +3678,14 @@ const server = createServer((request, response) => {
     })
     .pipe(response);
 });
+
+// Таймауты node:http должны быть больше, чем у прокси перед приложением
+// (обычно keep-alive 60 с): иначе сервер закрывает соединение первым, и
+// прокси получает обрыв на следующем запросе.
+server.keepAliveTimeout = 65_000;
+server.headersTimeout = 66_000;
+// Не меньше headersTimeout: общий срок приёма запроса включает приём заголовков.
+server.requestTimeout = 120_000;
 
 server.listen(port, "0.0.0.0", () => {
   console.log(`Team Health 1:1 is listening on ${port} (${appEnv})`);

@@ -8,10 +8,17 @@ on:
 permissions:
   contents: read
 
+# Новый пуш в PR отменяет устаревший прогон. На main не отменяем: каждый
+# коммит должен получить свой результат.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   secrets:
     name: Секреты
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,12 +29,20 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # Отдельная проверка: рабочих значений из старых дефолтов в дереве быть
-      # не должно. Блок-лист в server.js и текст планов — законные исключения.
+      # не должно. Законные места ровно два: блок-листы скомпрометированных
+      # значений в server.js и scripts/secrets.mjs (они обязаны содержать сами
+      # значения, чтобы их запрещать). Исключаем эти файлы целиком через
+      # --exclude, а не фильтруем строки: прежний фильтр знал только server.js,
+      # и шаг падал сам на scripts/secrets.mjs. --exclude у grep сравнивает
+      # имя файла, а не путь, поэтому в других каталогах файлы с такими именами
+      # не заводим. Каталоги plans и .github (здесь же лежат сами шаблоны
+      # поиска) исключены и раньше.
       - name: Сожжённые значения не вернулись
         run: |
           if grep -rn --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=plans \
                 --exclude-dir=.github \
-                -e 'passwb121' -e 'mgusev' . | grep -v '^./server.js:.*"passwb121",$'; then
+                --exclude=server.js --exclude=secrets.mjs \
+                -e 'passwb121' -e 'mgusev' .; then
             echo "::error::В рабочем дереве снова есть скомпрометированные значения"
             exit 1
           fi
@@ -35,6 +50,7 @@ jobs:
   build:
     name: Сборка
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -44,9 +60,26 @@ jobs:
       - run: npm ci
       - run: npm run build
 
+  unit:
+    name: Юнит-тесты
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Маска, а не каталог: на Node 22 `node --test tests/unit/` пытается
+      # выполнить сам каталог как модуль и падает. Кавычки нужны, чтобы
+      # маску раскрывал node, а не shell.
+      - run: node --test "tests/unit/*.test.mjs"
+
   migrations:
     name: Миграции
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:17-alpine
@@ -128,9 +161,21 @@ jobs:
       - name: Сидинг
         run: node scripts/seed.mjs
 
+      # 6. Интеграционные тесты на настоящем PostgreSQL. Своя база: тесты
+      #    сами пишут в неё и не должны задевать базу шагов выше. Имя с
+      #    "test" обязательно, иначе тест откажется работать.
+      - name: Интеграционные тесты
+        env:
+          TEST_DATABASE_URL: postgres://team_health:team_health@127.0.0.1:5432/team_health_test
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "create database team_health_test"
+          DATABASE_URL="$TEST_DATABASE_URL" node scripts/migrate.mjs up
+          node --test "tests/integration/*.test.mjs"
+
   e2e:
     name: E2E
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # Тестовый профиль compose живёт на своих значениях, но интерполяция
     # проверяет весь файл целиком, включая ${VAR:?} у dev-профиля. Значения
     # здесь одноразовые и никуда не уезжают.
@@ -143,3 +188,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: make test-docker
         run: make test-docker
+      # Каталоги лежат на хосте: compose монтирует их в контейнер tests
+      # (./test-results и ./playwright-report). CI=1 выставлен в образе test
+      # (Dockerfile), поэтому html-отчёт создаётся там сам.
+      - name: Артефакты Playwright
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 7
