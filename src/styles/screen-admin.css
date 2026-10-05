@@ -1,8 +1,6 @@
 /* Админка. Только токены; компоненты берутся из src/ui. Префикс adm-.
 
-   .admin-view, .settings-card и .access-row оставлены как крючки для e2e-тестов;
-   правила с большей специфичностью снимают с них оформление старого styles.css,
-   пока он есть в сборке. */
+   .admin-view, .settings-card и .access-row оставлены как крючки для e2e-тестов. */
 
 .admin-view.adm {
   display: grid;

@@ -344,51 +344,6 @@
   }
 }
 
-/* ---------- Шапка страницы ---------- */
-
-.page-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--sp-4);
-  padding: var(--sp-4) 0 var(--sp-6);
-}
-
-.page-head-text {
-  min-width: 0;
-}
-
-.page-title {
-  font-size: var(--text-3xl);
-  font-weight: 700;
-  line-height: 1.08;
-  letter-spacing: var(--tracking-tight);
-}
-
-.page-subtitle {
-  margin-top: var(--sp-2);
-  max-width: 62ch;
-  color: var(--text-2);
-  font-size: var(--text-md);
-}
-
-.page-head-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-}
-
-@media (max-width: 760px) {
-  .page-title {
-    font-size: var(--text-2xl);
-  }
-
-  .page-subtitle {
-    font-size: var(--text-base);
-  }
-}
-
 /* ---------- Пользователь в панели ---------- */
 
 .shell-user {
@@ -443,40 +398,6 @@
 
 .shell[data-collapsed="true"] .shell-user-text {
   display: none;
-}
-
-/* ---------- Переходная раскладка встреч ----------
-   Контекстная панель и правая колонка раздела встреч пока живут на старой
-   разметке; здесь они только встают в сетку внутри новой оболочки. Раздел
-   встреч будет переписан целиком, и этот блок уйдёт вместе со старыми стилями. */
-
-.page-body {
-  min-width: 0;
-}
-
-.page-body .workspace {
-  min-width: 0;
-  padding: 0;
-}
-
-.page-body.section-meetings {
-  display: grid;
-  grid-template-columns: 300px minmax(0, 1fr) 340px;
-  gap: var(--gap);
-  align-items: start;
-  padding-top: var(--sp-2);
-}
-
-.page-body .context-sidebar,
-.page-body .right-rail {
-  position: sticky;
-  top: calc(var(--topbar-h) + var(--sp-2));
-  max-height: calc(100dvh - var(--topbar-h) - var(--sp-4));
-  overflow: auto;
-  border: 0;
-  border-radius: var(--r-lg);
-  background: var(--surface);
-  box-shadow: var(--shadow-1);
 }
 
 /* ---------- Меню пользователя ---------- */
@@ -657,4 +578,38 @@
   display: grid;
   gap: var(--sp-5);
   padding-bottom: var(--sp-2);
+}
+
+
+/* ---------- Баннеры состояния данных (конфликт, ошибка сохранения) ---------- */
+
+.app-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3) var(--sp-4);
+  margin: var(--sp-3) 0;
+  padding: var(--sp-4);
+  border-radius: var(--r-lg);
+  background: var(--danger-tint);
+  color: var(--danger-text);
+  font-size: var(--text-sm);
+  box-shadow: var(--shadow-1);
+}
+
+.app-banner p {
+  flex: 1 1 18rem;
+  min-width: 0;
+}
+
+.app-banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.page-body,
+.page-body .workspace {
+  min-width: 0;
 }

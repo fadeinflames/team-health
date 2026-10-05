@@ -5,10 +5,6 @@ import { expect, test } from "@playwright/test";
 
 const baseURL = process.env.BASE_URL || "http://127.0.0.1:4173";
 
-// Старый styles.css пока подтягивает шрифт с внешнего хоста, который запрещён
-// CSP страницы. Это не относится к набору B и исчезнет вместе со старыми стилями.
-const KNOWN_NOISE = [/fonts\.bunny\.net/];
-
 test.describe("Набор B: каталог /#ui-kit", () => {
   let problems;
 
@@ -16,7 +12,6 @@ test.describe("Набор B: каталог /#ui-kit", () => {
     problems = [];
     page.on("console", (message) => {
       if (message.type() !== "error") return;
-      if (KNOWN_NOISE.some((pattern) => pattern.test(message.text()))) return;
       problems.push(`console: ${message.text()}`);
     });
     page.on("pageerror", (error) => problems.push(`pageerror: ${error.message}`));

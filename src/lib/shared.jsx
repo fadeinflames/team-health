@@ -5,45 +5,19 @@
 // Модуль переходный: по мере переписывания экранов то, что нужно только
 // одному экрану, уезжает в его файл, а общее раскладывается по src/lib/*.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
-  Activity,
-  AlertTriangle,
   BarChart3,
   CalendarDays,
-  Check,
-  CheckCircle2,
-  ChevronRight,
-  CircleDashed,
   ClipboardCheck,
   ClipboardList,
-  Flag,
   HeartPulse,
   Home,
-  KeyRound,
-  LockKeyhole,
-  LogOut,
   MessageSquarePlus,
-  Plus,
-  RotateCcw,
-  Search,
-  Send,
   Settings,
   ShieldCheck,
-  Sun,
-  Moon,
-  Monitor,
   ArrowUp,
-  ArrowDown,
-  Pencil,
-  SlidersHorizontal,
-  Target,
-  Trash2,
-  UserCog,
-  UserPlus,
-  UserRoundCheck,
-  UsersRound,
-  X
+  Target
 } from "lucide-react";
 
 export const emptyWorkspace = {
@@ -96,11 +70,6 @@ export function todayISODate() {
   return new Date().toISOString().slice(0, 10);
 }
 
-export const ruMonthsFull = [
-  "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
-  "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"
-];
-export const ruWeekdaysShort = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 
 export function formatDateRu(iso) {
   if (!iso) return "";
@@ -205,191 +174,6 @@ export function parseCompetencyRows(rawText) {
       };
     })
     .filter(Boolean);
-}
-
-export function buildMonthGrid(year, month /* 0-11 */) {
-  const firstDay = new Date(Date.UTC(year, month, 1));
-  // JS getUTCDay() returns 0=Sun..6=Sat. Convert to Mon-first: 0=Mon..6=Sun.
-  const offset = (firstDay.getUTCDay() + 6) % 7;
-  const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
-  const cells = [];
-  // Lead with prev-month days
-  if (offset > 0) {
-    const prevMonth = new Date(Date.UTC(year, month, 0));
-    const prevDays = prevMonth.getUTCDate();
-    for (let i = offset - 1; i >= 0; i--) {
-      cells.push({ day: prevDays - i, inMonth: false, iso: null });
-    }
-  }
-  for (let d = 1; d <= daysInMonth; d++) {
-    const mm = String(month + 1).padStart(2, "0");
-    const dd = String(d).padStart(2, "0");
-    cells.push({ day: d, inMonth: true, iso: `${year}-${mm}-${dd}` });
-  }
-  // Trailing next-month days so the grid is a 6×7 rectangle
-  while (cells.length % 7 !== 0 || cells.length < 42) {
-    const next = cells.length - offset - daysInMonth + 1;
-    cells.push({ day: next, inMonth: false, iso: null });
-    if (cells.length >= 42) break;
-  }
-  return cells;
-}
-
-export function DatePicker({ value, onChange, placeholder = "Выбрать дату", id }) {
-  const [open, setOpen] = useState(false);
-  const [popupStyle, setPopupStyle] = useState(null);
-  const initial = value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00Z`) : new Date();
-  const [view, setView] = useState({ year: initial.getUTCFullYear(), month: initial.getUTCMonth() });
-  const ref = useRef(null);
-  const triggerRef = useRef(null);
-
-  function positionPopup() {
-    if (!triggerRef.current) return;
-    const rect = triggerRef.current.getBoundingClientRect();
-    const viewportPadding = 16;
-    const width = Math.min(280, Math.max(240, window.innerWidth - viewportPadding * 2));
-    const maxLeft = Math.max(viewportPadding, window.innerWidth - width - viewportPadding);
-    const left = Math.min(
-      Math.max(viewportPadding, rect.left),
-      maxLeft
-    );
-    const estimatedHeight = 342;
-    const belowTop = rect.bottom + 6;
-    const aboveTop = rect.top - estimatedHeight - 6;
-    const top =
-      belowTop + estimatedHeight > window.innerHeight - viewportPadding && aboveTop > viewportPadding
-        ? aboveTop
-        : Math.min(belowTop, window.innerHeight - viewportPadding - estimatedHeight);
-
-    setPopupStyle({
-      position: "fixed",
-      top: Math.max(viewportPadding, top),
-      left,
-      width
-    });
-  }
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const close = (event) => {
-      if (ref.current && !ref.current.contains(event.target)) setOpen(false);
-    };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    positionPopup();
-    const reposition = () => positionPopup();
-    window.addEventListener("resize", reposition);
-    window.addEventListener("scroll", reposition, true);
-    return () => {
-      window.removeEventListener("resize", reposition);
-      window.removeEventListener("scroll", reposition, true);
-    };
-  }, [open]);
-
-  const cells = buildMonthGrid(view.year, view.month);
-  const todayIso = todayISODate();
-
-  function shift(delta) {
-    setView((current) => {
-      const m = current.month + delta;
-      const year = current.year + Math.floor(m / 12);
-      const month = ((m % 12) + 12) % 12;
-      return { year, month };
-    });
-  }
-
-  return (
-    <div className="date-picker" ref={ref}>
-      <button
-        type="button"
-        className="date-picker-trigger"
-        ref={triggerRef}
-        onClick={() => {
-          if (open) {
-            setOpen(false);
-            return;
-          }
-          positionPopup();
-          setOpen(true);
-        }}
-        id={id}
-      >
-        <CalendarDays size={14} />
-        <span className={value ? "" : "placeholder"}>
-          {value ? formatDateRu(value) : placeholder}
-        </span>
-      </button>
-      {open && (
-        <div className="date-picker-popup" style={popupStyle || undefined}>
-          <div className="date-picker-head">
-            <button type="button" onClick={() => shift(-1)} aria-label="Предыдущий месяц">
-              <ArrowUp size={14} style={{ transform: "rotate(-90deg)" }} />
-            </button>
-            <span>
-              {ruMonthsFull[view.month]} {view.year}
-            </span>
-            <button type="button" onClick={() => shift(1)} aria-label="Следующий месяц">
-              <ArrowUp size={14} style={{ transform: "rotate(90deg)" }} />
-            </button>
-          </div>
-          <div className="date-picker-weekdays">
-            {ruWeekdaysShort.map((d) => (
-              <span key={d} className={d === "Сб" || d === "Вс" ? "weekend" : ""}>{d}</span>
-            ))}
-          </div>
-          <div className="date-picker-grid">
-            {cells.map((cell, i) => {
-              const dayOfWeek = i % 7; // 0=Mon..6=Sun in our grid
-              const isWeekend = dayOfWeek === 5 || dayOfWeek === 6;
-              const isSelected = cell.iso && cell.iso === value;
-              const isToday = cell.iso === todayIso;
-              return (
-                <button
-                  key={i}
-                  type="button"
-                  disabled={!cell.inMonth}
-                  className={`date-picker-day ${!cell.inMonth ? "out" : ""} ${isSelected ? "selected" : ""} ${isToday ? "today" : ""} ${isWeekend ? "weekend" : ""}`}
-                  onClick={() => {
-                    if (!cell.iso) return;
-                    onChange(cell.iso);
-                    setOpen(false);
-                  }}
-                >
-                  {cell.day}
-                </button>
-              );
-            })}
-          </div>
-          <div className="date-picker-actions">
-            <button
-              type="button"
-              className="soft-button"
-              onClick={() => {
-                onChange("");
-                setOpen(false);
-              }}
-            >
-              Очистить
-            </button>
-            <button
-              type="button"
-              className="soft-button"
-              onClick={() => {
-                onChange(todayIso);
-                setOpen(false);
-              }}
-            >
-              Сегодня
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
 }
 
 export const categories = {
@@ -804,162 +588,6 @@ export const pulseSeries = [
   { id: "trust", label: "Доверие", color: "#4f8879" }
 ];
 
-export function LineChart({ series, labels, height = 200, width = 540 }) {
-  if (!series.length || !labels.length) {
-    return <div className="empty-state compact-empty"><span>Данных пока нет.</span></div>;
-  }
-  const padL = 32;
-  const padR = 14;
-  const padT = 12;
-  const padB = 30;
-  const w = width - padL - padR;
-  const h = height - padT - padB;
-  const yMax = 10;
-  const dx = labels.length === 1 ? 0 : w / (labels.length - 1);
-  const yTicks = [0, 2, 4, 6, 8, 10];
-  // Show every label if there are ≤ 8 weeks, otherwise pick ~6 evenly spaced
-  const labelStep = labels.length <= 8 ? 1 : Math.ceil(labels.length / 6);
-
-  return (
-    <svg width="100%" viewBox={`0 0 ${width} ${height}`} className="report-chart" preserveAspectRatio="none">
-      {yTicks.map((v) => {
-        const y = padT + h - (v / yMax) * h;
-        return (
-          <g key={v}>
-            <line x1={padL} y1={y} x2={width - padR} y2={y} className="chart-grid" />
-            <text x={padL - 6} y={y + 3} textAnchor="end" className="chart-axis">{v}</text>
-          </g>
-        );
-      })}
-      {series.map((s) => {
-        const pts = s.points
-          .map((v, i) => `${padL + i * dx},${padT + h - (Math.max(0, Math.min(yMax, v)) / yMax) * h}`)
-          .join(" ");
-        return (
-          <g key={s.id}>
-            <polyline
-              points={pts}
-              fill="none"
-              stroke={s.color}
-              strokeWidth="2.5"
-              strokeLinejoin="round"
-              strokeLinecap="round"
-            />
-            {s.points.map((v, i) => (
-              <circle
-                key={i}
-                cx={padL + i * dx}
-                cy={padT + h - (Math.max(0, Math.min(yMax, v)) / yMax) * h}
-                r={3.5}
-                fill={s.color}
-                stroke="var(--surface)"
-                strokeWidth="1.5"
-              />
-            ))}
-          </g>
-        );
-      })}
-      {labels.map((label, i) =>
-        i % labelStep === 0 || i === labels.length - 1 ? (
-          <text key={i} x={padL + i * dx} y={height - 10} textAnchor="middle" className="chart-axis">
-            {label}
-          </text>
-        ) : null
-      )}
-    </svg>
-  );
-}
-
-export function ScoreLineChart({ points, labels, height = 200, width = 540, color = "#4f8879" }) {
-  if (!points.length || !labels.length) {
-    return <div className="empty-state compact-empty"><span>Данных пока нет.</span></div>;
-  }
-  const padL = 36;
-  const padR = 14;
-  const padT = 12;
-  const padB = 30;
-  const w = width - padL - padR;
-  const h = height - padT - padB;
-  const yMax = 100;
-  const dx = points.length === 1 ? 0 : w / (points.length - 1);
-  const yTicks = [0, 25, 50, 75, 100];
-  const labelStep = labels.length <= 8 ? 1 : Math.ceil(labels.length / 6);
-
-  return (
-    <svg width="100%" viewBox={`0 0 ${width} ${height}`} className="report-chart" preserveAspectRatio="none">
-      {yTicks.map((v) => {
-        const y = padT + h - (v / yMax) * h;
-        return (
-          <g key={v}>
-            <line x1={padL} y1={y} x2={width - padR} y2={y} className="chart-grid" />
-            <text x={padL - 6} y={y + 3} textAnchor="end" className="chart-axis">{v}</text>
-          </g>
-        );
-      })}
-      <polyline
-        points={points.map((v, i) => `${padL + i * dx},${padT + h - (Math.max(0, Math.min(yMax, v)) / yMax) * h}`).join(" ")}
-        fill="none"
-        stroke={color}
-        strokeWidth="3"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
-      {points.map((v, i) => (
-        <circle
-          key={i}
-          cx={padL + i * dx}
-          cy={padT + h - (Math.max(0, Math.min(yMax, v)) / yMax) * h}
-          r={4}
-          fill={color}
-          stroke="var(--surface)"
-          strokeWidth="2"
-        />
-      ))}
-      {labels.map((label, i) =>
-        i % labelStep === 0 || i === labels.length - 1 ? (
-          <text key={i} x={padL + i * dx} y={height - 10} textAnchor="middle" className="chart-axis">
-            {label}
-          </text>
-        ) : null
-      )}
-    </svg>
-  );
-}
-
-export function BarChart({ data, height = 160, defaultColor = "#4f8879", width = 540 }) {
-  if (!data.length) {
-    return <div className="empty-state compact-empty"><span>Данных пока нет.</span></div>;
-  }
-  const padL = 28;
-  const padR = 12;
-  const padT = 16;
-  const padB = 30;
-  const w = width - padL - padR;
-  const h = height - padT - padB;
-  const max = Math.max(1, ...data.map((d) => d.value));
-  const barW = w / data.length;
-  return (
-    <svg width="100%" viewBox={`0 0 ${width} ${height}`} className="report-chart" preserveAspectRatio="none">
-      {data.map((d, i) => {
-        const bh = (d.value / max) * h;
-        const x = padL + i * barW + barW * 0.15;
-        const y = padT + h - bh;
-        return (
-          <g key={d.label}>
-            <rect x={x} y={y} width={barW * 0.7} height={bh} rx={4} fill={d.color || defaultColor} />
-            <text x={x + (barW * 0.7) / 2} y={y - 4} textAnchor="middle" className="chart-axis chart-bar-value">
-              {d.value}
-            </text>
-            <text x={padL + i * barW + barW / 2} y={height - 8} textAnchor="middle" className="chart-axis">
-              {d.label}
-            </text>
-          </g>
-        );
-      })}
-    </svg>
-  );
-}
-
 export function makeId(prefix) {
   if (globalThis.crypto?.randomUUID) return `${prefix}-${globalThis.crypto.randomUUID()}`;
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -995,10 +623,6 @@ export function priorityLabel(priority) {
 
 export function sourceLabel(source) {
   return source === "employee" ? "Участник" : "Лид";
-}
-
-export function sourceTone(source) {
-  return source === "employee" ? "participant" : "lead";
 }
 
 export function ownerLabel(owner) {

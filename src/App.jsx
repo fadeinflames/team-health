@@ -1,4 +1,6 @@
-import { useAppearance } from "./appearance.js";
+import {
+  useAppearance
+} from "./appearance.js";
 import Shell from "./shell/Shell.jsx";
 import HomeScreen from "./screens/Home.jsx";
 import MeetingsScreen from "./screens/Meetings.jsx";
@@ -9,70 +11,50 @@ import ReportsScreen from "./screens/Reports.jsx";
 import TeamScreen from "./screens/Team.jsx";
 import AdminScreen from "./screens/Admin.jsx";
 import CreateLoginCard from "./screens/team/CreateLoginCard.jsx";
-import DeleteConfirm from "./screens/team/DeleteConfirm.jsx";
 import AuthScreen from "./screens/Auth.jsx";
 import SettingsScreen from "./screens/Settings.jsx";
 import UserMenu from "./shell/UserMenu.jsx";
 import MoreTab from "./shell/MoreTab.jsx";
 import CommandPalette from "./shell/CommandPalette.jsx";
-import { Kbd } from "./ui";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { toCsv } from "./csv.js";
+import {
+  Button,
+  Kbd,
+  useToast
+} from "./ui";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from "react";
+import {
+  toCsv
+} from "./csv.js";
 import {
   emptyWorkspace,
-  goalStatusLabel,
   goalStatusOrder,
-  lprStatusLabel,
   lprStatusOrder,
   competencyGradeLabel,
-  competencySourceLabel,
   todayISODate,
-  ruMonthsFull,
-  ruWeekdaysShort,
-  formatDateRu,
   duplicateTitleKey,
   clampRangeValue,
-  parseScoreValue,
   formatScoreValue,
   competencyGradeFromScores,
   competencyKey,
-  competencyTone,
   parseCompetencyRows,
-  buildMonthGrid,
-  DatePicker,
   categories,
   checklist,
-  meetingTypeLabel,
-  mentorshipModeLabel,
-  mentorshipModeHint,
-  baseQuestionSeeds,
-  questionSeedsByMeetingType,
-  questionSeedsByMode,
-  getQuestionSeeds,
-  managerNoteTagLabel,
-  managerNoteTagOrder,
-  formatRuDate,
   sectionRegistry,
   primarySections,
   sectionDescriptionFor,
   roleLabel,
-  surveyQuestionTypeLabel,
   emptyQuestionFor,
-  templateQuestion,
-  surveyTemplates,
   pulseSeries,
-  LineChart,
-  ScoreLineChart,
-  BarChart,
   makeId,
   scorePulse,
-  heatmapTone,
   priorityLabel,
-  sourceLabel,
-  sourceTone,
   ownerLabel,
   pluralizeRu,
-  countLabel,
   meetingSortValue,
   isDemoAccess,
   isPlatformAdminRole,
@@ -80,8 +62,6 @@ import {
   isProtectedAccess,
   ApiError,
   ANONYMOUS_MIN_RESPONSES,
-  ANONYMOUS_MAX_RESPONSES,
-  clampAnonymousMin,
   apiFetch,
   scrollBehavior,
   KNOWN_ID_TABLES,
@@ -92,43 +72,12 @@ import {
 } from "./lib/shared.jsx";
 
 import {
-  Activity,
-  AlertTriangle,
-  BarChart3,
-  CalendarDays,
-  Check,
-  CheckCircle2,
-  ChevronRight,
-  CircleDashed,
-  ClipboardCheck,
-  ClipboardList,
-  Flag,
-  HeartPulse,
-  Home,
-  KeyRound,
-  LockKeyhole,
   LogOut,
-  MessageSquarePlus,
-  Plus,
-  RotateCcw,
   Search,
-  Send,
-  Settings,
-  ShieldCheck,
   Sun,
   Moon,
   Monitor,
-  ArrowUp,
-  ArrowDown,
-  Pencil,
-  SlidersHorizontal,
-  Target,
-  Trash2,
-  UserCog,
-  UserPlus,
-  UserRoundCheck,
-  UsersRound,
-  X
+  UserRoundCheck
 } from "lucide-react";
 
 export default function App() {
@@ -168,20 +117,18 @@ export default function App() {
     password: ""
   });
   const [passwordUpdate, setPasswordUpdate] = useState({ userId: "", password: "" });
-  const [newPerson, setNewPerson] = useState({
-    name: "",
-    meetingName: "",
-    role: "Team Member",
-    team: "Product",
-    cadence: "каждую неделю",
-    nextMeeting: "нужно запланировать",
-    managerFocus: ""
-  });
-  // Ошибки отделены от успехов: успех сам гаснет и озвучивается вежливо
-  // (role="status"), ошибка висит до следующего действия и озвучивается сразу.
-  const [userNotice, setUserNotice] = useState({ text: "", error: false });
-  const setUserMessage = (text) => setUserNotice({ text, error: false });
-  const setUserError = (text) => setUserNotice({ text, error: true });
+  // Сообщения идут тостами: успех гаснет сам и озвучивается вежливо (role="status"),
+  // ошибка висит, пока её не закроют, и озвучивается сразу (role="alert").
+  const { toast, dismiss: dismissToast } = useToast();
+  const noticeToastRef = useRef(null);
+  const setUserMessage = (text) => {
+    if (noticeToastRef.current) dismissToast(noticeToastRef.current);
+    noticeToastRef.current = text ? toast({ title: text, tone: "success" }) : null;
+  };
+  const setUserError = (text) => {
+    if (noticeToastRef.current) dismissToast(noticeToastRef.current);
+    noticeToastRef.current = text ? toast({ title: text, tone: "danger" }) : null;
+  };
   const [formErrors, setFormErrors] = useState({});
   const [profileName, setProfileName] = useState("");
   const [showCreateLoginForm, setShowCreateLoginForm] = useState(false);
@@ -198,7 +145,6 @@ export default function App() {
   const [peopleSearch, setPeopleSearch] = useState("");
   const [pendingDeletePersonId, setPendingDeletePersonId] = useState("");
   // Подтверждение остальных удалений: «вид:id» объекта, ждущего второго клика.
-  const [pendingDeleteKey, setPendingDeleteKey] = useState("");
   const [newGoal, setNewGoal] = useState({
     personId: "",
     lprId: "",
@@ -259,8 +205,6 @@ export default function App() {
     performanceNarrative: ""
   });
   const seenSectionsRef = useRef(new Set());
-  const sectionStaggerClass = (sectionId) =>
-    seenSectionsRef.current.has(sectionId) ? "" : "stagger-once";
 
   useEffect(() => {
     if (!activeSection) return;
@@ -381,13 +325,6 @@ export default function App() {
       }
     };
   }, []);
-
-  useEffect(() => {
-    // Ошибку не гасим по таймеру: человек мог не успеть её прочитать.
-    if (!userNotice.text || userNotice.error) return undefined;
-    const timeoutId = window.setTimeout(() => setUserMessage(""), 3600);
-    return () => window.clearTimeout(timeoutId);
-  }, [userNotice]);
 
   useEffect(() => {
     setProfileName(user?.name || "");
@@ -859,32 +796,12 @@ export default function App() {
   const dashboardScore = dashboardSnapshots.length
     ? Math.round(dashboardSnapshots.reduce((sum, item) => sum + item.score, 0) / dashboardSnapshots.length)
     : 0;
-  const attentionPeople = [...dashboardSnapshots]
-    .sort((a, b) => {
-      const weightA = (a.score < 64 ? 80 : 0) + a.urgentCards * 18 + a.openActions * 4 + (100 - a.readiness) / 10;
-      const weightB = (b.score < 64 ? 80 : 0) + b.urgentCards * 18 + b.openActions * 4 + (100 - b.readiness) / 10;
-      return weightB - weightA || a.score - b.score;
-    })
-    .slice(0, 5);
   const upcomingMeetings = [...dashboardSnapshots]
     .sort((a, b) => meetingSortValue(a.person.nextMeeting) - meetingSortValue(b.person.nextMeeting))
     .slice(0, 5);
   const peopleInRiskZone = dashboardSnapshots.filter((item) => item.score < 64 || item.urgentCards > 0).length;
   const selectedSection = sectionRegistry[activeSection] || sectionRegistry.home;
   const pageTitle = activeSection === "meetings" && selectedPerson ? `1:1 с ${selectedPerson.meetingName}` : selectedSection.title;
-  const pageSubtitle = "";
-  // Разделы, у которых своя шапка страницы (PageHeader внутри экрана).
-  const migratedSections = new Set([
-    "home",
-    "meetings",
-    "lprs",
-    "goals",
-    "surveys",
-    "reports",
-    "team",
-    "admin",
-    "settings",
-  ]);
   const visibleSections = primarySections
     .filter((sectionId) => {
       const meta = sectionRegistry[sectionId];
@@ -902,15 +819,6 @@ export default function App() {
         [person.name, person.role, person.team].some((value) => String(value || "").toLowerCase().includes(normalizedPeopleSearch))
       )
     : workspace?.people || [];
-  const dashboardIntroText = isAdmin
-    ? "Сводка по участникам 1:1: пульс, срочные темы, открытые шаги и ближайшие встречи."
-    : "Ваши открытые темы, пульс, подготовка и следующие шаги до ближайшего 1:1.";
-  const dashboardKpis = [
-    [HeartPulse, "Пульс", dashboardScore, isAdmin ? "среднее по участникам" : "по вашему профилю", "teal"],
-    [UsersRound, isAdmin ? "Участники" : "Профиль", dashboardPeople.length, isAdmin ? "в процессе 1:1" : "доступен вам", "slate"],
-    [AlertTriangle, "Срочные темы", urgentDashboardCards.length, "риски и блокеры", "amber"],
-    [CheckCircle2, "Открытые шаги", openDashboardActions.length, "требуют выполнения", "green"]
-  ];
 
   const teamScore = useMemo(() => {
     if (!workspace?.people.length) return 0;
@@ -1349,7 +1257,6 @@ export default function App() {
     () => new Map((workspace?.people || []).map((person) => [person.id, person])),
     [workspace?.people]
   );
-  const firstUpcomingMeeting = upcomingMeetings[0] || null;
   const actionInboxItems = [
     ...urgentDashboardCards.slice(0, 4).map((card) => {
       const person = peopleById.get(card.personId);
@@ -1383,14 +1290,6 @@ export default function App() {
       personId: alert.personId
     }))
   ].slice(0, 6);
-  const prepQueue = [...dashboardSnapshots]
-    .filter((item) => item.readiness < 85 || item.openActions > 0 || item.urgentCards > 0)
-    .sort((a, b) => {
-      const weightA = a.urgentCards * 30 + a.openActions * 8 + (100 - a.readiness);
-      const weightB = b.urgentCards * 30 + b.openActions * 8 + (100 - b.readiness);
-      return weightB - weightA;
-    })
-    .slice(0, 4);
   const person360Metrics = selectedPerson
     ? [
         {
@@ -1511,7 +1410,6 @@ export default function App() {
     if (meta.platformAdminOnly && !isPlatformAdminRole(user)) return;
     setUserMessage("");
     setPendingDeletePersonId("");
-    setPendingDeleteKey("");
     setActiveSection(sectionId);
     if (sectionId === "meetings") {
       setActiveView((current) => (["agenda", "health", "outcomes"].includes(current) ? current : "agenda"));
@@ -1695,32 +1593,6 @@ export default function App() {
       ...current,
       cards: current.cards.map((card) => (card.id === cardId ? { ...card, ...patch } : card))
     }));
-  }
-
-  // Двухшаговое удаление, как у участника: первый клик только просит
-  // подтверждения и называет объект, удаляет второй. Исчезновение карточки или
-  // цели одним случайным кликом откатить нечем.
-  function requestDelete(key, label) {
-    setPendingDeleteKey(key);
-    setUserMessage(`Подтвердите удаление ${label}`);
-  }
-
-  function cancelDelete() {
-    setPendingDeleteKey("");
-    setUserMessage("");
-  }
-
-  function renderDeleteConfirm(label, onConfirm) {
-    return (
-      <DeleteConfirm
-        label={label}
-        onConfirm={() => {
-          setPendingDeleteKey("");
-          onConfirm();
-        }}
-        onCancel={cancelDelete}
-      />
-    );
   }
 
   function deleteCard(cardId) {
@@ -2614,33 +2486,6 @@ export default function App() {
     }
   }
 
-  async function createPerson(event) {
-    event.preventDefault();
-    setUserMessage("");
-
-    try {
-      const response = await apiFetch("/api/people", {
-        method: "POST",
-        body: JSON.stringify(newPerson)
-      });
-      adoptServerWorkspace(response.workspace);
-      setSelectedPersonId(response.person.id);
-      setNewUser((current) => ({ ...current, personId: response.person.id }));
-      setNewPerson({
-        name: "",
-        meetingName: "",
-        role: "Team Member",
-        team: "Product",
-        cadence: "каждую неделю",
-        nextMeeting: "нужно запланировать",
-        managerFocus: ""
-      });
-      setUserMessage(`Участник ${response.person.name} добавлен`);
-    } catch (error) {
-      setUserError(error.message);
-    }
-  }
-
   function renderCreateLoginCard({
     id = "create-login-panel",
     description = "Тимлид получает доступ к своей команде, участник — только к своему 1:1.",
@@ -2735,63 +2580,33 @@ export default function App() {
     >
       <div className={`page-body section-${activeSection}`}>
       <div className="workspace">
-        {!migratedSections.has(activeSection) && (
-        <header className="page-head">
-          <div className="page-head-text">
-            <h1 className="page-title">{pageTitle}</h1>
-            {pageSubtitle && <p className="page-subtitle">{pageSubtitle}</p>}
-          </div>
-        </header>
-        )}
-
         {conflict && (
-          <div className="form-error inline-error" role="alert" data-testid="conflict-banner">
+          <div className="app-banner" role="alert" data-testid="conflict-banner">
             <p>
               Данные изменились в другом месте
               {conflict.conflicts.length > 0 ? ` (записей: ${conflict.conflicts.length})` : ""}. Ваши правки ещё не
               сохранены: загрузите актуальную версию или перезапишите её своими правками.
             </p>
-            <div className="confirm-actions">
-              <button
-                className="soft-button"
-                type="button"
-                data-testid="conflict-reload"
-                onClick={() => resolveConflict("reload")}
-              >
+            <div className="app-banner-actions">
+              <Button variant="neutral" size="sm" data-testid="conflict-reload" onClick={() => resolveConflict("reload")}>
                 Загрузить актуальные данные
-              </button>
-              <button
-                className="soft-button danger-button"
-                type="button"
-                data-testid="conflict-overwrite"
-                onClick={() => resolveConflict("overwrite")}
-              >
+              </Button>
+              <Button variant="danger" size="sm" data-testid="conflict-overwrite" onClick={() => resolveConflict("overwrite")}>
                 Перезаписать моими правками
-              </button>
+              </Button>
             </div>
           </div>
         )}
         {saveError && (
-          <div className="form-error inline-error" role="alert" data-testid="save-error">
-            <strong>{saveError}</strong> — изменения пока не сохранены.{" "}
-            <button className="soft-button" type="button" data-testid="save-retry" onClick={retrySaveNow}>
-              Повторить
-            </button>
-          </div>
-        )}
-        {/* Контейнер статуса стоит в DOM всегда: читалки объявляют текст, который появился внутри уже существующей live-области. */}
-        <div role="status" aria-live="polite">
-          {userNotice.text && !userNotice.error && <div className="form-hint inline-message">{userNotice.text}</div>}
-        </div>
-        {userNotice.text && userNotice.error && (
-          <div className="form-error inline-error" role="alert">
-            {userNotice.text}
-          </div>
-        )}
-
-        {pageDescription && !migratedSections.has(activeSection) && (
-          <div className="section-intro">
-            <p>{pageDescription}</p>
+          <div className="app-banner" role="alert" data-testid="save-error">
+            <p>
+              <strong>{saveError}</strong> — изменения пока не сохранены.
+            </p>
+            <div className="app-banner-actions">
+              <Button variant="neutral" size="sm" data-testid="save-retry" onClick={retrySaveNow}>
+                Повторить
+              </Button>
+            </div>
           </div>
         )}
 

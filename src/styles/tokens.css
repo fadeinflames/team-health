@@ -47,7 +47,7 @@
   --surface-hover: rgba(60, 60, 67, 0.06);
   --surface-press: rgba(60, 60, 67, 0.12);
   --glass: rgba(255, 255, 255, 0.72);
-  --glass-strong: rgba(255, 255, 255, 0.86);
+  --glass-strong: rgba(255, 255, 255, 0.94);
   --scrim: rgba(20, 20, 24, 0.38);
 
   /* --- Текст --- */
@@ -164,7 +164,7 @@
   --surface-hover: rgba(235, 235, 245, 0.07);
   --surface-press: rgba(235, 235, 245, 0.14);
   --glass: rgba(28, 28, 30, 0.72);
-  --glass-strong: rgba(28, 28, 30, 0.88);
+  --glass-strong: rgba(28, 28, 30, 0.94);
   --scrim: rgba(0, 0, 0, 0.58);
 
   --text: #f5f5f7;

@@ -1,8 +1,7 @@
 import React, { Suspense, lazy } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App.jsx";
-import { ToastProvider } from "./ui";
-import "./styles.css";
+import { Button, ToastProvider } from "./ui";
 import "./styles/fonts.css";
 import "./styles/tokens.css";
 import "./styles/base.css";
@@ -28,12 +27,15 @@ class ErrorBoundary extends React.Component {
   render() {
     if (!this.state.failed) return this.props.children;
     return (
-      <main role="alert" style={{ maxWidth: 480, margin: "15vh auto", padding: "0 16px", textAlign: "center" }}>
-        <h1>Что-то пошло не так</h1>
-        <p>Произошла непредвиденная ошибка. Перезагрузите страницу: уже сохранённые данные останутся на месте.</p>
-        <button className="soft-button" type="button" onClick={() => window.location.reload()}>
-          Перезагрузить страницу
-        </button>
+      <main
+        role="alert"
+        style={{ maxWidth: 480, margin: "15vh auto", padding: "0 var(--sp-4)", textAlign: "center", display: "grid", gap: "var(--sp-4)", justifyItems: "center" }}
+      >
+        <h1 style={{ fontSize: "var(--text-2xl)", letterSpacing: "var(--tracking-tight)" }}>Что-то пошло не так</h1>
+        <p style={{ color: "var(--text-2)" }}>
+          Произошла непредвиденная ошибка. Перезагрузите страницу: уже сохранённые данные останутся на месте.
+        </p>
+        <Button onClick={() => window.location.reload()}>Перезагрузить страницу</Button>
       </main>
     );
   }

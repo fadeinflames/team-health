@@ -19,7 +19,6 @@ import {
   Card,
   CardHeader,
   EmptyState,
-  IconTile,
   ListGroup,
   ListRow,
   PageHeader,

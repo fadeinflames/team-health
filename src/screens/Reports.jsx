@@ -41,7 +41,7 @@ import {
   Segmented,
   Stat
 } from "../ui";
-import { countLabel, pluralizeRu, pulseSeries } from "../lib/shared.jsx";
+import { countLabel, pluralizeRu } from "../lib/shared.jsx";
 import { useMediaQuery } from "../shell/Shell.jsx";
 import { BarList, TrendChart, formatNumber } from "./reports/charts.jsx";
 import Heatmap, { HeatmapLegend, scoreTone } from "./reports/Heatmap.jsx";

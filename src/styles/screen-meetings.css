@@ -15,18 +15,6 @@
   padding-top: var(--sp-2);
 }
 
-/* Переходная раскладка оболочки (shell.css) ставит три колонки на .page-body;
-   экран сам раскладывает колонки, поэтому она здесь не нужна. */
-.shell .page-body.section-meetings {
-  display: block;
-  padding-top: 0;
-}
-
-/* Пояснение раздела теперь в шапке страницы */
-.shell .page-body.section-meetings .section-intro {
-  display: none;
-}
-
 .meet__head {
   display: grid;
   gap: var(--sp-4);

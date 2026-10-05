@@ -35,7 +35,7 @@ test("409 при сохранении показывает баннер, а не
     await page.getByLabel("Логин").fill(adminUsername);
     await page.getByLabel("Пароль").fill(adminPassword);
     await page.getByRole("button", { name: "Войти", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Дашборд команды" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Сводка команды" })).toBeVisible();
 
     // Последнее успешное состояние сервера: его мы подсовываем в ответ 409,
     // как это делает настоящий сервер.

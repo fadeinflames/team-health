@@ -4,6 +4,20 @@
 
 Schema management moves out of the application into migrations, secrets get a lifecycle, and mutations stop rewriting the whole database.
 
+### Changed: new interface
+
+The whole visual layer is rebuilt as one design system in the spirit of iOS/macOS and One UI. Behaviour, API and data are unchanged.
+
+- Design tokens (`src/styles/tokens.css`) drive colour, type, spacing, radius, shadow and motion. Light and dark themes (or follow the system), seven accent colours, comfortable/compact density, normal/large text and a reduced-motion switch; all of it lives in Settings → Appearance and is applied before first paint (`public/theme-init.js`) so there is no flash.
+- Inter Variable is self-hosted (`public/fonts`); the external font request that the CSP blocked is gone. The CSP now allows `font-src 'self' data:` and inline styles needed by the primitives.
+- UI primitives in `src/ui` (buttons, cards, lists, badges, avatars, stats, charts, fields, switches, segmented controls, tabs, dialogs, sheets, menus, toasts), with a live catalogue at `/#ui-kit`.
+- New app shell: sidebar that collapses to an icon rail, glass top bar, bottom tab bar with a «More» sheet on phones, user menu, command palette (⌘K / Ctrl+K).
+- Every screen is redesigned and moved out of the 6.4k-line `src/App.jsx` into `src/screens/*` (Home, 1:1 meetings, IPR, goals, surveys, reports, team, admin, settings, sign-in). The old 5.3k-line `src/styles.css` is deleted; `App.jsx` is about 2.9k lines.
+- Messages are toasts (success disappears, errors stay until dismissed); conflict and save-error banners keep their test ids.
+- Destructive actions for cards, steps, notes, goals, IPRs, surveys and reports ask in a confirmation dialog.
+- Accessibility: WCAG AA contrast checked by script for all themes and accents, visible focus everywhere, 44 px touch targets on touch screens, full keyboard operation of dialogs, menus, tabs and the palette.
+- Docs: `docs/design/ui-system.md` describes the design language.
+
 ### Fixed (audit 2026-10-04, wave 1)
 
 - Text containing «продаж», «sales» or «биллинг» is no longer silently dropped from cards, actions and notes (and, in PostgreSQL, deleted on the next write). The word filter is gone.

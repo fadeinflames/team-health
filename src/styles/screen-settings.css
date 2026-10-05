@@ -31,8 +31,7 @@
   min-width: 0;
 }
 
-/* Старый класс .settings-card нужен тестам как якорь; его стили из styles.css
-   (рамка, свои отступы) перекрываем, пока старый файл ещё подключён. */
+/* Класс .settings-card нужен тестам как якорь. */
 .set-card.settings-card {
   padding: var(--card-pad);
   border: 0;

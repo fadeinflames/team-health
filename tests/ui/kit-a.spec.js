@@ -4,17 +4,11 @@ import { expect, test } from "@playwright/test";
 // проверяет только то, что отдаёт собранное приложение.
 const baseURL = process.env.BASE_URL || "http://127.0.0.1:4173";
 
-// Устаревший src/styles.css (его вытеснит новая система) тянет шрифт с внешнего
-// хоста, а CSP этого не разрешает: это не ошибка набора A.
-const KNOWN_NOISE = [/fonts\.bunny\.net/];
-
 async function openKit(page) {
   const problems = [];
   page.on("console", (message) => {
     if (message.type() !== "error") return;
-    const text = message.text();
-    if (KNOWN_NOISE.some((pattern) => pattern.test(text))) return;
-    problems.push(`console: ${text}`);
+    problems.push(`console: ${message.text()}`);
   });
   page.on("pageerror", (error) => problems.push(`pageerror: ${error.message}`));
   await page.goto(`${baseURL}/#ui-kit`);
@@ -24,8 +18,8 @@ async function openKit(page) {
 
 test("каталог набора A открывается без ошибок в консоли", async ({ page }) => {
   const problems = await openKit(page);
-  // Все девять разделов на месте.
-  await expect(page.locator("section.kit-section")).toHaveCount(9);
+  // Разделы набора A (9) и набора B на месте.
+  expect(await page.locator("section.kit-section").count()).toBeGreaterThanOrEqual(9);
   await page.waitForTimeout(500);
   expect(problems).toEqual([]);
 });

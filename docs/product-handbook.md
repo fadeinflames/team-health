@@ -261,7 +261,7 @@ PATCH /api/people/:personId/meeting-state
 
 ## 10. Фронтенд
 
-React-приложение живёт в основном в `src/App.jsx`, стили - в `src/styles.css`.
+React-приложение: состояние и обработчики в `src/App.jsx`, экраны в `src/screens/*`, примитивы интерфейса в `src/ui`, оболочка в `src/shell`, токены и стили в `src/styles/*`. Язык оформления описан в `docs/design/ui-system.md`, живой каталог компонентов открывается по адресу `/#ui-kit`.
 
 Разделы:
 
