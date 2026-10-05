@@ -1,6 +1,12 @@
 import { useAppearance } from "./appearance.js";
 import Shell from "./shell/Shell.jsx";
 import HomeScreen from "./screens/Home.jsx";
+// @screens:meetings
+// @screens:lprs-goals
+// @screens:surveys
+// @screens:reports
+// @screens:team-admin
+// @screens:settings-auth
 import UserMenu from "./shell/UserMenu.jsx";
 import MoreTab from "./shell/MoreTab.jsx";
 import CommandPalette from "./shell/CommandPalette.jsx";
@@ -869,7 +875,15 @@ export default function App() {
   const pageTitle = activeSection === "meetings" && selectedPerson ? `1:1 с ${selectedPerson.meetingName}` : selectedSection.title;
   const pageSubtitle = "";
   // Разделы, у которых своя шапка страницы (PageHeader внутри экрана).
-  const migratedSections = new Set(["home"]);
+  const migratedSections = new Set([
+    "home",
+    // @migrated:meetings
+    // @migrated:lprs-goals
+    // @migrated:surveys
+    // @migrated:reports
+    // @migrated:team-admin
+    // @migrated:settings-auth
+  ]);
   const visibleSections = primarySections
     .filter((sectionId) => {
       const meta = sectionRegistry[sectionId];
