@@ -1,0 +1,346 @@
+/* Команда и общие куски форм «Создать логин» / пароль / подтверждение удаления.
+   Только токены; компоненты берутся из src/ui. Префиксы team- и dc-.
+
+   Классы .team-member-card и .team-member-main оставлены как крючки для e2e-тестов;
+   пока в сборке есть старый styles.css, правила ниже с большей специфичностью
+   снимают его оформление с этих крючков. */
+
+.team {
+  display: grid;
+  gap: var(--sp-8);
+  min-width: 0;
+}
+
+.team > .ui-pageheader {
+  margin-bottom: calc(var(--sp-2) * -1);
+}
+
+/* --- Метрики --- */
+.team-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--gap);
+}
+
+/* --- Поиск в шапке секции --- */
+.team-search {
+  width: min(16rem, 52vw);
+}
+
+.team-groups {
+  display: grid;
+  gap: var(--sp-6);
+}
+
+/* --- Строка участника ---
+   Телефон: имя и пульс в первой строке, под ними сведения, под ними действия;
+   сведения и действия выровнены по тексту (отступ = аватар + промежуток).
+   Широкий экран: всё в одну строку. */
+.team-list .team-member-card {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.team-list .ui-list__item + .ui-list__item::before {
+  left: calc(var(--sp-4) + 2.75rem + var(--sp-3));
+}
+
+.team-row {
+  --team-indent: calc(2.75rem + var(--sp-3));
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "main pulse"
+    "meta meta"
+    "actions actions";
+  align-items: center;
+  gap: var(--sp-1) var(--sp-3);
+  padding: var(--row-pad-y) var(--sp-4);
+}
+
+.team-list .team-member-main {
+  grid-area: main;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  min-width: 0;
+  min-height: 2.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.team-list .team-member-main:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.team-row__text {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.team-row__name {
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--text-base);
+  font-weight: 600;
+  line-height: var(--leading-snug);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color var(--t-fast) var(--ease);
+}
+
+.team-row__sub {
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (hover: hover) {
+  .team-member-main:hover .team-row__name {
+    color: var(--accent-text);
+  }
+}
+
+.team-row__pulse {
+  grid-area: pulse;
+  justify-self: end;
+}
+
+.team-row__meta {
+  grid-area: meta;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1) var(--sp-3);
+  min-width: 0;
+  padding-inline-start: var(--team-indent);
+  color: var(--text-3);
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+}
+
+.team-row__login {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.team-row__actions {
+  grid-area: actions;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1) var(--sp-2);
+  padding-inline-start: 0;
+}
+
+.team-row__actions .ui-btn--plain.team-row__delete {
+  --ui-btn-fg: var(--danger-text);
+}
+
+/* Подтверждение удаления прямо в строке: объясняем последствия и даём два выхода. */
+.team-row__actions--confirm {
+  padding-inline-start: var(--team-indent);
+}
+
+.team-row__confirm {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.team-row__confirm p {
+  color: var(--danger-text);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  line-height: var(--leading-snug);
+}
+
+.team-row__confirm-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+@media (min-width: 900px) {
+  .team-row {
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto auto;
+    grid-template-areas: "main meta pulse actions";
+    gap: var(--sp-4);
+  }
+
+  .team-row__meta {
+    padding-inline-start: 0;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+  }
+
+  .team-row__actions {
+    padding-inline-start: 0;
+    justify-content: flex-end;
+    flex-wrap: nowrap;
+  }
+
+  .team-row__actions--confirm {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    padding-inline-start: var(--team-indent);
+    justify-content: flex-start;
+  }
+
+  .team-row__confirm {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--sp-3);
+  }
+}
+
+/* --- Форма (создание логина, правка профиля, сброс пароля) --- */
+.team-create {
+  display: grid;
+  gap: var(--sp-5);
+  scroll-margin-top: var(--sp-4);
+}
+
+.team-form {
+  display: grid;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+
+.team-form__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-4);
+  align-items: start;
+}
+
+.team-form__access {
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.team-form__legend {
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.team-form__error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border-radius: var(--r-md);
+  background: var(--danger-tint);
+  color: var(--danger-text);
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+}
+
+.team-form__error > svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+.team-form__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+}
+
+/* --- Поле пароля --- */
+.team-pw {
+  display: grid;
+  gap: var(--sp-1);
+}
+
+.team-pw__box {
+  position: relative;
+}
+
+.team-pw__box .team-pw__input .ui-input {
+  padding-inline-end: calc(var(--control-h-sm) + var(--sp-2));
+}
+
+.team-pw__eye {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: var(--sp-1);
+  margin-block: auto;
+}
+
+.team-pw__tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-2);
+  margin-inline-start: calc(var(--sp-3) * -1);
+}
+
+/* --- Подтверждение удаления (renderDeleteConfirm) --- */
+.dc-confirm {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+/* --- Узкие экраны --- */
+@media (max-width: 1100px) {
+  .team-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .team {
+    gap: var(--sp-6);
+    padding-top: var(--sp-3);
+  }
+
+  .team .ui-pageheader__actions .ui-btn {
+    flex: 1 1 0;
+  }
+
+  .team-stats {
+    gap: var(--sp-3);
+  }
+
+  .team-form__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .team-form__actions .ui-btn {
+    flex: 1 1 0;
+  }
+
+  /* Поиск занимает всю строку под заголовком секции */
+  .team-search {
+    width: 100%;
+  }
+
+  .team .ui-section__head:has(.team-search) {
+    flex-wrap: wrap;
+  }
+
+  .team .ui-section__head:has(.team-search) .ui-section__action {
+    flex: 1 1 100%;
+    margin-inline-end: 0;
+  }
+}
