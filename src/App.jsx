@@ -2,7 +2,8 @@ import { useAppearance } from "./appearance.js";
 import Shell from "./shell/Shell.jsx";
 import HomeScreen from "./screens/Home.jsx";
 // @screens:meetings
-// @screens:lprs-goals
+import LprsScreen from "./screens/Lprs.jsx";
+import GoalsScreen from "./screens/Goals.jsx";
 // @screens:surveys
 // @screens:reports
 // @screens:team-admin
@@ -204,6 +205,7 @@ export default function App() {
     dueDate: ""
   });
   const [goalsFilter, setGoalsFilter] = useState({ personId: "all", status: "active" });
+  const [goalComposeOpen, setGoalComposeOpen] = useState(false);
   const [newLpr, setNewLpr] = useState({
     personId: "",
     title: "",
@@ -878,7 +880,8 @@ export default function App() {
   const migratedSections = new Set([
     "home",
     // @migrated:meetings
-    // @migrated:lprs-goals
+    "lprs",
+    "goals",
     // @migrated:surveys
     // @migrated:reports
     // @migrated:team-admin
@@ -1847,7 +1850,7 @@ export default function App() {
   function addGoal(event) {
     event.preventDefault();
     const targetPersonId = isAdmin ? newGoal.personId || selectedPersonId : user?.personId;
-    if (!targetPersonId || !newGoal.title.trim()) return;
+    if (!targetPersonId || !newGoal.title.trim()) return false;
     const targetLpr = allLprs.find((lpr) => lpr.id === newGoal.lprId && lpr.personId === targetPersonId);
 
     const goal = {
@@ -1876,6 +1879,7 @@ export default function App() {
       dueDate: ""
     });
     setUserMessage("Цель добавлена");
+    return true;
   }
 
   function updateGoalProgress(goalId, value) {
@@ -1963,7 +1967,7 @@ export default function App() {
   function addLpr(event) {
     event.preventDefault();
     const targetPersonId = isAdmin ? newLpr.personId || selectedPersonId : user?.personId;
-    if (!targetPersonId || !newLpr.title.trim()) return;
+    if (!targetPersonId || !newLpr.title.trim()) return false;
     // updatedAt у строки — её версия из базы: новой строке версию даёт сервер.
     const lpr = {
       id: makeId("lpr"),
@@ -1984,6 +1988,7 @@ export default function App() {
       focus: ""
     });
     setUserMessage("ЛПР добавлен");
+    return true;
   }
 
   function setLprStatus(lprId, status) {
@@ -2204,6 +2209,7 @@ export default function App() {
       lprId: lpr.id
     }));
     setGoalsFilter((current) => ({ ...current, personId: isAdmin ? lpr.personId : current.personId, status: "active" }));
+    setGoalComposeOpen(true);
     setActiveSection("goals");
   }
 
@@ -4159,509 +4165,52 @@ export default function App() {
         )}
 
         {activeSection === "lprs" && (
-          <section className="goals-view lpr-view">
-            <div className="goals-kpis">
-              {[
-                [ClipboardCheck, "ЛПР в работе", lprAggregate.active, "активных планов", "teal"],
-                [Target, "Связанные цели", lprAggregate.linkedGoals, "цели с ЛПР", "green"],
-                [MessageSquarePlus, "Темы из 1:1", lprAggregate.linkedCards, "привязаны к ЛПР", "slate"],
-                [Activity, "Средний прогресс", `${lprAggregate.avgProgress}%`, "по активным целям", "amber"]
-              ].map(([Icon, label, value, detail, tone]) => (
-                <article className={`kpi-card ${tone}`} key={label}>
-                  <span className="kpi-icon">
-                    <Icon size={18} />
-                  </span>
-                  <div>
-                    <span>{label}</span>
-                    <strong>{value}</strong>
-                    <small>{detail}</small>
-                  </div>
-                </article>
-              ))}
-            </div>
-
-            <div className="goals-toolbar" role="toolbar" aria-label="Фильтры ЛПР">
-              {isAdmin && (
-                <label className="toolbar-field">
-                  <span>Участник</span>
-                  <select
-                    value={lprFilter.personId}
-                    onChange={(event) => setLprFilter((current) => ({ ...current, personId: event.target.value }))}
-                  >
-                    <option value="all">Все участники</option>
-                    {workspace.people.map((person) => (
-                      <option key={person.id} value={person.id}>
-                        {person.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              <label className="toolbar-field">
-                <span>Статус</span>
-                <select
-                  value={lprFilter.status}
-                  onChange={(event) => setLprFilter((current) => ({ ...current, status: event.target.value }))}
-                >
-                  <option value="active">{lprStatusLabel.active}</option>
-                  <option value="paused">{lprStatusLabel.paused}</option>
-                  <option value="done">{lprStatusLabel.done}</option>
-                  <option value="all">Все</option>
-                </select>
-              </label>
-            </div>
-
-            <div className="goals-grid">
-              <div className={`goals-list ${sectionStaggerClass("lprs")}`}>
-                {filteredLprs.length === 0 ? (
-                  <div className="empty-state">
-                    <ClipboardCheck size={22} />
-                    <span>Пока нет ЛПР в этом фильтре.</span>
-                  </div>
-                ) : (
-                  filteredLprs.map((lpr) => {
-                    const lprPerson = workspace.people.find((person) => person.id === lpr.personId);
-                    const linkedGoals = allGoals.filter((goal) => goal.lprId === lpr.id);
-                    const linkedCards = (workspace.cards || []).filter((card) => card.lprId === lpr.id);
-                    const activeLinkedGoals = linkedGoals.filter((goal) => goal.status === "active");
-                    const avgProgress = activeLinkedGoals.length
-                      ? Math.round(activeLinkedGoals.reduce((sum, goal) => sum + (goal.progress || 0), 0) / activeLinkedGoals.length)
-                      : 0;
-                    const canEdit = isAdmin || user?.personId === lpr.personId;
-                    return (
-                      <article className={`goal-card lpr-card status-${lpr.status}`} key={lpr.id}>
-                        <div className="goal-topline">
-                          {lprPerson && (
-                            <span className="goal-person">
-                              <span className="avatar mini">{lprPerson.initials}</span>
-                              {lprPerson.name}
-                            </span>
-                          )}
-                          <span className={`goal-status status-${lpr.status}`}>{lprStatusLabel[lpr.status]}</span>
-                          <span className="goal-chip muted">{linkedCards.length} тем 1:1</span>
-                          <span className="goal-chip muted">{linkedGoals.length} целей</span>
-                        </div>
-                        <h4>{lpr.title}</h4>
-                        {lpr.focus && <p>{lpr.focus}</p>}
-
-                        <div className="workflow-trace compact" aria-label="Связь ЛПР">
-                          <span>{linkedCards.length} тем 1:1</span>
-                          <ChevronRight size={13} />
-                          <span>ЛПР</span>
-                          <ChevronRight size={13} />
-                          <span>{linkedGoals.length} целей</span>
-                          <ChevronRight size={13} />
-                          <span>{avgProgress}% прогресс</span>
-                        </div>
-
-                        <div className="goal-progress">
-                          <div className="goal-progress-meta">
-                            <strong>{avgProgress}%</strong>
-                            <div className="goal-progress-line" aria-hidden="true">
-                              <span style={{ width: `${avgProgress}%` }} />
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="lpr-linked-grid">
-                          <div>
-                            <strong>Из 1:1</strong>
-                            {linkedCards.slice(0, 4).map((card) => (
-                              <button key={card.id} className="lpr-link-row" type="button" onClick={() => selectPerson(card.personId)}>
-                                <span>{card.title}</span>
-                                <ChevronRight size={14} />
-                              </button>
-                            ))}
-                            {linkedCards.length === 0 && <small>Свяжите тему 1:1 с ЛПР.</small>}
-                          </div>
-                          <div>
-                            <strong>Цели</strong>
-                            {linkedGoals.slice(0, 4).map((goal) => (
-                              <button key={goal.id} className="lpr-link-row" type="button" onClick={() => openGoalForLpr(lpr)}>
-                                <span>{goal.title}</span>
-                                <em>{goal.progress}%</em>
-                              </button>
-                            ))}
-                            {linkedGoals.length === 0 && <small>Добавьте цель из этого плана.</small>}
-                          </div>
-                        </div>
-
-                        {canEdit && (
-                          <div className="goal-actions">
-                            <button className="soft-button" type="button" onClick={() => openGoalForLpr(lpr)}>
-                              <Plus size={15} />
-                              Цель
-                            </button>
-                            {lpr.status !== "active" && (
-                              <button className="soft-button" type="button" onClick={() => setLprStatus(lpr.id, "active")}>
-                                <RotateCcw size={15} />
-                                В работу
-                              </button>
-                            )}
-                            {lpr.status !== "paused" && (
-                              <button className="soft-button" type="button" onClick={() => setLprStatus(lpr.id, "paused")}>
-                                <CircleDashed size={15} />
-                                Пауза
-                              </button>
-                            )}
-                            {lpr.status !== "done" && (
-                              <button className="soft-button" type="button" onClick={() => setLprStatus(lpr.id, "done")}>
-                                <Check size={15} />
-                                Завершить
-                              </button>
-                            )}
-                            {pendingDeleteKey === `lpr:${lpr.id}` ? (
-                              renderDeleteConfirm(`ЛПР «${lpr.title}»`, () => deleteLpr(lpr.id))
-                            ) : (
-                              <button
-                                className="soft-button danger-button"
-                                type="button"
-                                onClick={() => requestDelete(`lpr:${lpr.id}`, `ЛПР «${lpr.title}»`)}
-                              >
-                                <Trash2 size={15} />
-                                Удалить
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </article>
-                    );
-                  })
-                )}
-              </div>
-
-              <aside className="goal-compose" aria-label="Новый ЛПР">
-                <form className="compose-form" onSubmit={addLpr}>
-                  <div className="section-heading compact">
-                    <div>
-                      <p className="eyebrow">Новый ЛПР</p>
-                      <h3>Добавить план</h3>
-                    </div>
-                    <button className="icon-button" type="submit" title="Добавить ЛПР">
-                      <Plus size={18} />
-                    </button>
-                  </div>
-
-                  {isAdmin && (
-                    <label>
-                      Участник
-                      <select
-                        value={newLpr.personId}
-                        onChange={(event) => setNewLpr((current) => ({ ...current, personId: event.target.value }))}
-                      >
-                        <option value="">Выберите участника</option>
-                        {workspace.people.map((person) => (
-                          <option key={person.id} value={person.id}>
-                            {person.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
-
-                  <label>
-                    Название
-                    <input
-                      value={newLpr.title}
-                      onChange={(event) => setNewLpr((current) => ({ ...current, title: event.target.value }))}
-                      placeholder="Например: ЛПР: ownership направления"
-                    />
-                  </label>
-
-                  <label>
-                    Фокус
-                    <textarea
-                      value={newLpr.focus}
-                      onChange={(event) => setNewLpr((current) => ({ ...current, focus: event.target.value }))}
-                      placeholder="Какие темы из 1:1 превращаем в цели и практику"
-                      rows={4}
-                    />
-                  </label>
-
-                  {lprTargetPersonId && (
-                    <div className="goal-side-context">
-                      <p className="eyebrow">Активные ЛПР</p>
-                      {allLprs
-                        .filter((lpr) => lpr.personId === lprTargetPersonId && lpr.status === "active")
-                        .slice(0, 3)
-                        .map((lpr) => (
-                          <div className="goal-side-row" key={lpr.id}>
-                            <strong>{lpr.title}</strong>
-                            <span>{allGoals.filter((goal) => goal.lprId === lpr.id).length}</span>
-                          </div>
-                        ))}
-                    </div>
-                  )}
-                </form>
-              </aside>
-            </div>
-          </section>
+          <LprsScreen
+            isAdmin={isAdmin}
+            currentPersonId={user?.personId || ""}
+            people={workspace.people}
+            lprs={allLprs}
+            visibleLprs={filteredLprs}
+            goals={allGoals}
+            cards={workspace.cards || []}
+            aggregate={lprAggregate}
+            filter={lprFilter}
+            onFilterChange={setLprFilter}
+            draft={newLpr}
+            onDraftChange={setNewLpr}
+            targetPersonId={lprTargetPersonId}
+            onAdd={addLpr}
+            onSetStatus={setLprStatus}
+            onDelete={deleteLpr}
+            onOpenPerson={selectPerson}
+            onAddGoal={openGoalForLpr}
+          />
         )}
 
         {activeSection === "goals" && (
-          <section className="goals-view">
-            <div className="goals-kpis">
-              {[
-                [Target, "В работе", goalsAggregate.active, "активных целей", "teal"],
-                [CheckCircle2, "Достигнуто", goalsAggregate.achieved, "цели закрыты", "green"],
-                [Activity, "Средний прогресс", `${goalsAggregate.avgProgress}%`, "по активным", "slate"],
-                [AlertTriangle, "Под риском", goalsAggregate.atRisk, "прогресс < 30%", "amber"]
-              ].map(([Icon, label, value, detail, tone]) => (
-                <article className={`kpi-card ${tone}`} key={label}>
-                  <span className="kpi-icon">
-                    <Icon size={18} />
-                  </span>
-                  <div>
-                    <span>{label}</span>
-                    <strong>{value}</strong>
-                    <small>{detail}</small>
-                  </div>
-                </article>
-              ))}
-            </div>
-
-            <div className="goals-toolbar" role="toolbar" aria-label="Фильтры целей">
-              {isAdmin && (
-                <label className="toolbar-field">
-                  <span>Участник</span>
-                  <select
-                    value={goalsFilter.personId}
-                    onChange={(event) => setGoalsFilter((current) => ({ ...current, personId: event.target.value }))}
-                  >
-                    <option value="all">Все участники</option>
-                    {workspace.people.map((person) => (
-                      <option key={person.id} value={person.id}>
-                        {person.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              <label className="toolbar-field">
-                <span>Статус</span>
-                <select
-                  value={goalsFilter.status}
-                  onChange={(event) => setGoalsFilter((current) => ({ ...current, status: event.target.value }))}
-                >
-                  <option value="active">{goalStatusLabel.active}</option>
-                  <option value="achieved">{goalStatusLabel.achieved}</option>
-                  <option value="abandoned">{goalStatusLabel.abandoned}</option>
-                  <option value="all">Все</option>
-                </select>
-              </label>
-            </div>
-
-            <div className="goals-grid">
-              <div className={`goals-list ${sectionStaggerClass("goals")}`}>
-                {filteredGoals.length === 0 ? (
-                  <div className="empty-state">
-                    <Target size={22} />
-                    <span>В этом фильтре пока нет целей.</span>
-                  </div>
-                ) : (
-                  filteredGoals.map((goal) => {
-                    const goalPerson = workspace.people.find((person) => person.id === goal.personId);
-                    const goalLpr = goal.lprId ? lprById.get(goal.lprId) : null;
-                    const dueLabel = goal.dueDate || goal.horizon;
-                    const isOwner = isAdmin || user?.personId === goal.personId;
-                    const progressValue = goalProgressValue(goal);
-                    return (
-                      <article className={`goal-card status-${goal.status}`} key={goal.id}>
-                        <div className="goal-topline">
-                          {goalPerson && (
-                            <span className="goal-person">
-                              <span className="avatar mini">{goalPerson.initials}</span>
-                              {goalPerson.name}
-                            </span>
-                          )}
-                          {goal.horizon && <span className="goal-chip">{goal.horizon}</span>}
-                          {dueLabel && goal.dueDate && goal.dueDate !== goal.horizon && (
-                            <span className="goal-chip muted">до {goal.dueDate}</span>
-                          )}
-                          {goalLpr && <span className="goal-chip muted">ЛПР · {goalLpr.title}</span>}
-                          <span className={`goal-status status-${goal.status}`}>{goalStatusLabel[goal.status]}</span>
-                        </div>
-                        <h4>{goal.title}</h4>
-                        {goal.description && <p>{goal.description}</p>}
-
-                        <div className="workflow-trace compact" aria-label="Связь цели">
-                          <span>1:1</span>
-                          <ChevronRight size={13} />
-                          <span className={!goalLpr ? "muted" : ""}>{goalLpr ? "ЛПР" : "без ЛПР"}</span>
-                          <ChevronRight size={13} />
-                          <span>Цель</span>
-                          <ChevronRight size={13} />
-                          <span>{progressValue}%</span>
-                        </div>
-
-                        <div className="goal-progress">
-                          <div className="goal-progress-meta">
-                            <strong>{progressValue}%</strong>
-                            {isOwner && goal.status !== "abandoned" ? (
-                              <input
-                                className="goal-progress-range"
-                                style={{ "--progress": `${progressValue}%` }}
-                                type="range"
-                                min="0"
-                                max="100"
-                                step="5"
-                                value={progressValue}
-                                onChange={(event) => updateGoalProgressDraft(goal.id, event.target.value)}
-                                onPointerDown={(event) => event.currentTarget.setPointerCapture?.(event.pointerId)}
-                                onPointerUp={(event) => {
-                                  event.currentTarget.releasePointerCapture?.(event.pointerId);
-                                  commitGoalProgressValue(goal.id, event.currentTarget.value);
-                                }}
-                                onKeyUp={(event) => commitGoalProgressValue(goal.id, event.currentTarget.value)}
-                                onBlur={(event) => commitGoalProgressValue(goal.id, event.currentTarget.value)}
-                                aria-label="Прогресс цели"
-                              />
-                            ) : (
-                              <div className="goal-progress-line" aria-hidden="true">
-                                <span style={{ width: `${progressValue}%` }} />
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        {isOwner && (
-                          <div className="goal-actions">
-                            {goal.status !== "achieved" && (
-                              <button className="soft-button" type="button" onClick={() => setGoalStatus(goal.id, "achieved")}>
-                                <Check size={15} />
-                                Достигнута
-                              </button>
-                            )}
-                            {goal.status !== "active" && (
-                              <button className="soft-button" type="button" onClick={() => setGoalStatus(goal.id, "active")}>
-                                <RotateCcw size={15} />
-                                Вернуть в работу
-                              </button>
-                            )}
-                            {goal.status !== "abandoned" && (
-                              <button className="soft-button" type="button" onClick={() => setGoalStatus(goal.id, "abandoned")}>
-                                <Flag size={15} />
-                                Снять
-                              </button>
-                            )}
-                            {pendingDeleteKey === `goal:${goal.id}` ? (
-                              renderDeleteConfirm(`цели «${goal.title}»`, () => deleteGoal(goal.id))
-                            ) : (
-                              <button
-                                className="soft-button danger-button"
-                                type="button"
-                                onClick={() => requestDelete(`goal:${goal.id}`, `цели «${goal.title}»`)}
-                              >
-                                <Trash2 size={15} />
-                                Удалить
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </article>
-                    );
-                  })
-                )}
-              </div>
-
-              <aside className="goal-compose" aria-label="Новая цель">
-                <form className="compose-form" onSubmit={addGoal}>
-                  <div className="section-heading compact">
-                    <div>
-                      <p className="eyebrow">Новая цель</p>
-                      <h3>Добавить цель</h3>
-                    </div>
-                    <button className="icon-button" type="submit" title="Добавить цель">
-                      <Plus size={18} />
-                    </button>
-                  </div>
-
-                  {isAdmin && (
-                    <label>
-                      Участник
-                      <select
-                        value={newGoal.personId}
-                        onChange={(event) => setNewGoal((current) => ({ ...current, personId: event.target.value, lprId: "" }))}
-                      >
-                        <option value="">Выберите участника</option>
-                        {workspace.people.map((person) => (
-                          <option key={person.id} value={person.id}>
-                            {person.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
-
-                  {goalAvailableLprs.length > 0 && (
-                    <label>
-                      ЛПР
-                      <select
-                        value={newGoal.lprId}
-                        onChange={(event) => setNewGoal((current) => ({ ...current, lprId: event.target.value }))}
-                      >
-                        <option value="">Без ЛПР</option>
-                        {goalAvailableLprs.map((lpr) => (
-                          <option key={lpr.id} value={lpr.id}>
-                            {lpr.title}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
-
-                  <label>
-                    Цель
-                    <input
-                      value={newGoal.title}
-                      onChange={(event) => setNewGoal((current) => ({ ...current, title: event.target.value }))}
-                      placeholder="Например: снизить MTTR в 2 раза"
-                    />
-                  </label>
-
-                  <label>
-                    Контекст
-                    <textarea
-                      value={newGoal.description}
-                      onChange={(event) => setNewGoal((current) => ({ ...current, description: event.target.value }))}
-                      placeholder="Что считаем успехом и какие ключевые шаги"
-                      rows={3}
-                    />
-                  </label>
-
-                  <div className="two-field-grid">
-                    <label>
-                      Горизонт
-                      <input
-                        value={newGoal.horizon}
-                        onChange={(event) => setNewGoal((current) => ({ ...current, horizon: event.target.value }))}
-                        placeholder="2026-Q2"
-                      />
-                    </label>
-                    <label>
-                      Дедлайн
-                      <DatePicker
-                        value={newGoal.dueDate}
-                        onChange={(iso) => setNewGoal((current) => ({ ...current, dueDate: iso }))}
-                      />
-                    </label>
-                  </div>
-                </form>
-
-                {selectedPerson && activePersonGoals.length > 0 && (
-                  <div className="goal-side-context">
-                    <p className="eyebrow">Активные цели {selectedPerson.name}</p>
-                    {activePersonGoals.slice(0, 3).map((goal) => (
-                      <div className="goal-side-row" key={goal.id}>
-                        <strong>{goal.title}</strong>
-                        <span>{goal.progress}%</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </aside>
-            </div>
-          </section>
+          <GoalsScreen
+            isAdmin={isAdmin}
+            currentPersonId={user?.personId || ""}
+            people={workspace.people}
+            goals={allGoals}
+            visibleGoals={filteredGoals}
+            aggregate={goalsAggregate}
+            filter={goalsFilter}
+            onFilterChange={setGoalsFilter}
+            lprs={allLprs}
+            availableLprs={goalAvailableLprs}
+            draft={newGoal}
+            onDraftChange={setNewGoal}
+            targetPersonId={goalTargetPersonId}
+            composeOpen={goalComposeOpen}
+            onComposeOpenChange={setGoalComposeOpen}
+            onAdd={addGoal}
+            progressOf={goalProgressValue}
+            onProgressDraft={updateGoalProgressDraft}
+            onProgressCommit={commitGoalProgressValue}
+            onSetStatus={setGoalStatus}
+            onDelete={deleteGoal}
+          />
         )}
 
         {activeSection === "surveys" && (

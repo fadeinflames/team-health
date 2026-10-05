@@ -1,0 +1,196 @@
+/* Цели. Только токены; компоненты берутся из src/ui. */
+
+.goal-screen {
+  display: grid;
+  gap: var(--sp-6);
+}
+
+.goal-screen > .ui-pageheader {
+  margin-bottom: calc(var(--sp-2) * -1);
+}
+
+/* --- Метрики --- */
+.goal-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--gap);
+}
+
+/* --- Фильтры --- */
+.goal-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.goal-toolbar__status {
+  max-width: 100%;
+}
+
+.goal-toolbar__person {
+  min-width: 14rem;
+}
+
+/* --- Список --- */
+.goal-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
+  gap: var(--gap);
+  align-items: start;
+}
+
+.goal-card {
+  display: grid;
+  gap: var(--sp-4);
+}
+
+.goal-card[data-status="abandoned"] .goal-card__title {
+  color: var(--text-2);
+}
+
+.goal-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.goal-card__person {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+.goal-card__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.goal-card__body {
+  display: grid;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.goal-card__title {
+  font-size: var(--text-lg);
+  font-weight: 650;
+  line-height: var(--leading-snug);
+  letter-spacing: var(--tracking-tight);
+  overflow-wrap: anywhere;
+}
+
+.goal-card__desc {
+  color: var(--text-2);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  overflow-wrap: anywhere;
+}
+
+.goal-card__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.goal-card__chips:empty {
+  display: none;
+}
+
+/* Прогресс: крупное число и ползунок или полоса */
+.goal-progress {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+.goal-progress__value {
+  min-width: 3.25rem;
+  font-size: var(--text-xl);
+  font-weight: 700;
+  letter-spacing: var(--tracking-tight);
+}
+
+.goal-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--hairline);
+}
+
+.goal-card__more {
+  margin-inline-start: auto;
+}
+
+/* --- Пустое состояние --- */
+.goal-empty {
+  padding-block: var(--sp-8);
+}
+
+/* --- Форма --- */
+.goal-form {
+  display: grid;
+  gap: var(--sp-4);
+}
+
+.goal-form__pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-3);
+}
+
+/* --- Планшет и телефон --- */
+@media (max-width: 1100px) {
+  .goal-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .goal-screen {
+    gap: var(--sp-5);
+    padding-top: var(--sp-3);
+  }
+
+  .goal-screen .ui-pageheader__actions .ui-btn {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .goal-stats {
+    gap: var(--sp-3);
+  }
+
+  .goal-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Сегменты делят строку поровну; при нехватке места контрол прокручивается */
+  .goal-toolbar__status {
+    display: flex;
+    width: 100%;
+    contain: inline-size;
+  }
+
+  .goal-toolbar__status .ui-seg__item {
+    flex: 1 1 0;
+    min-width: max-content;
+  }
+
+  .goal-toolbar__person {
+    min-width: 0;
+  }
+
+  .goal-form__pair {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
