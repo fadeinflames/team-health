@@ -1,7 +1,7 @@
 import { useAppearance } from "./appearance.js";
 import Shell from "./shell/Shell.jsx";
 import HomeScreen from "./screens/Home.jsx";
-// @screens:meetings
+import MeetingsScreen from "./screens/Meetings.jsx";
 import LprsScreen from "./screens/Lprs.jsx";
 import GoalsScreen from "./screens/Goals.jsx";
 import SurveysScreen from "./screens/Surveys.jsx";
@@ -876,7 +876,7 @@ export default function App() {
   // Разделы, у которых своя шапка страницы (PageHeader внутри экрана).
   const migratedSections = new Set([
     "home",
-    // @migrated:meetings
+    "meetings",
     "lprs",
     "goals",
     "surveys",
@@ -2734,71 +2734,6 @@ export default function App() {
       )}
     >
       <div className={`page-body section-${activeSection}`}>
-      {activeSection === "meetings" && selectedPerson && (
-        <aside className="sidebar context-sidebar" aria-label="Контекст встречи">
-          <div className="context-header">
-            <p className="eyebrow">Встречи</p>
-            <h1>{isAdmin ? "Участники 1:1" : "Мой 1:1"}</h1>
-          </div>
-
-          <label className="search-field">
-            <Search size={16} />
-            <span className="sr-only">Поиск</span>
-            <input
-              type="search"
-              value={peopleSearch}
-              onChange={(event) => setPeopleSearch(event.target.value)}
-              placeholder={isAdmin ? "Найти участника" : "Ваш профиль"}
-              disabled={!isAdmin && workspace.people.length < 2}
-            />
-          </label>
-
-          <div className="team-score-panel">
-            <div>
-              <span className="metric-label">{isAdmin ? "Пульс команды" : "Мой пульс"}</span>
-              <strong>{teamScore}</strong>
-            </div>
-            <div className="team-score-line" aria-hidden="true">
-              <span style={{ width: `${teamScore}%` }} />
-            </div>
-            <p>
-              {countLabel(riskCards.length, ["открытый риск", "открытых риска", "открытых рисков"])},
-              {" "}
-              {countLabel(workspace.cards.filter((card) => card.status !== "done").length, ["тема в работе", "темы в работе", "тем в работе"])}
-            </p>
-          </div>
-
-          <nav className="people-list" aria-label="Участники 1:1">
-            {filteredMeetingPeople.map((person) => {
-              const score = scorePulse(workspace.pulse[person.id]);
-              const isActive = person.id === selectedPerson.id;
-              return (
-                <button
-                  key={person.id}
-                  className={`person-row ${isActive ? "active" : ""}`}
-                  onClick={() => selectPerson(person.id)}
-                  type="button"
-                >
-                  <span className="avatar">{person.initials}</span>
-                  <span className="person-main">
-                    <strong>{person.name}</strong>
-                    <small>{person.role}</small>
-                  </span>
-                  <span className={`health-dot ${score < 64 ? "risk" : score < 76 ? "watch" : "good"}`}>{score}</span>
-                </button>
-              );
-            })}
-            {filteredMeetingPeople.length === 0 && (
-              <div className="empty-state compact-empty">
-                <Search size={20} />
-                <span>По этому поиску участников нет.</span>
-              </div>
-            )}
-          </nav>
-
-        </aside>
-      )}
-
       <div className="workspace">
         {!migratedSections.has(activeSection) && (
         <header className="page-head">
@@ -2806,14 +2741,6 @@ export default function App() {
             <h1 className="page-title">{pageTitle}</h1>
             {pageSubtitle && <p className="page-subtitle">{pageSubtitle}</p>}
           </div>
-          {activeSection === "meetings" && selectedPerson && (
-            <div className="page-head-actions">
-              <button className="primary-button" type="button" onClick={showMeetingSummary}>
-                <ClipboardCheck size={17} />
-                Итоги встречи
-              </button>
-            </div>
-          )}
         </header>
         )}
 
@@ -2862,22 +2789,6 @@ export default function App() {
           </div>
         )}
 
-        {activeSection === "meetings" && selectedPerson && filteredMeetingPeople.length > 1 && (
-          <label className="meeting-person-switcher">
-            <span>
-              <UsersRound size={16} />
-              Участник 1:1
-            </span>
-            <select value={selectedPerson.id} onChange={(event) => selectPerson(event.target.value)}>
-              {filteredMeetingPeople.map((person) => (
-                <option key={person.id} value={person.id}>
-                  {person.name} · {person.role}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-
         {pageDescription && !migratedSections.has(activeSection) && (
           <div className="section-intro">
             <p>{pageDescription}</p>
@@ -2918,808 +2829,85 @@ export default function App() {
           />
         )}
 
-        {activeSection === "meetings" && !selectedPerson && (
-          <section className="placeholder-view">
-            <div className="placeholder-panel">
-              <MessageSquarePlus size={22} />
-              <div>
-                <p className="eyebrow">1:1</p>
-                <h3>Нет участников 1:1</h3>
-                <p>Добавьте участника, чтобы создать профиль 1:1.</p>
-              </div>
-              {isAdmin && (
-                <button className="primary-button" type="button" onClick={() => openSection("team")}>
-                  Открыть команду
-                </button>
-              )}
-            </div>
-          </section>
-        )}
-
-        {activeSection === "meetings" && selectedPerson && (
-          <>
-            <section className="meeting-hero" aria-label="Текущая встреча">
-              <div className="meeting-context">
-                <div className="meeting-date">
-                  <CalendarDays size={18} />
-                  <span>{selectedPerson.nextMeeting}</span>
-                  <span className="divider-dot" />
-                  <span>{selectedPerson.cadence}</span>
-                  {selectedPerson.meetingType && selectedPerson.meetingType !== "regular" && (
-                    <>
-                      <span className="divider-dot" />
-                      <span className="meeting-type-pill">{meetingTypeLabel[selectedPerson.meetingType]}</span>
-                    </>
-                  )}
-                </div>
-                <h3>{selectedPerson.managerFocus}</h3>
-                <p>{selectedPerson.lastSummary}</p>
-              </div>
-
-              <div className="health-card">
-                <span className="metric-label">Пульс участника</span>
-                <strong>{selectedScore}</strong>
-                <span className={`trend ${selectedPerson.trend?.startsWith("-") ? "down" : "up"}`}>{selectedPerson.trend}</span>
-              </div>
-
-              <div className="readiness-card">
-                <span className="metric-label">Готовность к 1:1</span>
-                <strong>{readiness}%</strong>
-                <div className="readiness-line" aria-hidden="true">
-                  <span style={{ width: `${readiness}%` }} />
-                </div>
-              </div>
-            </section>
-
-            <section className="person-360-panel" aria-label="Person 360">
-              <div className="person-360-head">
-                <div>
-                  <p className="eyebrow">Person 360</p>
-                  <h3>{selectedPerson.name}</h3>
-                </div>
-                <div className="privacy-pills" aria-label="Приватность контекста">
-                  <span className="visibility-chip shared">Общее</span>
-                  {isAdmin && (
-                    <span className="visibility-chip private">
-                      <LockKeyhole size={12} />
-                      Только лид
-                    </span>
-                  )}
-                  <span className="visibility-chip muted">Опросы агрегируются</span>
-                </div>
-              </div>
-              <div className="person-360-grid">
-                {person360Metrics.map((metric) => (
-                  <article className="person-360-metric" key={metric.label}>
-                    <span>{metric.label}</span>
-                    <strong>{metric.value}</strong>
-                    <small>{metric.detail}</small>
-                  </article>
-                ))}
-              </div>
-              <div className="workflow-trace" aria-label="Связь работы">
-                <span>1:1</span>
-                <ChevronRight size={14} />
-                <span>ЛПР</span>
-                <ChevronRight size={14} />
-                <span>Цели</span>
-                <ChevronRight size={14} />
-                <span>Шаги</span>
-              </div>
-            </section>
-
-            {briefing && (
-              <section className="briefing-card" aria-label="Брифинг к встрече">
-                <header className="briefing-head">
-                  <div>
-                    <p className="eyebrow">Брифинг</p>
-                    <h3>Что важно знать перед встречей</h3>
-                  </div>
-                </header>
-                <div className="briefing-grid">
-                  <article className={`briefing-tile ${briefing.delta < -5 ? "warn" : briefing.delta > 5 ? "good" : ""}`}>
-                    <span className="briefing-label">Пульс за 4 недели</span>
-                    <strong>
-                      {briefing.delta > 0 ? "+" : ""}
-                      {briefing.delta}
-                    </strong>
-                    <small>
-                      {briefing.delta < -5
-                        ? "заметное падение"
-                        : briefing.delta < 0
-                          ? "ниже"
-                          : briefing.delta > 5
-                            ? "стабильный рост"
-                            : briefing.delta > 0
-                              ? "выше"
-                              : "без изменений"}
-                    </small>
-                  </article>
-                  <article className={`briefing-tile ${briefing.urgentTopics > 0 ? "warn" : ""}`}>
-                    <span className="briefing-label">Открытые темы</span>
-                    <strong>{briefing.openTopics}</strong>
-                    <small>
-                      {briefing.urgentTopics > 0
-                        ? `${briefing.urgentTopics} ${pluralizeRu(briefing.urgentTopics, ["срочная", "срочные", "срочных"])}`
-                        : "ничего срочного"}
-                    </small>
-                  </article>
-                  <article className={`briefing-tile ${briefing.openActionsCount > 5 ? "warn" : ""}`}>
-                    <span className="briefing-label">Открытые шаги</span>
-                    <strong>{briefing.openActionsCount}</strong>
-                    <small>
-                      {briefing.openActionsCount === 0
-                        ? "нет хвостов"
-                        : briefing.openActionsCount > 5
-                          ? "хвост накапливается"
-                          : "в работе"}
-                    </small>
-                  </article>
-                  <article
-                    className={`briefing-tile ${
-                      briefing.employeeRatio < 40 && personCards.length > 2 ? "warn" : ""
-                    }`}
-                  >
-                    <span className="briefing-label">Темы от участника</span>
-                    <strong>{briefing.employeeRatio}%</strong>
-                    <small>
-                      {personCards.length === 0
-                        ? "нет данных"
-                        : briefing.employeeRatio < 40
-                          ? "лид доминирует"
-                          : "баланс ок"}
-                    </small>
-                  </article>
-                  {briefing.oncallWeeks > 0 && (
-                    <>
-                      <article
-                        className={`briefing-tile ${
-                          briefing.avgPagesPerWeek > 8 ? "warn" : ""
-                        }`}
-                      >
-                        <span className="briefing-label">On-call за 4 недели</span>
-                        <strong>{briefing.avgPagesPerWeek}/нед</strong>
-                        <small>
-                          {briefing.avgPagesPerWeek > 8
-                            ? "высокий шум, нужен разбор"
-                            : briefing.avgPagesPerWeek > 4
-                              ? "среднее, выше нормы"
-                              : "ниже порога риска"}
-                        </small>
-                      </article>
-                      <article
-                        className={`briefing-tile ${briefing.totalSleepNights > 4 ? "warn" : ""}`}
-                      >
-                        <span className="briefing-label">Сон</span>
-                        <strong>{briefing.totalSleepNights}</strong>
-                        <small>
-                          {briefing.totalSleepNights === 0
-                            ? "без ночных срабатываний"
-                            : `${pluralizeRu(briefing.totalSleepNights, ["ночь", "ночи", "ночей"])} прерывали`}
-                        </small>
-                      </article>
-                    </>
-                  )}
-                </div>
-              </section>
-            )}
-
-            <div className="view-tabs" role="tablist" aria-label="Разделы 1:1">
-              {[
-                ["agenda", "Подготовка", MessageSquarePlus],
-                ["health", "Встреча", Activity],
-                ["outcomes", "Итоги", CheckCircle2]
-              ].map(([id, label, Icon]) => (
-                <button
-                  key={id}
-                  className={activeView === id ? "active" : ""}
-                  onClick={() => setActiveView(id)}
-                  type="button"
-                  role="tab"
-                  aria-selected={activeView === id}
-                >
-                  <Icon size={16} />
-                  {label}
-                </button>
-              ))}
-            </div>
-
-        {activeView === "agenda" && (
-          <section className="content-grid agenda-view">
-            <div className="agenda-column">
-              <div className="section-heading">
-                <div>
-                  <p className="eyebrow">Повестка</p>
-                  <h3>Темы 1:1</h3>
-                </div>
-                <div className="filter-pills" aria-label="Фильтр тем">
-                  {[
-                    ["all", "Все"],
-                    ["open", "Открытые"],
-                    ["employee", "От участника"],
-                    ["manager", "От лида"],
-                    ["health", "Пульс"],
-                    ["growth", "Рост"]
-                  ].map(([id, label]) => (
-                    <button
-                      key={id}
-                      className={activeFilter === id ? "active" : ""}
-                      onClick={() => setActiveFilter(id)}
-                      type="button"
-                      aria-pressed={activeFilter === id}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className={`agenda-list ${sectionStaggerClass("agenda")}`}>
-                {filteredCards.length === 0 ? (
-                  <div className="empty-state">
-                    <CircleDashed size={22} />
-                    <span>В этом фильтре пока нет тем.</span>
-                  </div>
-                ) : (
-                  filteredCards.map((card) => {
-                    const canEdit = isAdmin || card.source === "employee";
-                    const isEditing = editingCardId === card.id;
-                    const actionAlreadyOpen = openActionTitleKeys.has(duplicateTitleKey(card.title));
-                    return (
-                      <article className={`agenda-card priority-${card.priority}`} key={card.id}>
-                        <div className="card-topline">
-                          <span className={`category-chip ${categories[card.category]?.tone || "teal"}`}>
-                            <small>Тема</small>
-                            {categories[card.category]?.label || "Тема"}
-                          </span>
-                          <span className={`source-chip ${sourceTone(card.source)}`}>
-                            <small>Автор</small>
-                            {sourceLabel(card.source)}
-                          </span>
-                          <span className={`priority-chip priority-${card.priority}`}>
-                            <small>Приоритет</small>
-                            {priorityLabel(card.priority)}
-                          </span>
-                          <span className="visibility-chip shared">Видно участнику и лиду</span>
-                          {card.lprId && lprById.get(card.lprId) && (
-                            <span className="goal-chip muted">
-                              ЛПР · {lprById.get(card.lprId).title}
-                            </span>
-                          )}
-                        </div>
-                        {isEditing ? (
-                          <div className="card-edit-fields">
-                            <input
-                              value={cardEditDraft.title}
-                              onChange={(event) =>
-                                setCardEditDraft((current) => ({ ...current, title: event.target.value }))
-                              }
-                              placeholder="Тема"
-                            />
-                            <textarea
-                              rows={3}
-                              value={cardEditDraft.body}
-                              onChange={(event) =>
-                                setCardEditDraft((current) => ({ ...current, body: event.target.value }))
-                              }
-                              placeholder="Контекст"
-                            />
-                          </div>
-                        ) : (
-                          <>
-                            <h4>{card.title}</h4>
-                            {card.body && <p>{card.body}</p>}
-                          </>
-                        )}
-                        <div className="card-actions">
-                          {isEditing ? (
-                            <>
-                              <button
-                                className="soft-button"
-                                type="button"
-                                onClick={() => {
-                                  if (cardEditDraft.title.trim().length < 1) return;
-                                  updateCardFields(card.id, {
-                                    title: cardEditDraft.title.trim(),
-                                    body: cardEditDraft.body.trim()
-                                  });
-                                  setEditingCardId("");
-                                }}
-                              >
-                                <Check size={15} />
-                                Сохранить
-                              </button>
-                              <button
-                                className="soft-button"
-                                type="button"
-                                onClick={() => setEditingCardId("")}
-                              >
-                                <X size={15} />
-                                Отмена
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              <button
-                                className={card.status === "discussing" ? "active soft-button" : "soft-button"}
-                                type="button"
-                                aria-pressed={card.status === "discussing"}
-                                onClick={() =>
-                                  updateCardStatus(card.id, card.status === "discussing" ? "todo" : "discussing")
-                                }
-                              >
-                                <SlidersHorizontal size={15} />
-                                В работе
-                              </button>
-                              <button
-                                className={card.status === "done" ? "active soft-button" : "soft-button"}
-                                type="button"
-                                aria-pressed={card.status === "done"}
-                                onClick={() => updateCardStatus(card.id, card.status === "done" ? "todo" : "done")}
-                              >
-                                <Check size={15} />
-                                Обсудили
-                              </button>
-                              <button
-                                className="soft-button"
-                                type="button"
-                                onClick={() => promoteCardToAction(card)}
-                                disabled={actionAlreadyOpen}
-                                title={actionAlreadyOpen ? "Такой шаг уже есть" : "Добавить в шаги"}
-                              >
-                                {actionAlreadyOpen ? <Check size={15} /> : <ChevronRight size={15} />}
-                                {actionAlreadyOpen ? "Уже в шагах" : "Добавить в шаги"}
-                              </button>
-                              {!card.lprId && (
-                                <button className="soft-button" type="button" onClick={() => promoteCardToLpr(card)}>
-                                  <ClipboardCheck size={15} />
-                                  В ЛПР
-                                </button>
-                              )}
-                              {canEdit && (
-                                <>
-                                  <button
-                                    className="soft-button"
-                                    type="button"
-                                    onClick={() => {
-                                      setEditingCardId(card.id);
-                                      setCardEditDraft({ title: card.title, body: card.body || "" });
-                                    }}
-                                    title="Редактировать"
-                                  >
-                                    <Pencil size={15} />
-                                    Изменить
-                                  </button>
-                                  {pendingDeleteKey === `card:${card.id}` ? (
-                                    renderDeleteConfirm(`темы «${card.title}»`, () => deleteCard(card.id))
-                                  ) : (
-                                    <button
-                                      className="soft-button danger-button"
-                                      type="button"
-                                      onClick={() => requestDelete(`card:${card.id}`, `темы «${card.title}»`)}
-                                      title="Удалить тему"
-                                    >
-                                      <Trash2 size={15} />
-                                    </button>
-                                  )}
-                                </>
-                              )}
-                            </>
-                          )}
-                        </div>
-                      </article>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-
-            <aside className="compose-column" aria-label="Добавление темы">
-              <form className="compose-form" onSubmit={addAgendaCard}>
-                <div className="section-heading compact">
-                  <div>
-                    <p className="eyebrow">Новая тема</p>
-                    <h3>Добавить тему</h3>
-                  </div>
-                  <button
-                    className="icon-button"
-                    type="submit"
-                    title={newCardAlreadyOpen ? "Такая тема уже есть" : "Добавить тему"}
-                    disabled={!newCardTitleKey || newCardAlreadyOpen}
-                  >
-                    <Plus size={18} />
-                  </button>
-                </div>
-
-                <div className="privacy-strip">
-                  <span className="visibility-chip shared">Тема видна участнику и лиду</span>
-                  <span className="visibility-chip private">
-                    <LockKeyhole size={12} />
-                    Приватные заметки отдельно
-                  </span>
-                </div>
-
-                {isAdmin ? (
-                  <label>
-                    Автор темы
-                    <select value={newCard.source} onChange={(event) => setNewCard((current) => ({ ...current, source: event.target.value }))}>
-                      <option value="employee">Участник 1:1</option>
-                      <option value="manager">Лид</option>
-                    </select>
-                  </label>
-                ) : (
-                  <div className="access-note">Тема будет добавлена от имени участника 1:1.</div>
-                )}
-
-                <label>
-                  Тип темы
-                  <select value={newCard.category} onChange={(event) => setNewCard((current) => ({ ...current, category: event.target.value }))}>
-                    {Object.entries(categories).map(([id, category]) => (
-                      <option key={id} value={id}>
-                        {category.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                {activePersonLprs.length > 0 && (
-                  <label>
-                    Связь с ЛПР
-                    <select value={newCard.lprId || ""} onChange={(event) => setNewCard((current) => ({ ...current, lprId: event.target.value }))}>
-                      <option value="">Без ЛПР</option>
-                      {activePersonLprs.map((lpr) => (
-                        <option key={lpr.id} value={lpr.id}>
-                          {lpr.title}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                )}
-
-                <label>
-                  Приоритет
-                  <select value={newCard.priority} onChange={(event) => setNewCard((current) => ({ ...current, priority: event.target.value }))}>
-                    <option value="high">Срочно</option>
-                    <option value="medium">Важно</option>
-                    <option value="low">Может подождать</option>
-                  </select>
-                </label>
-
-                <label>
-                  Тема
-                  <input
-                    value={newCard.title}
-                    onChange={(event) => setNewCard((current) => ({ ...current, title: event.target.value }))}
-                    placeholder="Например: слишком много срочных запросов"
-                  />
-                </label>
-
-                <label>
-                  Контекст
-                  <textarea
-                    value={newCard.body}
-                    onChange={(event) => setNewCard((current) => ({ ...current, body: event.target.value }))}
-                    placeholder="Что важно не забыть обсудить?"
-                    rows={4}
-                  />
-                </label>
-              </form>
-
-              <div className="prompt-bank">
-                <p className="eyebrow">
-                  Быстрые вопросы — {meetingTypeLabel[selectedPerson?.meetingType || "regular"]}
-                </p>
-                {getQuestionSeeds(
-                  selectedPerson?.meetingType || "regular",
-                  selectedPerson?.mentorshipMode || "coach"
-                ).map((seed) => {
-                  const seedAlreadyOpen = openCardTitleKeys.has(duplicateTitleKey(seed.title));
-                  return (
-                    <button
-                      key={seed.title}
-                      type="button"
-                      onClick={() => addSeedCard(seed)}
-                      disabled={seedAlreadyOpen}
-                      title={seedAlreadyOpen ? "Такая тема уже есть" : undefined}
-                    >
-                      <span>{seed.title}</span>
-                      {seedAlreadyOpen ? <Check size={15} /> : <Plus size={15} />}
-                    </button>
-                  );
-                })}
-              </div>
-            </aside>
-          </section>
-        )}
-
-        {activeView === "health" && (
-          <section className="content-grid health-view">
-            <div className="pulse-panel">
-              <div className="section-heading">
-                <div>
-                  <p className="eyebrow">Пульс 1:1</p>
-                  <h3>Сигналы между встречами</h3>
-                </div>
-                <span className={`health-badge ${selectedScore < 64 ? "risk" : selectedScore < 76 ? "watch" : "good"}`}>{selectedScore}/100</span>
-              </div>
-
-              <div className="signal-grid">
-                {[
-                  ["energy", "Энергия", "низкая", "высокая"],
-                  ["load", "Нагрузка", "низкая", "высокая"],
-                  ["clarity", "Ясность", "мало ясности", "ясно"],
-                  ["trust", "Доверие", "низкое", "высокое"]
-                ].map(([id, label, min, max]) => {
-                  const value = pulseValue(id);
-                  return (
-                    <label className="signal-control" key={id}>
-                      <span>
-                        <strong>{label}</strong>
-                        <em>{value}/10</em>
-                      </span>
-                      <input
-                        min="1"
-                        max="10"
-                        type="range"
-                        value={value}
-                        onChange={(event) => updatePulseDraft(id, event.target.value)}
-                        onPointerDown={(event) => event.currentTarget.setPointerCapture?.(event.pointerId)}
-                        onPointerUp={(event) => {
-                          event.currentTarget.releasePointerCapture?.(event.pointerId);
-                          commitPulseValue(id, event.currentTarget.value);
-                        }}
-                        onKeyUp={(event) => commitPulseValue(id, event.currentTarget.value)}
-                        onBlur={(event) => commitPulseValue(id, event.currentTarget.value)}
-                      />
-                      <small>
-                        <span>{min}</span>
-                        <span>{max}</span>
-                      </small>
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="health-insights">
-              <div className="section-heading compact">
-                <div>
-                  <p className="eyebrow">Риски</p>
-                  <h3>Что требует внимания</h3>
-                </div>
-                <AlertTriangle size={18} />
-              </div>
-              <ul className="insight-list">
-                {selectedPulse.load >= 8 && <li>Нагрузка выше нормы: стоит снять часть входящих задач.</li>}
-                {selectedPulse.clarity <= 6 && <li>Проседает ясность: нужен контекст по приоритетам и критериям успеха.</li>}
-                {selectedPulse.energy <= 5 && <li>Энергия низкая: лучше начать с восстановления и границ.</li>}
-                {selectedPulse.trust <= 6 && <li>Доверие ниже нормы: зафиксируйте спорные решения и ожидания.</li>}
-                {selectedPulse.load < 8 && selectedPulse.energy > 5 && selectedPulse.clarity > 6 && selectedPulse.trust > 6 && (
-                  <li>Критичных сигналов нет: проверьте открытые действия и план развития.</li>
-                )}
-              </ul>
-            </div>
-
-            <div className="meeting-transcript-panel">
-              <div className="section-heading compact">
-                <div>
-                  <p className="eyebrow">Стенография</p>
-                  <h3>Протокол встречи</h3>
-                </div>
-                <span className="visibility-chip shared">Видно участнику и лиду</span>
-              </div>
-              <textarea
-                value={selectedMeetingDraft}
-                onChange={(event) => updateMeetingDraft(event.target.value)}
-                placeholder="Ключевые цитаты, решения, контекст и открытые вопросы."
-                rows={10}
-              />
-              <div className="transcript-actions">
-                <span>{countLabel(selectedMeetingDraft.trim().length, ["символ", "символа", "символов"])}</span>
-                <button
-                  className="soft-button"
-                  type="button"
-                  onClick={clearMeetingDraft}
-                  disabled={!selectedMeetingDraft.trim()}
-                >
-                  <Trash2 size={15} />
-                  Очистить
-                </button>
-              </div>
-            </div>
-
-          </section>
-        )}
-
-        {activeView === "outcomes" && (
-          <section className="content-grid outcomes-view">
-            <div className="actions-panel">
-              <div className="section-heading">
-                <div>
-                  <p className="eyebrow">Следующие шаги</p>
-                  <h3>Следующие шаги до встречи</h3>
-                </div>
-                <span className="count-pill">{countLabel(unresolvedActions.length, ["открытый шаг", "открытых шага", "открытых шагов"])}</span>
-              </div>
-
-              <div className="action-list">
-                {personActions.map((action) => {
-                  const canEdit = isAdmin || action.owner === "employee";
-                  const isEditing = editingActionId === action.id;
-                  const isOverdue =
-                    !action.done &&
-                    action.dueDate &&
-                    action.dueDate < todayISODate();
-                  return (
-                    <div className={`action-row ${action.done ? "done" : ""} ${isOverdue ? "overdue" : ""}`} key={action.id}>
-                      {isEditing ? (
-                        <>
-                          <input
-                            type="checkbox"
-                            checked={action.done}
-                            onChange={() => toggleAction(action.id)}
-                            aria-label="Готово"
-                          />
-                          <div className="action-edit-fields">
-                            <input
-                              value={actionEditDraft.title}
-                              onChange={(event) =>
-                                setActionEditDraft((current) => ({ ...current, title: event.target.value }))
-                              }
-                              placeholder="Что нужно сделать"
-                            />
-                            <div className="two-field-grid">
-                              <DatePicker
-                                value={actionEditDraft.dueDate}
-                                onChange={(iso) =>
-                                  setActionEditDraft((current) => ({ ...current, dueDate: iso }))
-                                }
-                              />
-                              <input
-                                value={actionEditDraft.due}
-                                onChange={(event) =>
-                                  setActionEditDraft((current) => ({ ...current, due: event.target.value }))
-                                }
-                                placeholder="Срок словами"
-                              />
-                            </div>
-                          </div>
-                          <div className="action-edit-buttons">
-                            <button
-                              className="soft-button"
-                              type="button"
-                              onClick={() => {
-                                if (actionEditDraft.title.trim().length < 1) return;
-                                updateActionFields(action.id, {
-                                  title: actionEditDraft.title.trim(),
-                                  due: actionEditDraft.due.trim() || "к следующему 1:1",
-                                  dueDate: actionEditDraft.dueDate || ""
-                                });
-                                setEditingActionId("");
-                              }}
-                              title="Сохранить"
-                            >
-                              <Check size={15} />
-                            </button>
-                            <button
-                              className="soft-button"
-                              type="button"
-                              onClick={() => setEditingActionId("")}
-                              title="Отмена"
-                            >
-                              <X size={15} />
-                            </button>
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <input
-                            type="checkbox"
-                            checked={action.done}
-                            onChange={() => toggleAction(action.id)}
-                            aria-label="Готово"
-                          />
-                          <span>
-                            <strong>{action.title}</strong>
-                            <small>
-                              {ownerLabel(action.owner)} · {action.due}
-                              {action.dueDate && ` · ${action.dueDate}`}
-                              {isOverdue && <span className="overdue-tag">Просрочено</span>}
-                            </small>
-                          </span>
-                          {canEdit && !action.done && (
-                            <span className="action-row-buttons">
-                              <button
-                                className="icon-button"
-                                type="button"
-                                onClick={() => {
-                                  setEditingActionId(action.id);
-                                  setActionEditDraft({
-                                    title: action.title,
-                                    due: action.due,
-                                    dueDate: action.dueDate || ""
-                                  });
-                                }}
-                                title="Изменить"
-                              >
-                                <Pencil size={14} />
-                              </button>
-                              {pendingDeleteKey === `action:${action.id}` ? (
-                                renderDeleteConfirm(`шага «${action.title}»`, () => deleteAction(action.id))
-                              ) : (
-                                <button
-                                  className="icon-button danger-button"
-                                  type="button"
-                                  onClick={() => requestDelete(`action:${action.id}`, `шага «${action.title}»`)}
-                                  title="Удалить"
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              )}
-                            </span>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  );
-                })}
-                {personActions.length === 0 && (
-                  <div className="empty-state">
-                    <CircleDashed size={22} />
-                    <span>Пока нет следующих шагов.</span>
-                  </div>
-                )}
-              </div>
-
-              <form className="action-form" onSubmit={addAction}>
-                {isAdmin && (
-                  <label>
-                    Ответственный
-                    <select value={newAction.owner} onChange={(event) => setNewAction((current) => ({ ...current, owner: event.target.value }))}>
-                      <option value="manager">Лид</option>
-                      <option value="employee">Участник</option>
-                    </select>
-                  </label>
-                )}
-                <label>
-                  Действие
-                  <input
-                    value={newAction.title}
-                    onChange={(event) => setNewAction((current) => ({ ...current, title: event.target.value }))}
-                    placeholder="Что нужно сделать?"
-                  />
-                </label>
-                <label>
-                  Срок
-                  <input value={newAction.due} onChange={(event) => setNewAction((current) => ({ ...current, due: event.target.value }))} />
-                </label>
-                <button
-                  className="primary-button"
-                  type="submit"
-                  disabled={!newActionTitleKey || newActionAlreadyOpen}
-                  title={newActionAlreadyOpen ? "Такой шаг уже есть" : "Добавить шаг"}
-                >
-                  <Plus size={16} />
-                  Добавить шаг
-                </button>
-              </form>
-            </div>
-
-            <div className="summary-panel" ref={summaryPanelRef}>
-              <div className="section-heading compact">
-                <div>
-                  <p className="eyebrow">Итоги</p>
-                  <h3>Краткие итоги</h3>
-                </div>
-                <button className="icon-button" type="button" onClick={buildSummary} title="Сформировать итоги">
-                  <ClipboardCheck size={18} />
-                </button>
-              </div>
-              <textarea readOnly value={summaryText || "Сформируйте итоги, чтобы получить краткое резюме встречи."} rows={14} />
-            </div>
-          </section>
-        )}
-          </>
+        {activeSection === "meetings" && (
+          <MeetingsScreen
+            isAdmin={isAdmin}
+            workspace={workspace}
+            selectedPerson={selectedPerson}
+            pageDescription={pageDescription}
+            people={filteredMeetingPeople}
+            peopleSearch={peopleSearch}
+            setPeopleSearch={setPeopleSearch}
+            teamScore={teamScore}
+            riskCount={riskCards.length}
+            openTopicsCount={workspace.cards.filter((card) => card.status !== "done").length}
+            selectedScore={selectedScore}
+            selectedPulse={selectedPulse}
+            readiness={readiness}
+            briefing={briefing}
+            person360Metrics={person360Metrics}
+            personCards={personCards}
+            filteredCards={filteredCards}
+            personActions={personActions}
+            unresolvedActions={unresolvedActions}
+            personPrep={personPrep}
+            lprById={lprById}
+            activePersonLprs={activePersonLprs}
+            openCardTitleKeys={openCardTitleKeys}
+            openActionTitleKeys={openActionTitleKeys}
+            selectedMeetingDraft={selectedMeetingDraft}
+            summaryText={summaryText}
+            summaryPanelRef={summaryPanelRef}
+            activeView={activeView}
+            setActiveView={setActiveView}
+            activeFilter={activeFilter}
+            setActiveFilter={setActiveFilter}
+            newCard={newCard}
+            setNewCard={setNewCard}
+            newCardTitleKey={newCardTitleKey}
+            newCardAlreadyOpen={newCardAlreadyOpen}
+            newAction={newAction}
+            setNewAction={setNewAction}
+            newActionTitleKey={newActionTitleKey}
+            newActionAlreadyOpen={newActionAlreadyOpen}
+            editingCardId={editingCardId}
+            setEditingCardId={setEditingCardId}
+            cardEditDraft={cardEditDraft}
+            setCardEditDraft={setCardEditDraft}
+            editingActionId={editingActionId}
+            setEditingActionId={setEditingActionId}
+            actionEditDraft={actionEditDraft}
+            setActionEditDraft={setActionEditDraft}
+            newManagerNote={newManagerNote}
+            setNewManagerNote={setNewManagerNote}
+            expandedMeetingId={expandedMeetingId}
+            setExpandedMeetingId={setExpandedMeetingId}
+            onSelectPerson={selectPerson}
+            onOpenSection={openSection}
+            showMeetingSummary={showMeetingSummary}
+            buildSummary={buildSummary}
+            addAgendaCard={addAgendaCard}
+            addSeedCard={addSeedCard}
+            updateCardFields={updateCardFields}
+            updateCardStatus={updateCardStatus}
+            promoteCardToAction={promoteCardToAction}
+            promoteCardToLpr={promoteCardToLpr}
+            deleteCard={deleteCard}
+            pulseValue={pulseValue}
+            updatePulseDraft={updatePulseDraft}
+            commitPulseValue={commitPulseValue}
+            updateMeetingDraft={updateMeetingDraft}
+            clearMeetingDraft={clearMeetingDraft}
+            addAction={addAction}
+            toggleAction={toggleAction}
+            updateActionFields={updateActionFields}
+            deleteAction={deleteAction}
+            togglePrep={togglePrep}
+            updateNotes={updateNotes}
+            toggleNewNoteTag={toggleNewNoteTag}
+            addManagerNote={addManagerNote}
+            deleteManagerNote={deleteManagerNote}
+          />
         )}
 
         {activeSection === "lprs" && (
@@ -3900,208 +3088,6 @@ export default function App() {
         )}
       </div>
 
-      {activeSection === "meetings" && selectedPerson && <aside className="right-rail" aria-label="Подготовка">
-        <section className="rail-section">
-          <div className="section-heading compact">
-            <div>
-              <p className="eyebrow">24 часа до встречи</p>
-              <h3>Чек-лист подготовки</h3>
-            </div>
-            <span className="count-pill">{readiness}%</span>
-          </div>
-
-          <div className="checklist">
-            {checklist.map((item) => (
-              <label className={`check-row ${!isAdmin && item.owner === "manager" ? "readonly" : ""}`} key={item.id}>
-                <input
-                  type="checkbox"
-                  checked={Boolean(personPrep[item.id])}
-                  disabled={!isAdmin && item.owner === "manager"}
-                  onChange={() => togglePrep(item.id)}
-                />
-                <span>
-                  <strong>{item.label}</strong>
-                  <small>
-                    {item.owner === "employee"
-                      ? "зона участника"
-                      : item.owner === "manager"
-                        ? isAdmin ? "зона лида" : "зона лида · только для чтения"
-                        : "общая зона"}
-                  </small>
-                </span>
-              </label>
-            ))}
-          </div>
-        </section>
-
-        {isAdmin ? (
-          <section className="rail-section">
-            <div className="section-heading compact">
-              <div>
-                <p className="eyebrow">Приватно</p>
-                <h3>Заметки лида</h3>
-              </div>
-              <LockKeyhole size={18} />
-            </div>
-            <div className="privacy-strip compact">
-              <span className="visibility-chip private">
-                <LockKeyhole size={12} />
-                Не видно участнику
-              </span>
-              <span className="visibility-chip muted">Для подготовки и review</span>
-            </div>
-            <textarea
-              className="private-notes"
-              value={workspace.notes[selectedPerson.id] || ""}
-              onChange={(event) => updateNotes(event.target.value)}
-              placeholder="Наблюдения, которые не идут в общую повестку."
-              rows={5}
-            />
-
-            <div className="notes-timeline">
-              <div className="notes-compose">
-                <textarea
-                  placeholder="Новая заметка с тегом — сохраняется в журнале"
-                  value={newManagerNote.body}
-                  onChange={(event) =>
-                    setNewManagerNote((current) => ({ ...current, body: event.target.value }))
-                  }
-                  rows={2}
-                />
-                <div className="notes-tags">
-                  {managerNoteTagOrder.map((tag) => (
-                    <button
-                      key={tag}
-                      type="button"
-                      className={`tag-chip ${newManagerNote.tags.includes(tag) ? "active" : ""}`}
-                      onClick={() => toggleNewNoteTag(tag)}
-                    >
-                      #{managerNoteTagLabel[tag]}
-                    </button>
-                  ))}
-                </div>
-                <div className="notes-compose-actions">
-                  <button
-                    className="soft-button"
-                    type="button"
-                    onClick={addManagerNote}
-                    disabled={!newManagerNote.body.trim()}
-                  >
-                    <Plus size={15} />
-                    Записать
-                  </button>
-                </div>
-              </div>
-
-              {(workspace.managerNotes || [])
-                .filter((note) => note.personId === selectedPerson.id)
-                .map((note) => (
-                  <article className="note-entry" key={note.id}>
-                    <header>
-                      <time>{formatRuDate(note.createdAt)}</time>
-                      {pendingDeleteKey === `note:${note.id}` ? (
-                        renderDeleteConfirm(`заметки от ${formatRuDate(note.createdAt)}`, () => deleteManagerNote(note.id))
-                      ) : (
-                        <button
-                          className="icon-button danger-button"
-                          type="button"
-                          title="Удалить заметку"
-                          onClick={() => requestDelete(`note:${note.id}`, `заметки от ${formatRuDate(note.createdAt)}`)}
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      )}
-                    </header>
-                    <p>{note.body}</p>
-                    {note.tags.length > 0 && (
-                      <div className="note-tags">
-                        {note.tags.map((tag) => (
-                          <span className="tag-chip muted" key={tag}>
-                            #{managerNoteTagLabel[tag] || tag}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </article>
-                ))}
-            </div>
-          </section>
-        ) : (
-          <section className="rail-section access-panel">
-            <div className="section-heading compact">
-              <div>
-                <p className="eyebrow">Приватность</p>
-                <h3>Доступ только к вашему 1:1</h3>
-              </div>
-              <LockKeyhole size={18} />
-            </div>
-            <p>В этом аккаунте доступны только ваши темы, пульс, чек-лист и следующие шаги.</p>
-          </section>
-        )}
-
-
-        <section className="rail-section">
-          <div className="section-heading compact">
-            <div>
-              <p className="eyebrow">История</p>
-              <h3>Контекст 1:1</h3>
-            </div>
-            <UserRoundCheck size={18} />
-          </div>
-          <div className="history-list">
-            <div>
-              <strong>Прошлый 1:1</strong>
-              <span>{selectedPerson.lastSummary}</span>
-            </div>
-            <div>
-              <strong>Фокус лида</strong>
-              <span>{selectedPerson.managerFocus}</span>
-            </div>
-            <div>
-              <strong>Открытые действия</strong>
-              <span>{unresolvedActions.length ? unresolvedActions.map((action) => action.title).join("; ") : "нет открытых шагов"}</span>
-            </div>
-          </div>
-
-          {isAdmin && (
-            <>
-              <p className="eyebrow" style={{ marginTop: 12 }}>Записи встреч</p>
-              <div className="meeting-history-list">
-                {(workspace.meetingLog || [])
-                  .filter((m) => m.personId === selectedPerson.id)
-                  .slice(0, 10)
-                  .map((m) => {
-                    const expanded = expandedMeetingId === m.id;
-                    return (
-                      <article className={`meeting-history-row ${expanded ? "expanded" : ""}`} key={m.id}>
-                        <button
-                          type="button"
-                          className="meeting-history-toggle"
-                          onClick={() => setExpandedMeetingId(expanded ? "" : m.id)}
-                        >
-                          <time>{formatRuDate(m.heldAt)}</time>
-                          <span>{meetingTypeLabel[m.meetingType] || "1:1"}</span>
-                          <ChevronRight size={14} className={expanded ? "rotated" : ""} />
-                        </button>
-                        {expanded && m.summary && (
-                          <pre className="meeting-history-summary">{m.summary}</pre>
-                        )}
-                        {expanded && !m.summary && (
-                          <p className="meeting-history-empty">Итоги для этой встречи не были сформированы.</p>
-                        )}
-                      </article>
-                    );
-                  })}
-                {(workspace.meetingLog || []).filter((m) => m.personId === selectedPerson.id).length === 0 && (
-                  <div className="empty-state compact-empty">
-                    <span>Истории встреч пока нет. Нажмите «Итоги встречи», чтобы записать.</span>
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </section>
-      </aside>}
       </div>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} items={paletteItems} />
     </Shell>
