@@ -1,7 +1,14 @@
-import React from "react";
+import React, { Suspense, lazy } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App.jsx";
 import "./styles.css";
+import "./styles/fonts.css";
+import "./styles/tokens.css";
+import "./styles/base.css";
+
+// Каталог примитивов интерфейса: /#ui-kit, без входа и без данных.
+const Kit = lazy(() => import("./ui/Kit.jsx"));
+const showKit = window.location.hash === "#ui-kit";
 
 // Без границы любая ошибка рендера роняет всё дерево в пустой белый экран, и
 // человек не понимает, что случилось и что делать. Данные, уже ушедшие на
@@ -34,7 +41,13 @@ class ErrorBoundary extends React.Component {
 createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <ErrorBoundary>
-      <App />
+      {showKit ? (
+        <Suspense fallback={null}>
+          <Kit />
+        </Suspense>
+      ) : (
+        <App />
+      )}
     </ErrorBoundary>
   </React.StrictMode>
 );

@@ -1,0 +1,102 @@
+/* Каркас страницы /#ui-kit. Стили самих примитивов живут в ui-a.css и ui-b.css. */
+.kit {
+  min-height: 100dvh;
+  background: var(--canvas);
+  color: var(--text);
+}
+
+.kit-bar {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-3) var(--sp-6);
+  padding: var(--sp-3) var(--page-pad);
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: saturate(180%) blur(24px);
+  backdrop-filter: saturate(180%) blur(24px);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.kit-title {
+  font-size: var(--text-md);
+  letter-spacing: var(--tracking-tight);
+}
+
+.kit-group {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.kit-group-label {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-caps);
+}
+
+.kit-chip {
+  min-height: 32px;
+  padding: 0 var(--sp-3);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.kit-chip[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.kit-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-pill);
+  border: 2px solid var(--surface);
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+.kit-swatch[aria-pressed="true"] {
+  box-shadow: 0 0 0 2px var(--text);
+}
+
+.kit-swatch[data-accent="teal"] { background: #0f766e; }
+.kit-swatch[data-accent="blue"] { background: #0066cc; }
+.kit-swatch[data-accent="indigo"] { background: #4f46e5; }
+.kit-swatch[data-accent="violet"] { background: #7c3aed; }
+.kit-swatch[data-accent="rose"] { background: #c2255c; }
+.kit-swatch[data-accent="orange"] { background: #b45309; }
+.kit-swatch[data-accent="graphite"] { background: #3a3a3c; }
+
+.kit-body {
+  display: grid;
+  gap: var(--sp-12);
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: var(--sp-10) var(--page-pad) var(--sp-16);
+}
+
+.kit-section > h2 {
+  margin-bottom: var(--sp-5);
+  font-size: var(--text-xl);
+}
+
+.kit-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-5);
+}
+
+.kit-note {
+  margin-bottom: var(--sp-3);
+  color: var(--text-3);
+  font-size: var(--text-sm);
+}
