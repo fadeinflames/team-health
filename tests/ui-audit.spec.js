@@ -12,7 +12,7 @@ async function loginAsAdmin(page) {
   await page.getByLabel("Логин").fill(adminUsername);
   await page.getByLabel("Пароль").fill(adminPassword);
   await page.getByRole("button", { name: "Войти", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Дашборд команды" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Сводка команды" })).toBeVisible();
 }
 
 async function resetWorkspace(page) {

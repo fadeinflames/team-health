@@ -34,7 +34,7 @@ test("auth, admin workflow, and employee data isolation work", async ({ page, re
   await page.getByLabel("Пароль").fill(adminPassword);
   await page.getByRole("button", { name: "Войти", exact: true }).click();
 
-  await expect(page.getByRole("heading", { name: "Дашборд команды" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Сводка команды" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Команда пока пустая" })).toBeVisible();
   await expect(page.getByText("Добавьте участников и логины")).toBeVisible();
   await expect(page.getByText("Как этим пользоваться")).not.toBeVisible();
@@ -65,7 +65,8 @@ test("auth, admin workflow, and employee data isolation work", async ({ page, re
   const leaderForm = page.locator(".settings-card").filter({ hasText: "Как вас зовут" });
   await leaderForm.getByLabel("Имя").fill("Админ Тестовый");
   await leaderForm.getByRole("button", { name: "Сохранить" }).click();
-  await expect(page.getByText("Вы вошли как Админ Тестовый · Админ платформы")).toBeVisible();
+  await expect(page.locator(".shell-user-name")).toHaveText("Админ Тестовый");
+  await expect(page.locator(".shell-user-role")).toHaveText("Админ платформы");
 
   const employeeName = "Игорь Сидоров";
   const employeeUsername = `igor_${Date.now()}`;
