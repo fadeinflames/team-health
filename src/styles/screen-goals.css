@@ -29,7 +29,9 @@
 }
 
 .goal-toolbar__person {
-  min-width: 14rem;
+  flex: 0 1 16rem;
+  width: auto;
+  min-width: 12rem;
 }
 
 /* --- Список --- */
@@ -111,7 +113,7 @@
 }
 
 .goal-progress__value {
-  min-width: 3.25rem;
+  min-width: 4.5rem;
   font-size: var(--text-xl);
   font-weight: 700;
   letter-spacing: var(--tracking-tight);
@@ -187,7 +189,14 @@
   }
 
   .goal-toolbar__person {
+    flex: none;
+    width: 100%;
     min-width: 0;
+  }
+
+  /* На телефоне счётчики не помещаются: остаются подписи */
+  .goal-toolbar__status .ui-seg__badge {
+    display: none;
   }
 
   .goal-form__pair {

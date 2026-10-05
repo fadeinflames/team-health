@@ -290,7 +290,7 @@ export default function GoalsScreen({
                     <Menu
                       align="end"
                       label={`Действия: ${goal.title}`}
-                      trigger={<IconButton label="Ещё" icon={MoreHorizontal} className="goal-card__more" />}
+                      trigger={<IconButton label={`Действия: ${goal.title}`} icon={MoreHorizontal} className="goal-card__more" />}
                       items={items}
                     />
                   </div>

@@ -29,7 +29,9 @@
 }
 
 .lpr-toolbar__person {
-  min-width: 14rem;
+  flex: 0 1 16rem;
+  width: auto;
+  min-width: 12rem;
 }
 
 /* --- Список планов --- */
@@ -200,7 +202,14 @@
   }
 
   .lpr-toolbar__person {
+    flex: none;
+    width: 100%;
     min-width: 0;
+  }
+
+  /* На телефоне счётчики не помещаются: остаются подписи */
+  .lpr-toolbar__status .ui-seg__badge {
+    display: none;
   }
 
   .lpr-card__links {

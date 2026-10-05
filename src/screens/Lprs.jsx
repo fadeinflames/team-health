@@ -275,7 +275,7 @@ export default function LprsScreen({
                     <Menu
                       align="end"
                       label={`Действия: ${lpr.title}`}
-                      trigger={<IconButton label="Ещё" icon={MoreHorizontal} className="lpr-card__more" />}
+                      trigger={<IconButton label={`Действия: ${lpr.title}`} icon={MoreHorizontal} className="lpr-card__more" />}
                       items={items}
                     />
                   </div>
