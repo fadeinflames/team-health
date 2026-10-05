@@ -1,0 +1,452 @@
+/* Настройки. Только токены; компоненты берутся из src/ui. */
+
+.set {
+  display: grid;
+  gap: var(--sp-8);
+}
+
+.set > .ui-pageheader {
+  margin-bottom: calc(var(--sp-2) * -1);
+}
+
+/* Две колонки: внешний вид слева (главное), профиль и безопасность справа */
+.set-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  gap: var(--gap);
+  align-items: start;
+}
+
+.set-col {
+  min-width: 0;
+  display: grid;
+  gap: var(--gap);
+  align-content: start;
+}
+
+/* Общее для карточек экрана */
+.set-card {
+  display: grid;
+  gap: var(--sp-5);
+  min-width: 0;
+}
+
+/* Старый класс .settings-card нужен тестам как якорь; его стили из styles.css
+   (рамка, свои отступы) перекрываем, пока старый файл ещё подключён. */
+.set-card.settings-card {
+  padding: var(--card-pad);
+  border: 0;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+
+.set-card code {
+  padding: 1px var(--sp-1);
+  border-radius: var(--r-xs);
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+.set-pad {
+  display: grid;
+  gap: var(--sp-4);
+  padding: var(--card-pad) var(--card-pad) var(--sp-4);
+}
+
+/* --- Предпросмотр --- */
+.set-preview {
+  padding: var(--sp-4);
+  border-radius: var(--r-lg);
+  background: var(--canvas);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  pointer-events: none;
+  user-select: none;
+}
+
+.set-preview__caption {
+  color: var(--text-3);
+  font-size: var(--text-sm);
+}
+
+.set-mock {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr);
+  overflow: hidden;
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+
+.set-mock__side {
+  display: grid;
+  align-content: start;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  background: var(--surface-2);
+  box-shadow: inset -1px 0 0 var(--hairline);
+}
+
+.set-mock__side .shell-brandmark {
+  margin-bottom: var(--sp-2);
+}
+
+.set-mock__nav {
+  height: var(--sp-3);
+  border-radius: var(--r-pill);
+  background: var(--surface-3);
+}
+
+.set-mock__nav--on {
+  background: var(--accent);
+}
+
+.set-mock__main {
+  min-width: 0;
+  display: grid;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+}
+
+.set-mock__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.set-mock__heading {
+  min-width: 0;
+  display: grid;
+}
+
+.set-mock__heading strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-md);
+  font-weight: 650;
+  letter-spacing: var(--tracking-tight);
+}
+
+.set-mock__heading span {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+.set-mock__card {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+
+.set-mock__card-text {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  justify-items: start;
+  gap: var(--sp-1);
+  font-size: var(--text-sm);
+}
+
+.set-mock__score {
+  font-size: var(--text-sm);
+  font-weight: 700;
+}
+
+.set-mock__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+/* --- Строки настроек --- */
+.set-prefs {
+  border-top: 1px solid var(--hairline);
+}
+
+.set-pref {
+  display: grid;
+  gap: var(--sp-3);
+  padding: calc(var(--row-pad-y) + var(--sp-1)) var(--card-pad);
+}
+
+/* разделитель с отступом под плитку, как в iOS */
+.set-pref + .set-pref {
+  background: linear-gradient(var(--hairline), var(--hairline)) top right / calc(100% - var(--card-pad) - 2.25rem - var(--sp-3)) 1px
+    no-repeat;
+}
+
+.set-pref__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+
+.set-pref__text {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.set-pref__title {
+  font-size: var(--text-base);
+  font-weight: 600;
+  line-height: var(--leading-snug);
+}
+
+.set-pref__hint {
+  color: var(--text-3);
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+}
+
+.set-pref__trailing {
+  flex: none;
+}
+
+/* --- Акцентные цвета ---
+   Цвета берутся из категориальных токенов (--cat-*), они совпадают с акцентами
+   и в светлой, и в тёмной теме. */
+.set-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  margin: 0 calc(var(--sp-2) * -1);
+}
+
+.set-swatch {
+  --swatch: var(--accent);
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.set-swatch[data-accent="teal"] { --swatch: var(--cat-1); }
+.set-swatch[data-accent="blue"] { --swatch: var(--cat-5); }
+.set-swatch[data-accent="indigo"] { --swatch: var(--cat-2); }
+.set-swatch[data-accent="violet"] { --swatch: var(--cat-6); }
+.set-swatch[data-accent="rose"] { --swatch: var(--cat-3); }
+.set-swatch[data-accent="orange"] { --swatch: var(--cat-4); }
+.set-swatch[data-accent="graphite"] { --swatch: var(--text-2); }
+
+.set-swatch__input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.set-swatch__dot {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--r-pill);
+  background: var(--swatch);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  color: transparent;
+  transition: transform var(--t-fast) var(--spring), box-shadow var(--t-base) var(--ease);
+}
+
+.set-swatch:hover .set-swatch__dot {
+  transform: scale(1.08);
+}
+
+.set-swatch:active .set-swatch__dot {
+  transform: scale(0.94);
+}
+
+.set-swatch__input:checked + .set-swatch__dot {
+  color: var(--text-inverse);
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--swatch);
+}
+
+.set-swatch__input:focus-visible + .set-swatch__dot {
+  outline: 2px solid var(--text);
+  outline-offset: 5px;
+}
+
+/* --- Низ карточки внешнего вида --- */
+.set-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--card-pad) var(--card-pad);
+  border-top: 1px solid var(--hairline);
+}
+
+.set-foot__text {
+  flex: 1 1 12rem;
+  color: var(--text-3);
+  font-size: var(--text-sm);
+}
+
+/* --- Формы --- */
+.set-identity {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+.set-identity__text {
+  min-width: 0;
+  display: grid;
+  justify-items: start;
+  gap: var(--sp-1);
+}
+
+.set-identity__text strong {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-md);
+  font-weight: 600;
+  letter-spacing: var(--tracking-snug);
+}
+
+.set-form {
+  display: grid;
+  gap: var(--sp-4);
+}
+
+.set-form__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* Сегменты в строках настроек не прокручиваются: на узком экране ужимаем подписи */
+.set-pref__control .ui-seg__item {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.set-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-md);
+  background: var(--danger-tint);
+  color: var(--danger-text);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  line-height: var(--leading-snug);
+}
+
+.set-alert > svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+.set-alert > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* --- Надёжность пароля --- */
+.set-strength {
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.set-strength__bars {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--sp-1);
+}
+
+.set-strength__bar {
+  height: var(--sp-1);
+  border-radius: var(--r-pill);
+  background: var(--surface-3);
+  transition: background-color var(--t-base) var(--ease);
+}
+
+.set-strength__bar[data-on="true"][data-tone="danger"] { background: var(--danger); }
+.set-strength__bar[data-on="true"][data-tone="warning"] { background: var(--warning); }
+.set-strength__bar[data-on="true"][data-tone="info"] { background: var(--info); }
+.set-strength__bar[data-on="true"][data-tone="success"] { background: var(--success); }
+
+.set-strength__label {
+  font-weight: 600;
+}
+
+.set-strength__label--danger { color: var(--danger-text); }
+.set-strength__label--warning { color: var(--warning-text); }
+.set-strength__label--info { color: var(--info-text); }
+.set-strength__label--success { color: var(--success-text); }
+
+/* --- Узкие экраны: одна колонка, профиль первым, как в iOS --- */
+@media (max-width: 900px) {
+  .set-grid {
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap);
+  }
+
+  .set-col {
+    display: contents;
+  }
+
+  .set-profile { order: 1; }
+  .set-appearance { order: 2; }
+  .set-security { order: 3; }
+  .set-account { order: 4; }
+  .set-service { order: 5; }
+}
+
+@media (max-width: 760px) {
+  .set-form__actions {
+    display: grid;
+    justify-content: stretch;
+  }
+
+  .set-foot .ui-btn {
+    width: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .set-pref__control .ui-seg__label {
+    padding: var(--sp-2);
+    font-size: var(--text-sm);
+    line-height: var(--leading-snug);
+    text-align: center;
+    white-space: normal;
+  }
+
+  .set-mock .ui-switch,
+  .set-mock__top .ui-avatar {
+    display: none;
+  }
+
+  .set-pref__control .ui-seg__icon {
+    display: none;
+  }
+
+  .set-mock {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .set-mock__side {
+    display: none;
+  }
+}

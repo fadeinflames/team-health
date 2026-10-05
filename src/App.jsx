@@ -7,7 +7,8 @@ import GoalsScreen from "./screens/Goals.jsx";
 // @screens:surveys
 // @screens:reports
 // @screens:team-admin
-// @screens:settings-auth
+import AuthScreen from "./screens/Auth.jsx";
+import SettingsScreen from "./screens/Settings.jsx";
 import UserMenu from "./shell/UserMenu.jsx";
 import MoreTab from "./shell/MoreTab.jsx";
 import CommandPalette from "./shell/CommandPalette.jsx";
@@ -135,7 +136,6 @@ export default function App() {
   const [activeSection, setActiveSection] = useState("home");
   const [activeView, setActiveView] = useState("agenda");
   const [activeFilter, setActiveFilter] = useState("all");
-  const [credentials, setCredentials] = useState({ username: "", password: "" });
   const [loginError, setLoginError] = useState("");
   const [saveError, setSaveError] = useState("");
   const [saveRetryTick, setSaveRetryTick] = useState(0);
@@ -462,11 +462,6 @@ export default function App() {
       ...current,
       userId: current.userId || nextWorkspace.users.find((item) => !isProtectedAccess(item))?.id || ""
     }));
-  }
-
-  async function handleLogin(event) {
-    event.preventDefault();
-    await performLogin(credentials);
   }
 
   async function performLogin(nextCredentials) {
@@ -885,7 +880,7 @@ export default function App() {
     // @migrated:surveys
     // @migrated:reports
     // @migrated:team-admin
-    // @migrated:settings-auth
+    "settings",
   ]);
   const visibleSections = primarySections
     .filter((sectionId) => {
@@ -3030,78 +3025,11 @@ export default function App() {
     );
   }
 
-  if (authState === "loading") {
-    return (
-      <div className="auth-screen">
-        <div className="auth-card">
-          <div className="brand-mark">
-            <HeartPulse size={22} />
-          </div>
-          <h1>Team Health 1:1</h1>
-          <p>Загружаем данные.</p>
-        </div>
-      </div>
-    );
-  }
+  if (authState === "loading") return <AuthScreen mode="loading" />;
 
-  if (!user) {
-    return (
-      <div className="auth-screen">
-        <form className="auth-card login-card" onSubmit={handleLogin}>
-          <div className="brand-mark">
-            <HeartPulse size={22} />
-          </div>
-          <p className="eyebrow">Доступ только для команды</p>
-          <h1>Войти в Team Health 1:1</h1>
-          <p>Данные встреч, пульса и заметок не загружаются в браузер до авторизации.</p>
-          <label>
-            Логин
-            <input
-              autoComplete="username"
-              value={credentials.username}
-              onChange={(event) => setCredentials((current) => ({ ...current, username: event.target.value }))}
-              placeholder="Логин"
-            />
-          </label>
-          <label>
-            Пароль
-            <input
-              autoComplete="current-password"
-              type="password"
-              value={credentials.password}
-              onChange={(event) => setCredentials((current) => ({ ...current, password: event.target.value }))}
-              placeholder="Введите пароль"
-            />
-          </label>
-          {loginError && <div className="form-error">{loginError}</div>}
-          <button className="primary-button" type="submit">
-            <ShieldCheck size={17} />
-            Войти
-          </button>
-          <button className="ghost-button" type="button" onClick={() => performLogin({ username: "demo", password: "demo" })}>
-            Войти в демо
-          </button>
-        </form>
-      </div>
-    );
-  }
+  if (!user) return <AuthScreen mode="login" loginError={loginError} onLogin={performLogin} />;
 
-  if (!workspace || (!selectedPerson && !isAdmin)) {
-    return (
-      <div className="auth-screen">
-        <div className="auth-card">
-          <div className="brand-mark">
-            <HeartPulse size={22} />
-          </div>
-          <h1>Нет доступного профиля</h1>
-          <p>Администратор должен привязать ваш логин к профилю участника 1:1.</p>
-          <button className="ghost-button" type="button" onClick={logout}>
-            Выйти
-          </button>
-        </div>
-      </div>
-    );
-  }
+  if (!workspace || (!selectedPerson && !isAdmin)) return <AuthScreen mode="no-profile" onLogout={logout} />;
 
   const paletteItems = [
     ...visibleSections.map((section) => ({
@@ -3310,7 +3238,7 @@ export default function App() {
           </label>
         )}
 
-        {pageDescription && activeSection !== "home" && (
+        {pageDescription && activeSection !== "home" && activeSection !== "settings" && (
           <div className="section-intro">
             <p>{pageDescription}</p>
             {activeSection === "surveys" && isAdmin && (
@@ -5656,122 +5584,24 @@ export default function App() {
         )}
 
         {activeSection === "settings" && (
-          <section className="settings-view">
-            <article className="settings-card">
-              <div className="settings-card-head">
-                <div>
-                  <p className="eyebrow">Профиль</p>
-                  <h3>Как вас зовут</h3>
-                  <p>Имя видно в шапке и в списке доступов. Логин (<code>{user?.username}</code>) изменить нельзя.</p>
-                </div>
-              </div>
-              <form
-                className="settings-inline-form"
-                onSubmit={updateAccountName}
-              >
-                <label>
-                  Имя
-                  <input
-                    value={profileName}
-                    onChange={(event) => setProfileName(event.target.value)}
-                    autoComplete="name"
-                  />
-                </label>
-                {formErrors.profile && <div className="form-error inline-form-error">{formErrors.profile}</div>}
-                <button className="primary-button" type="submit">
-                  <Check size={16} />
-                  Сохранить
-                </button>
-              </form>
-            </article>
-
-            <article className="settings-card">
-              <div className="settings-card-head">
-                <div>
-                  <p className="eyebrow">Безопасность</p>
-                  <h3>Сменить пароль</h3>
-                  <p>Все активные сессии этого аккаунта на других устройствах будут закрыты.</p>
-                </div>
-              </div>
-              <form className="settings-inline-form" onSubmit={updateMyPassword}>
-                <label>
-                  Текущий пароль
-                  <input
-                    type="password"
-                    value={currentPassword}
-                    onChange={(event) => setCurrentPassword(event.target.value)}
-                    autoComplete="current-password"
-                  />
-                </label>
-                <label>
-                  Новый пароль
-                  <input
-                    type="password"
-                    value={myPassword}
-                    onChange={(event) => setMyPassword(event.target.value)}
-                    placeholder="минимум 8 символов"
-                    autoComplete="new-password"
-                  />
-                </label>
-                {formErrors.myPassword && (
-                  <div className="form-error inline-form-error" role="alert">
-                    {formErrors.myPassword}
-                  </div>
-                )}
-                <button className="primary-button" type="submit" disabled={!currentPassword || !myPassword}>
-                  <KeyRound size={16} />
-                  Сменить пароль
-                </button>
-              </form>
-            </article>
-
-            <article className="settings-card">
-              <div className="settings-card-head">
-                <div>
-                  <p className="eyebrow">Внешний вид</p>
-                  <h3>Тема интерфейса</h3>
-                  <p>Светлая, тёмная или автоматическая (под настройки системы).</p>
-                </div>
-              </div>
-              <div className="theme-toggle" role="radiogroup" aria-label="Тема интерфейса">
-                {[
-                  ["system", Monitor, "Авто"],
-                  ["light", Sun, "Светлая"],
-                  ["dark", Moon, "Тёмная"]
-                ].map(([value, Icon, label]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    role="radio"
-                    aria-checked={theme === value}
-                    className={theme === value ? "active" : ""}
-                    onClick={() => setAppearance({ theme: value })}
-                  >
-                    <Icon size={16} />
-                    <span>{label}</span>
-                  </button>
-                ))}
-              </div>
-            </article>
-
-            {canResetDemo && (
-              <article className="settings-card">
-                <div className="settings-card-head">
-                  <div>
-                    <p className="eyebrow">Служебные действия</p>
-                    <h3>Сбросить демо-данные</h3>
-                    <p>Удаляет рабочую команду и возвращает seed-аккаунты. Сессия не закрывается.</p>
-                  </div>
-                </div>
-                <div className="settings-card-actions">
-                  <button className="ghost-button" type="button" onClick={resetDemo}>
-                    <RotateCcw size={16} />
-                    Сбросить демо-данные
-                  </button>
-                </div>
-              </article>
-            )}
-          </section>
+          <SettingsScreen
+            user={user}
+            roleText={roleLabel[user?.role] || "участник"}
+            displayName={displayName}
+            profileName={profileName}
+            onProfileNameChange={setProfileName}
+            onSaveProfile={updateAccountName}
+            profileError={formErrors.profile}
+            currentPassword={currentPassword}
+            onCurrentPasswordChange={setCurrentPassword}
+            newPassword={myPassword}
+            onNewPasswordChange={setMyPassword}
+            onChangePassword={updateMyPassword}
+            passwordError={formErrors.myPassword}
+            canResetDemo={canResetDemo}
+            onResetDemo={resetDemo}
+            onLogout={logout}
+          />
         )}
       </div>
 
