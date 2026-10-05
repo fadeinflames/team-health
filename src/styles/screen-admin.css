@@ -1,0 +1,158 @@
+/* Админка. Только токены; компоненты берутся из src/ui. Префикс adm-.
+
+   .admin-view, .settings-card и .access-row оставлены как крючки для e2e-тестов;
+   правила с большей специфичностью снимают с них оформление старого styles.css,
+   пока он есть в сборке. */
+
+.admin-view.adm {
+  display: grid;
+  gap: var(--sp-8);
+  min-width: 0;
+}
+
+.adm > .ui-pageheader {
+  margin-bottom: calc(var(--sp-2) * -1);
+}
+
+.adm-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--gap);
+}
+
+/* --- Сброс пароля --- */
+.adm .ui-card.settings-card {
+  display: grid;
+  align-content: start;
+  gap: var(--sp-5);
+  padding: var(--card-pad);
+  border: 0;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+
+.adm-form {
+  display: grid;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+
+@media (min-width: 900px) {
+  .adm-form {
+    max-width: 36rem;
+  }
+}
+
+/* --- Список логинов --- */
+.adm-list .access-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "avatar text actions"
+    "avatar role actions";
+  align-items: center;
+  column-gap: var(--sp-3);
+  row-gap: var(--sp-1);
+  padding: var(--row-pad-y) var(--sp-4);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.adm-list .ui-list__item + .ui-list__item::before {
+  left: calc(var(--sp-4) + 2.5rem + var(--sp-3));
+}
+
+.adm-row > .ui-avatar {
+  grid-area: avatar;
+  align-self: start;
+}
+
+.adm-row__text {
+  grid-area: text;
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.admin-view .adm-row .adm-row__name {
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--text-base);
+  font-weight: 600;
+  line-height: var(--leading-snug);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-view .adm-row .adm-row__sub {
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.adm-row__role {
+  grid-area: role;
+  justify-self: start;
+}
+
+.admin-view .adm-row .ui-badge {
+  color: var(--ui-tone-text);
+  font-size: var(--text-xs);
+}
+
+.admin-view .adm-row .ui-btn span,
+.admin-view .adm-row .ui-avatar span,
+.admin-view .adm-row .ui-iconbtn span {
+  color: inherit;
+  font-size: inherit;
+}
+
+.adm-row__actions {
+  grid-area: actions;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+@media (min-width: 900px) {
+  .adm-list .access-row {
+    grid-template-columns: auto minmax(0, 1.4fr) minmax(8rem, 0.6fr) auto;
+    grid-template-areas: "avatar text role actions";
+    column-gap: var(--sp-4);
+  }
+
+  .adm-row > .ui-avatar {
+    align-self: center;
+  }
+
+  .adm-row__role {
+    justify-self: start;
+  }
+}
+
+@media (max-width: 760px) {
+  .admin-view.adm {
+    gap: var(--sp-6);
+    padding-top: var(--sp-3);
+  }
+
+  .adm-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--sp-2);
+  }
+
+  /* Три плитки в ряд на телефоне: подсказку убираем, остаются подпись и число */
+  .adm-stats .ui-stat__hint {
+    display: none;
+  }
+
+  .adm .ui-card.settings-card {
+    padding: var(--sp-4);
+  }
+}

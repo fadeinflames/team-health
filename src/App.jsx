@@ -5,7 +5,10 @@ import HomeScreen from "./screens/Home.jsx";
 // @screens:lprs-goals
 // @screens:surveys
 // @screens:reports
-// @screens:team-admin
+import TeamScreen from "./screens/Team.jsx";
+import AdminScreen from "./screens/Admin.jsx";
+import CreateLoginCard from "./screens/team/CreateLoginCard.jsx";
+import DeleteConfirm from "./screens/team/DeleteConfirm.jsx";
 // @screens:settings-auth
 import UserMenu from "./shell/UserMenu.jsx";
 import MoreTab from "./shell/MoreTab.jsx";
@@ -881,7 +884,8 @@ export default function App() {
     // @migrated:lprs-goals
     // @migrated:surveys
     // @migrated:reports
-    // @migrated:team-admin
+    "team",
+    "admin",
     // @migrated:settings-auth
   ]);
   const visibleSections = primarySections
@@ -1476,16 +1480,6 @@ export default function App() {
       section: "reports"
     }
   ].filter(Boolean).slice(0, 6);
-  const peopleWithoutAccess = (workspace?.people || []).filter(
-    (person) => !(workspace?.users || []).some((item) => item.personId === person.id)
-  ).length;
-  const peopleWithoutMeetings = (workspace?.people || []).filter((person) => !person.nextMeeting).length;
-  const teamOverviewStats = [
-    [UsersRound, "Участники", workspace?.people?.length || 0, "в рабочей команде", "slate"],
-    [HeartPulse, "В зоне внимания", peopleInRiskZone, "по пульсу и темам", "amber"],
-    [KeyRound, "Без доступа", peopleWithoutAccess, "логин не выдан", "teal"],
-    [CalendarDays, "Без 1:1", peopleWithoutMeetings, "нужно назначить", "green"]
-  ];
 
   const filteredCards = useMemo(() => {
     const statusOrder = { todo: 0, discussing: 1, done: 2 };
@@ -1721,23 +1715,14 @@ export default function App() {
 
   function renderDeleteConfirm(label, onConfirm) {
     return (
-      <span className="confirm-actions" role="group" aria-label={`Подтверждение удаления ${label}`}>
-        <button
-          className="soft-button danger-button"
-          type="button"
-          onClick={() => {
-            setPendingDeleteKey("");
-            onConfirm();
-          }}
-        >
-          <Trash2 size={15} />
-          Подтвердить удаление
-        </button>
-        <button className="soft-button" type="button" onClick={cancelDelete}>
-          <X size={15} />
-          Отмена
-        </button>
-      </span>
+      <DeleteConfirm
+        label={label}
+        onConfirm={() => {
+          setPendingDeleteKey("");
+          onConfirm();
+        }}
+        onCancel={cancelDelete}
+      />
     );
   }
 
@@ -2902,125 +2887,21 @@ export default function App() {
     allowLeadCreation = canCreateLeadLogin,
     showCancel = false
   } = {}) {
-    const formRole = allowLeadCreation ? newUser.role : "employee";
-
     return (
-      <article className="settings-card create-login-card" id={id} ref={createLoginPanelRef}>
-        <div className="settings-card-head">
-          <div>
-            <p className="eyebrow">Пользователи</p>
-            <h3>Создать логин</h3>
-            <p>{description}</p>
-          </div>
-          {showCancel && (
-            <button className="icon-button" type="button" onClick={closeCreateLoginForm} aria-label="Закрыть форму">
-              <X size={16} />
-            </button>
-          )}
-        </div>
-        <form className="settings-inline-form admin-inline" onSubmit={createEmployeeUser}>
-          {allowLeadCreation && (
-            <label>
-              Тип доступа
-              <select
-                value={newUser.role}
-                onChange={(event) =>
-                  setNewUser((current) => ({
-                    ...current,
-                    role: event.target.value,
-                    leadUserId: event.target.value === "lead" ? "" : current.leadUserId
-                  }))
-                }
-              >
-                <option value="employee">Участник команды</option>
-                <option value="lead">Тимлид</option>
-              </select>
-            </label>
-          )}
-          <label>
-            {formRole === "lead" ? "Имя тимлида" : "Имя участника"}
-            <input
-              value={newUser.personName}
-              onChange={(event) => setNewUser((current) => ({ ...current, personName: event.target.value }))}
-              placeholder={formRole === "lead" ? "Например: Мария Лидова" : "Например: Иван Петров"}
-              autoComplete="name"
-            />
-          </label>
-          <div className="two-field-grid">
-            {formRole === "employee" ? (
-              <label>
-                Роль в команде
-                <input
-                  value={newUser.personRole}
-                  onChange={(event) => setNewUser((current) => ({ ...current, personRole: event.target.value }))}
-                  placeholder="Product Manager"
-                />
-              </label>
-            ) : (
-              <label>
-                Роль в системе
-                <input value="Тимлид" readOnly />
-              </label>
-            )}
-            <label>
-              Команда
-              <input
-                value={newUser.personTeam}
-                onChange={(event) => setNewUser((current) => ({ ...current, personTeam: event.target.value }))}
-                placeholder="Product Growth"
-                readOnly={!allowLeadCreation && Boolean(user?.teamLabel)}
-              />
-            </label>
-          </div>
-          {formRole === "employee" && allowLeadCreation && teamLeadUsers.length > 0 && (
-            <label>
-              Тимлид
-              <select
-                value={newUser.leadUserId}
-                onChange={(event) => {
-                  const lead = teamLeadUsers.find((item) => item.id === event.target.value);
-                  setNewUser((current) => ({
-                    ...current,
-                    leadUserId: event.target.value,
-                    personTeam: lead?.teamLabel || current.personTeam
-                  }));
-                }}
-              >
-                <option value="">По названию команды</option>
-                {teamLeadUsers.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name} — {item.teamLabel || "команда не задана"}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          <div className="two-field-grid">
-            <label>
-              Логин
-              <input
-                value={newUser.username}
-                onChange={(event) => setNewUser((current) => ({ ...current, username: event.target.value }))}
-                placeholder="ivan.sre"
-              />
-            </label>
-            <label>
-              Пароль
-              <input
-                type="password"
-                value={newUser.password}
-                onChange={(event) => setNewUser((current) => ({ ...current, password: event.target.value }))}
-                placeholder="минимум 8 символов"
-              />
-            </label>
-          </div>
-          {formErrors.createUser && <div className="form-error inline-form-error">{formErrors.createUser}</div>}
-          <button className="primary-button" type="submit">
-            <UserPlus size={16} />
-            Создать логин
-          </button>
-        </form>
-      </article>
+      <CreateLoginCard
+        id={id}
+        description={description}
+        allowLeadCreation={allowLeadCreation}
+        showCancel={showCancel}
+        cardRef={createLoginPanelRef}
+        form={newUser}
+        setForm={setNewUser}
+        teamLocked={!allowLeadCreation && Boolean(user?.teamLabel)}
+        leadUsers={teamLeadUsers}
+        error={formErrors.createUser}
+        onSubmit={createEmployeeUser}
+        onClose={closeCreateLoginForm}
+      />
     );
   }
 
@@ -3304,7 +3185,7 @@ export default function App() {
           </label>
         )}
 
-        {pageDescription && activeSection !== "home" && (
+        {pageDescription && activeSection !== "home" && activeSection !== "team" && activeSection !== "admin" && (
           <div className="section-intro">
             <p>{pageDescription}</p>
             {activeSection === "surveys" && isAdmin && (
@@ -5696,414 +5577,73 @@ export default function App() {
         )}
 
         {activeSection === "team" && isAdmin && (
-          <section className="team-admin-view">
-            <div className="team-admin-header">
-              <div>
-                <p className="eyebrow">Команда</p>
-                <h3>Участники 1:1</h3>
-              </div>
-              <div className="team-admin-header-actions">
-                <button
-                  className="primary-button"
-                  type="button"
-                  onClick={() => (showCreateLoginForm ? closeCreateLoginForm() : openCreateLoginForm())}
-                >
-                  <UserPlus size={16} />
-                  {showCreateLoginForm ? "Скрыть форму" : "Создать логин"}
-                </button>
-                <span className="count-pill">{countLabel(workspace.people.length, ["участник", "участника", "участников"])}</span>
-              </div>
-            </div>
-
-            {showCreateLoginForm && renderCreateLoginCard({
-              id: "team-create-login-panel",
-              description: canCreateLeadLogin
-                ? "Создайте логин участника и при необходимости привяжите его к тимлиду."
-                : "Добавьте участника в свою команду и сразу выдайте ему доступ.",
-              allowLeadCreation: canCreateLeadLogin,
-              showCancel: true
-            })}
-
-            <div className="team-overview-grid" aria-label="Состояние команды">
-              {teamOverviewStats.map(([Icon, label, value, detail, tone]) => (
-                <article className={`kpi-card ${tone}`} key={label}>
-                  <span className="kpi-icon">
-                    <Icon size={18} />
-                  </span>
-                  <div>
-                    <span>{label}</span>
-                    <strong>{value}</strong>
-                    <small>{detail}</small>
-                  </div>
-                </article>
-              ))}
-            </div>
-
-            <div className="team-admin-grid">
-              <div className={`team-directory ${sectionStaggerClass("team")}`}>
-                {workspace.people.length === 0 && (
-                  <div className="empty-state">
-                    <UsersRound size={22} />
-                    <span>В рабочей команде пока нет участников 1:1.</span>
-                  </div>
-                )}
-                {workspace.people.map((person) => {
-                  const score = scorePulse(workspace.pulse[person.id]);
-                  const linkedUsers = workspace.users.filter((item) => item.personId === person.id);
-                  const openCards = workspace.cards.filter((card) => card.personId === person.id && card.status !== "done").length;
-                  const isEditing = isPlatformAdmin && editingPersonId === person.id;
-                  return (
-                    <article className={`team-member-card ${person.id === selectedPerson?.id ? "active" : ""} ${isEditing ? "editing" : ""}`} key={person.id}>
-                      {isEditing ? (
-                        <div className="team-member-edit">
-                          <div className="two-field-grid">
-                            <label>
-                              Имя
-                              <input
-                                value={personEditDraft.name}
-                                onChange={(event) =>
-                                  setPersonEditDraft((current) => ({ ...current, name: event.target.value }))
-                                }
-                              />
-                            </label>
-                            <label>
-                              Роль
-                              <input
-                                value={personEditDraft.role}
-                                onChange={(event) =>
-                                  setPersonEditDraft((current) => ({ ...current, role: event.target.value }))
-                                }
-                              />
-                            </label>
-                          </div>
-                          <div className="two-field-grid">
-                            <label>
-                              Команда
-                              <input
-                                value={personEditDraft.team}
-                                onChange={(event) =>
-                                  setPersonEditDraft((current) => ({ ...current, team: event.target.value }))
-                                }
-                              />
-                            </label>
-                            <label>
-                              Cadence
-                              <input
-                                value={personEditDraft.cadence}
-                                onChange={(event) =>
-                                  setPersonEditDraft((current) => ({ ...current, cadence: event.target.value }))
-                                }
-                                placeholder="каждую неделю"
-                              />
-                            </label>
-                          </div>
-                          <label>
-                            Ближайший 1:1
-                            <input
-                              value={personEditDraft.nextMeeting}
-                              onChange={(event) =>
-                                setPersonEditDraft((current) => ({ ...current, nextMeeting: event.target.value }))
-                              }
-                              placeholder="10 мая, 14:00"
-                            />
-                          </label>
-                          <label>
-                            Фокус лида
-                            <textarea
-                              rows={2}
-                              value={personEditDraft.managerFocus}
-                              onChange={(event) =>
-                                setPersonEditDraft((current) => ({ ...current, managerFocus: event.target.value }))
-                              }
-                            />
-                          </label>
-                          <div className="two-field-grid">
-                            <label>
-                              Тип встречи
-                              <select
-                                value={personEditDraft.meetingType}
-                                onChange={(event) =>
-                                  setPersonEditDraft((current) => ({ ...current, meetingType: event.target.value }))
-                                }
-                              >
-                                {Object.entries(meetingTypeLabel).map(([value, label]) => (
-                                  <option key={value} value={value}>
-                                    {label}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                            <label>
-                              Режим лида
-                              <select
-                                value={personEditDraft.mentorshipMode}
-                                onChange={(event) =>
-                                  setPersonEditDraft((current) => ({ ...current, mentorshipMode: event.target.value }))
-                                }
-                              >
-                                {Object.entries(mentorshipModeLabel).map(([value, label]) => (
-                                  <option key={value} value={value}>
-                                    {label}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                          </div>
-                          <p className="form-note" style={{ margin: "-4px 0 0" }}>
-                            {mentorshipModeHint[personEditDraft.mentorshipMode]}
-                          </p>
-                          <label>
-                            Career narrative (рост)
-                            <textarea
-                              rows={3}
-                              value={personEditDraft.growthNarrative}
-                              onChange={(event) =>
-                                setPersonEditDraft((current) => ({
-                                  ...current,
-                                  growthNarrative: event.target.value
-                                }))
-                              }
-                              placeholder="Долгоиграющая история роста: цели на год, stretch-проекты, sponsorship-возможности"
-                            />
-                          </label>
-                          <label>
-                            Performance log
-                            <textarea
-                              rows={3}
-                              value={personEditDraft.performanceNarrative}
-                              onChange={(event) =>
-                                setPersonEditDraft((current) => ({
-                                  ...current,
-                                  performanceNarrative: event.target.value
-                                }))
-                              }
-                              placeholder="Конкретные факты для будущего review: что получилось, что не получилось, обратная связь"
-                            />
-                          </label>
-                          {formErrors.editPerson && (
-                            <div className="form-error inline-form-error">{formErrors.editPerson}</div>
-                          )}
-                          <div className="team-member-edit-actions">
-                            <button
-                              className="primary-button"
-                              type="button"
-                              onClick={() => savePersonEdit(person.id)}
-                            >
-                              <Check size={16} />
-                              Сохранить
-                            </button>
-                            <button
-                              className="ghost-button"
-                              type="button"
-                              onClick={() => {
-                                setEditingPersonId("");
-                                clearFormError("editPerson");
-                              }}
-                            >
-                              Отмена
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <>
-                          <button type="button" onClick={() => selectPerson(person.id)} className="team-member-main">
-                            <span className="avatar">{person.initials}</span>
-                            <span>
-                              <strong>{person.name}</strong>
-                              <small>{person.role} · {person.team}</small>
-                            </span>
-                          </button>
-                          <div className="team-member-meta">
-                            <span className={`health-dot ${score < 64 ? "risk" : score < 76 ? "watch" : "good"}`}>{score}</span>
-                            <span>{openCards} открытых тем</span>
-                            <span>{linkedUsers.length ? `доступ: ${linkedUsers.map((item) => item.username).join(", ")}` : "доступ не выдан"}</span>
-                            {isPlatformAdmin && (
-                              <>
-                                <button
-                                  className="soft-button"
-                                  type="button"
-                                  onClick={() => {
-                                    setEditingPersonId(person.id);
-                                    setPersonEditDraft({
-                                      name: person.name,
-                                      role: person.role,
-                                      team: person.team,
-                                      cadence: person.cadence,
-                                      nextMeeting: person.nextMeeting,
-                                      managerFocus: person.managerFocus,
-                                      meetingType: person.meetingType || "regular",
-                                      mentorshipMode: person.mentorshipMode || "coach",
-                                      growthNarrative: person.growthNarrative || "",
-                                      performanceNarrative: person.performanceNarrative || ""
-                                    });
-                                  }}
-                                >
-                                  <Pencil size={15} />
-                                  Изменить
-                                </button>
-                                {pendingDeletePersonId === person.id ? (
-                                  <span className="confirm-actions">
-                                    <button className="soft-button danger-button" type="button" onClick={() => deleteEmployeePerson(person)}>
-                                      <Trash2 size={15} />
-                                      Подтвердить удаление
-                                    </button>
-                                    <button
-                                      className="soft-button"
-                                      type="button"
-                                      onClick={() => {
-                                        setPendingDeletePersonId("");
-                                        setUserMessage("");
-                                      }}
-                                    >
-                                      <X size={15} />
-                                      Отмена
-                                    </button>
-                                  </span>
-                                ) : (
-                                  <button className="soft-button danger-button" type="button" onClick={() => deleteEmployeePerson(person)}>
-                                    <Trash2 size={15} />
-                                    Удалить участника
-                                  </button>
-                                )}
-                              </>
-                            )}
-                          </div>
-                        </>
-                      )}
-                    </article>
-                  );
-                })}
-              </div>
-            </div>
-
-            {isPlatformAdmin && (workspace.archivedPeople || []).length > 0 && (
-              <section className="team-archive">
-                <div className="section-heading compact">
-                  <div>
-                    <p className="eyebrow">Архив</p>
-                    <h3>Удалённые участники</h3>
-                  </div>
-                  <span className="count-pill">{workspace.archivedPeople.length}</span>
-                </div>
-                <p className="form-note" style={{ margin: 0 }}>
-                  История 1:1 и заметки сохранены — можно восстановить.
-                </p>
-                <div className="archive-list">
-                  {workspace.archivedPeople.map((person) => (
-                    <div className="archive-row" key={person.id}>
-                      <span className="avatar mini">{person.initials}</span>
-                      <span className="archive-main">
-                        <strong>{person.name}</strong>
-                        <small>{person.role} · {person.team} · удалён {formatRuDate(person.archivedAt)}</small>
-                      </span>
-                      <button
-                        className="soft-button"
-                        type="button"
-                        onClick={() => restoreArchivedPerson(person.id)}
-                      >
-                        <RotateCcw size={15} />
-                        Вернуть
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            )}
-
-            {isPlatformAdminRole(user) && (
-              <div className="team-admin-hint">
-                <ShieldCheck size={18} />
-                <span>
-                  Сброс паролей и полный список логинов —{" "}
-                  <button className="text-link" type="button" onClick={() => openSection("admin")}>
-                    в Админке
-                  </button>
-                  .
-                </span>
-              </div>
-            )}
-          </section>
+          <TeamScreen
+            workspace={workspace}
+            isPlatformAdmin={isPlatformAdmin}
+            peopleInRiskZone={peopleInRiskZone}
+            showCreateLoginForm={showCreateLoginForm}
+            createLoginPanel={
+              showCreateLoginForm
+                ? renderCreateLoginCard({
+                    id: "team-create-login-panel",
+                    description: canCreateLeadLogin
+                      ? "Создайте логин участника и при необходимости привяжите его к тимлиду."
+                      : "Добавьте участника в свою команду и сразу выдайте ему доступ.",
+                    allowLeadCreation: canCreateLeadLogin,
+                    showCancel: true
+                  })
+                : null
+            }
+            onToggleCreateLogin={() => (showCreateLoginForm ? closeCreateLoginForm() : openCreateLoginForm())}
+            editingPersonId={editingPersonId}
+            personEditDraft={personEditDraft}
+            setPersonEditDraft={setPersonEditDraft}
+            editError={formErrors.editPerson}
+            onStartEdit={(person) => {
+              setEditingPersonId(person.id);
+              setPersonEditDraft({
+                name: person.name,
+                role: person.role,
+                team: person.team,
+                cadence: person.cadence,
+                nextMeeting: person.nextMeeting,
+                managerFocus: person.managerFocus,
+                meetingType: person.meetingType || "regular",
+                mentorshipMode: person.mentorshipMode || "coach",
+                growthNarrative: person.growthNarrative || "",
+                performanceNarrative: person.performanceNarrative || ""
+              });
+            }}
+            onSaveEdit={savePersonEdit}
+            onCancelEdit={() => {
+              setEditingPersonId("");
+              clearFormError("editPerson");
+            }}
+            pendingDeletePersonId={pendingDeletePersonId}
+            onDeletePerson={deleteEmployeePerson}
+            onCancelDeletePerson={() => {
+              setPendingDeletePersonId("");
+              setUserMessage("");
+            }}
+            onRestorePerson={restoreArchivedPerson}
+            onOpenPerson={selectPerson}
+            onOpenSection={openSection}
+            showAdminLink={isPlatformAdminRole(user)}
+          />
         )}
 
         {activeSection === "admin" && isPlatformAdminRole(user) && (
-          <section className="admin-view">
-            {renderCreateLoginCard({ id: "admin-create-login-panel", allowLeadCreation: true })}
-
-            <article className="settings-card">
-              <div className="settings-card-head">
-                <div>
-                  <p className="eyebrow">Безопасность</p>
-                  <h3>Сбросить пароль пользователю</h3>
-                  <p>После сброса все активные сессии этого пользователя закроются.</p>
-                </div>
-              </div>
-              <form className="settings-inline-form admin-inline" data-form="password" onSubmit={updateEmployeePassword}>
-                <label>
-                  Логин
-                  <select
-                    value={passwordUpdate.userId}
-                    onChange={(event) => setPasswordUpdate((current) => ({ ...current, userId: event.target.value }))}
-                  >
-                    <option value="">Выберите логин</option>
-                    {editableUsers.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.username} — {item.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Новый пароль
-                  <input
-                    type="password"
-                    value={passwordUpdate.password}
-                    onChange={(event) => setPasswordUpdate((current) => ({ ...current, password: event.target.value }))}
-                    placeholder="минимум 8 символов"
-                  />
-                </label>
-                {formErrors.password && <div className="form-error inline-form-error">{formErrors.password}</div>}
-                <button className="primary-button" type="submit" disabled={!passwordUpdate.userId}>
-                  <KeyRound size={16} />
-                  Сбросить пароль
-                </button>
-              </form>
-            </article>
-
-            <article className="settings-card">
-              <div className="settings-card-head">
-                <div>
-                  <p className="eyebrow">Доступы</p>
-                  <h3>Все логины</h3>
-                  <p>Список всех аккаунтов платформы. Удаление логина закрывает все его сессии.</p>
-                </div>
-              </div>
-              <div className="access-table">
-                {realUsers.map((item) => {
-                  const person = workspace.people.find((candidate) => candidate.id === item.personId);
-                  return (
-                    <article key={item.id} className="access-row">
-                      <div>
-                        <strong>{isPlatformAdminRole(item) ? item.name : person?.name || item.name || "Без имени"}</strong>
-                        <span className="login-secondary">
-                          {item.username}
-                          {item.teamLabel ? ` · ${item.teamLabel}` : ""}
-                        </span>
-                      </div>
-                      <span>{roleLabel[item.role] || item.role}</span>
-                      <div className="access-actions">
-                        {!isProtectedAccess(item) && (
-                          <button className="soft-button danger-button" type="button" onClick={() => deleteEmployeeUser(item)}>
-                            <Trash2 size={15} />
-                            Удалить
-                          </button>
-                        )}
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            </article>
-          </section>
+          <AdminScreen
+            realUsers={realUsers}
+            editableUsers={editableUsers}
+            people={workspace.people}
+            createLoginPanel={renderCreateLoginCard({ id: "admin-create-login-panel", allowLeadCreation: true })}
+            passwordUpdate={passwordUpdate}
+            setPasswordUpdate={setPasswordUpdate}
+            passwordError={formErrors.password}
+            onResetPassword={updateEmployeePassword}
+            onDeleteUser={deleteEmployeeUser}
+          />
         )}
 
         {activeSection === "settings" && (
