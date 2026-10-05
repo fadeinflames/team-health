@@ -243,7 +243,22 @@ export const managerNotesTable = {
       // как jsonb и превращаются в text[] уже в проекции.
       expr: "array(select jsonb_array_elements_text(src.tags))"
     },
-    { name: "created_at", type: "timestamptz", value: (n) => iso(n.createdAt), expr: "coalesce(src.created_at, now())" }
+    { name: "created_at", type: "timestamptz", value: (n) => iso(n.createdAt), expr: "coalesce(src.created_at, now())" },
+    // Автор заметки. Не immutable, но и не затирается пустым: старые заметки
+    // без автора остаются общими для лидов скоупа, а у заметки с автором
+    // авторство не должно пропасть из-за записи без этого поля.
+    //
+    // expr: автор, чья учётная запись уже удалена (устаревший снимок, гонка с
+    // удалением пользователя), превращается в null. Иначе внешний ключ
+    // валил бы всё сохранение рабочего пространства ошибкой 23503. С
+    // keepExisting null означает «оставить то, что в строке».
+    {
+      name: "author_user_id",
+      type: "text",
+      value: (n) => n.authorUserId || null,
+      expr: "case when exists (select 1 from users u where u.id = src.author_user_id) then src.author_user_id end",
+      keepExisting: true
+    }
   ]
 };
 
@@ -266,6 +281,9 @@ export const usersTable = {
   // lead_user_id проставляется вторым проходом: ссылка на другого
   // пользователя может указывать на строку, которой в базе ещё нет.
   immutable: ["created_at", "lead_user_id"],
+  // lead_user_id не едет через upsert, но смена руководителя — это изменение
+  // строки, и запись разностью обязана его заметить.
+  extraSignature: (u) => [u.leadUserId || null],
   columns: [
     { name: "id", type: "text", value: (u) => u.id },
     { name: "username", type: "text", value: (u) => u.username },

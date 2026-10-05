@@ -4,7 +4,43 @@
 
 Schema management moves out of the application into migrations, secrets get a lifecycle, and mutations stop rewriting the whole database.
 
+### Fixed (audit 2026-10-04, wave 1)
+
+- Text containing «продаж», «sales» or «биллинг» is no longer silently dropped from cards, actions and notes (and, in PostgreSQL, deleted on the next write). The word filter is gone.
+- Request bodies are decoded once from bytes, so Cyrillic split across network chunks is no longer corrupted; the size limit counts bytes; a body that is not a JSON object answers 400.
+- The login rate limit can no longer be bypassed by forging the left side of `X-Forwarded-For`: the client address is taken from the right (`TRUSTED_PROXY_HOPS`, default 1). A successful login resets only the `ip:username` counter, the counters are bounded in size and key length.
+- An unauthenticated request no longer reads the whole database (including password hashes) before answering 401.
+- The client no longer retries a rejected save forever: a 409 shows a conflict banner with «load current data» / «overwrite with mine»; other 4xx stop retrying; network errors and 5xx back off up to 30 s. Changing an LPR status no longer forges a client-side `updatedAt` that caused a false 409.
+- CSV exports are protected against formula injection (`src/csv.js`); destructive deletes ask for confirmation; save errors and toasts are announced (`role=alert` / `role=status`); closing the tab with unsaved edits warns; an error boundary replaces the blank screen after a render crash.
+- Accessibility: visible focus on search and goal sliders, text contrast of muted and status colours raised to AA, reduced-motion respected.
+- CI: the burned-values check no longer fails on its own block list; jobs have timeouts and concurrency groups; unit tests run in CI. Scripts treat Railway as production (`scripts/lib/env.mjs`), `redo` follows the same guard as `down`, a held migration lock exits 1, and `up` on an unbaselined legacy database prints the baseline instruction instead of failing obscurely.
+
+### Fixed (audit 2026-10-04, wave 2)
+
+- **Lost updates under concurrency.** Writes are now diff-based: `readDb()` records the state of every row it read, and `writeDb()` upserts only rows that changed and deletes only rows that were in that base and disappeared. Rows created by other requests in between are no longer deleted, and unchanged rows are not rewritten with stale values (this also stops admin operations from rolling back password changes or resurrecting revoked sessions). A stress run with 8 employees saving 6 cards each in parallel lost 42 of 48 saves before and none after.
+- **Stale clients.** `POST /api/workspace` accepts `knownIds`; a row is deleted only if the client knew it. Without `knownIds` the old «absent means deleted» semantics apply. The client tracks the ids it has seen and refreshes row versions after a save that raced with new edits, so its own previous save no longer causes a false 409.
+- Version checks run only for rows the request changed and lock them (`for update`) for the transaction.
+- `/readyz` answers 503 `shutting_down` after SIGTERM while `/healthz` stays 200; `SHUTDOWN_DRAIN_MS` adds a drain pause. Railway's health check now uses `/readyz`.
+- Password hashing is asynchronous (`scrypt`), so a login no longer blocks the event loop; the stored format is unchanged. A failed `ROLLBACK` no longer hides the original error or returns a broken connection to the pool.
+- Backups: `scripts/backup.mjs` (`dump`, `verify`, `restore-check`; npm `db:backup`, `db:backup:verify`). Runbook in `docs/runbook.md`; decisions in `docs/adr/`.
+
+### Changed (privacy and publication, wave 3)
+
+- **Participants no longer receive** `performanceNarrative` and `growthNarrative`, and see only validated competency assessments; leads and admins are unchanged.
+- **Anonymous surveys:** the minimum number of responses is at least 3 (older surveys saved with 2 behave as 3), and each question is hidden until at least that many people answered *it* (`perQuestion[id] = { count, hidden: true, minResponses }`). The real-time differencing risk between two views is a documented residual risk (`docs/adr/0005-privacy-model.md`).
+- **Private manager notes remember their author** (`manager_notes.author_user_id`, migration 0027): a regular lead sees their own notes and legacy notes without an author, `platform_admin` sees all notes in scope; deleting someone else's note answers 404.
+- Permanently deleting a person also deletes their named survey responses. A survey whose owner lead was deleted is no longer open to the whole organization: only `platform_admin` sees and manages it (migration 0029 drops the foreign key so the owner id survives the deletion).
+- **Audit log** (`audit_log`, migration 0028): account, role, person, survey and note deletion events; `GET /api/audit-log` for `platform_admin` only. No note text or passwords are logged.
+- Session tokens are stored hashed (sha256); the cookie keeps the raw token.
+- Published under the MIT license; `SECURITY.md` and `CONTRIBUTING.md` added. The list of compromised passwords is kept only as sha256 hashes (`lib/burned-secrets.js`) and `scripts/check-burned.mjs` finds them in the tree without storing them.
+
 ### Breaking
+
+- **Everyone signs in again after this release:** sessions created before it hold raw tokens that no longer match the stored hashes, and the server removes them at start.
+
+- **`POST /api/me/password` requires `currentPassword`.** A missing or wrong value answers 400 «Неверный текущий пароль» (not 401); attempts count towards the login rate limit.
+- **HSTS** (`Strict-Transport-Security`, six months, no subdomains) is sent when `APP_ENV=production`.
+- **`lib/` is part of the runtime image** (`server.js` imports it); the Dockerfile copies it.
 
 - **Demo data is no longer recreated on start.** `seedPostgres()` used to run on every boot, so deleted demo people, cards and goals came back after a restart — including in production. Seeding is now `make seed` / `npm run seed`, refuses to run outside `local` without `--force`, and demo fixtures live in `fixtures/demo.json`. If you relied on demo data reappearing, run the seed explicitly.
 - **The default admin login changed to `admin`, and the default password is gone.** There is no default password in any environment: outside `local` a missing `ADMIN_PASSWORD` refuses the start, in `local` one is generated on first run and printed once. Set `ADMIN_USERNAME` explicitly before upgrading if you were relying on the old default. The previous default password must be treated as compromised — it is in the public git history — and rotated anywhere it was reused.

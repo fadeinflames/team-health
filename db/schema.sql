@@ -65,6 +65,42 @@ CREATE TABLE public.app_meta (
 );
 
 --
+-- Name: audit_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.audit_log (
+    id bigint NOT NULL,
+    at timestamp with time zone DEFAULT now() NOT NULL,
+    actor_user_id text,
+    actor_username text,
+    action text NOT NULL,
+    target_type text,
+    target_id text,
+    details jsonb DEFAULT '{}'::jsonb NOT NULL,
+    CONSTRAINT audit_log_action_length CHECK ((length(action) <= 80)),
+    CONSTRAINT audit_log_actor_username_length CHECK ((length(actor_username) <= 120)),
+    CONSTRAINT audit_log_target_id_length CHECK ((length(target_id) <= 200)),
+    CONSTRAINT audit_log_target_type_length CHECK ((length(target_type) <= 40))
+);
+
+--
+-- Name: audit_log_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.audit_log_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+--
+-- Name: audit_log_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.audit_log_id_seq OWNED BY public.audit_log.id;
+
+--
 -- Name: cards; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -157,7 +193,8 @@ CREATE TABLE public.manager_notes (
     person_id text NOT NULL,
     body text NOT NULL,
     tags text[] DEFAULT '{}'::text[] NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    author_user_id text
 );
 
 --
@@ -370,6 +407,12 @@ CREATE TABLE public.users (
 );
 
 --
+-- Name: audit_log id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.audit_log ALTER COLUMN id SET DEFAULT nextval('public.audit_log_id_seq'::regclass);
+
+--
 -- Name: actions actions_due_label_length; Type: CHECK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -403,6 +446,13 @@ ALTER TABLE public.actions
 
 ALTER TABLE ONLY public.app_meta
     ADD CONSTRAINT app_meta_pkey PRIMARY KEY (key);
+
+--
+-- Name: audit_log audit_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.audit_log
+    ADD CONSTRAINT audit_log_pkey PRIMARY KEY (id);
 
 --
 -- Name: cards cards_body_length; Type: CHECK CONSTRAINT; Schema: public; Owner: -
@@ -638,6 +688,12 @@ CREATE INDEX actions_due_date_idx ON public.actions USING btree (due_date) WHERE
 --
 
 CREATE INDEX actions_person_id_idx ON public.actions USING btree (person_id);
+
+--
+-- Name: audit_log_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX audit_log_at_idx ON public.audit_log USING btree (at DESC);
 
 --
 -- Name: cards_lpr_id_idx; Type: INDEX; Schema: public; Owner: -
@@ -923,6 +979,13 @@ ALTER TABLE ONLY public.lprs
     ADD CONSTRAINT lprs_person_id_fkey FOREIGN KEY (person_id) REFERENCES public.people(id) ON DELETE CASCADE;
 
 --
+-- Name: manager_notes manager_notes_author_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.manager_notes
+    ADD CONSTRAINT manager_notes_author_user_id_fkey FOREIGN KEY (author_user_id) REFERENCES public.users(id) ON DELETE SET NULL;
+
+--
 -- Name: manager_notes manager_notes_person_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -998,13 +1061,6 @@ ALTER TABLE ONLY public.survey_responses
 
 ALTER TABLE ONLY public.survey_responses
     ADD CONSTRAINT survey_responses_survey_id_fkey FOREIGN KEY (survey_id) REFERENCES public.surveys(id) ON DELETE CASCADE;
-
---
--- Name: surveys surveys_owner_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.surveys
-    ADD CONSTRAINT surveys_owner_user_id_fkey FOREIGN KEY (owner_user_id) REFERENCES public.users(id) ON DELETE SET NULL;
 
 --
 -- Name: teams teams_lead_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -

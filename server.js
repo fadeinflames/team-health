@@ -11,7 +11,8 @@ import {
 import { createServer } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, scrypt, scryptSync, timingSafeEqual } from "node:crypto";
+import { promisify } from "node:util";
 import {
   people,
   initialCards,
@@ -28,13 +29,18 @@ import {
   buildSeedPulseHistory,
   buildSeedOncallLoad
 } from "./fixtures/demo.mjs";
-import { syncWorkspace, VersionConflictError } from "./db/repositories/workspace.js";
+import { HttpError } from "./lib/http-error.js";
+import { readJson } from "./lib/read-json.js";
+import { clientAddress as resolveClientAddress } from "./lib/client-address.js";
+import { isBurnedSecret } from "./lib/burned-secrets.js";
+import { syncWorkspace, snapshotRows, VersionConflictError } from "./db/repositories/workspace.js";
 import {
   findSessionUser,
   findUserByUsername,
   createSession,
   deleteSession,
   deleteOtherSessions,
+  hashSessionToken,
   updateUserName,
   updateUserPassword
 } from "./db/repositories/auth.js";
@@ -55,6 +61,13 @@ const failedLoginWindowMs = 1000 * 60 * 15;
 const maxFailedLoginAttempts = 8;
 const maxFailedLoginAttemptsPerIp = 30;
 const trustProxy = isProduction || process.env.TRUST_PROXY === "1";
+// Сколько доверенных прокси стоит перед приложением: адрес клиента берётся из
+// X-Forwarded-For на этой позиции справа. Невалидное значение — один прокси.
+const trustedProxyHops = (() => {
+  const hops = Number(process.env.TRUSTED_PROXY_HOPS);
+  return Number.isInteger(hops) && hops >= 1 ? hops : 1;
+})();
+const maxLoginAttemptEntries = 10_000;
 const allowFileStorageInProduction = process.env.ALLOW_FILE_STORAGE === "1";
 const demoResetAllowed = !isProduction || process.env.ENABLE_DEMO_RESET === "1";
 
@@ -81,16 +94,7 @@ let surveySecretVersion = 1;
 // Значения, которые успели утечь или никогда не были секретом. Держать
 // скомпрометированный пароль в коде ради его запрета нормально: это
 // блок-лист, а не секрет.
-const BURNED_SECRETS = new Set([
-  "passwb121",
-  "admin",
-  "password",
-  "changeme",
-  "change-me-locally",
-  "local-survey-secret",
-  "test-survey-secret",
-  "demo"
-]);
+
 
 let pgPool = null;
 const failedLogins = new Map();
@@ -99,13 +103,7 @@ const failedLoginsByIp = new Map();
 // Pre-computed dummy hash so the login handler always runs scrypt, even when the
 // username does not exist. Without this, response time leaks whether a username
 // is registered (see /api/login).
-const dummyPasswordRecord = (() => {
-  const salt = randomBytes(16).toString("hex");
-  return {
-    salt,
-    passwordHash: scryptSync("dummy-password-for-constant-time", salt, 64).toString("hex")
-  };
-})();
+const dummyPasswordRecord = hashPasswordSync("dummy-password-for-constant-time");
 
 const securityHeaders = {
   "Content-Security-Policy":
@@ -143,24 +141,35 @@ const adminWritablePrepKeys = new Set(prepKeys);
 const employeeWritablePrepKeys = new Set(["employeeAgenda", "pulse", "lastActions", "growth", "commitments"]);
 const pulseKeys = ["energy", "load", "clarity", "trust"];
 
-function hashPassword(password, salt = randomBytes(16).toString("hex")) {
+// scrypt намеренно медленный (десятки миллисекунд CPU). Синхронный вариант
+// держал бы event loop на всё это время, и вход нескольких пользователей
+// подряд стопорил все остальные запросы, поэтому на путях запросов хеш
+// считается асинхронно, в пуле потоков libuv. Параметры и формат хранения
+// те же, что у scryptSync по умолчанию: уже сохранённые хеши проверяются.
+const scryptAsync = promisify(scrypt);
+
+async function hashPassword(password, salt = randomBytes(16).toString("hex")) {
   return {
     salt,
-    passwordHash: scryptSync(password, salt, 64).toString("hex")
+    passwordHash: (await scryptAsync(password, salt, 64)).toString("hex")
   };
 }
 
-function verifyPassword(password, user) {
-  const candidate = scryptSync(password, user.salt, 64);
+async function verifyPassword(password, user) {
+  const candidate = await scryptAsync(password, user.salt, 64);
   const stored = Buffer.from(user.passwordHash, "hex");
   return stored.length === candidate.length && timingSafeEqual(stored, candidate);
 }
 
-class HttpError extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
+// Синхронный вариант только для мест, где вызывающий код синхронен по
+// построению: normalizeDb (через ensureSeedLogin и seedUser) и сидирование.
+// Это старт процесса, /api/reset и файловый режим для локальной разработки;
+// на горячем пути запросов postgres-режима не выполняется.
+function hashPasswordSync(password, salt = randomBytes(16).toString("hex")) {
+  return {
+    salt,
+    passwordHash: scryptSync(password, salt, 64).toString("hex")
+  };
 }
 
 function makeId(prefix) {
@@ -177,7 +186,7 @@ function seedUser({ username, password, name, role, personId = null, leadUserId 
     leadUserId,
     teamLabel,
     createdAt: new Date().toISOString(),
-    ...hashPassword(password)
+    ...hashPasswordSync(password)
   };
 }
 
@@ -360,7 +369,7 @@ function normalizeDb(rawDb = {}) {
           updatedAt: existing?.updatedAt || null
         };
       }),
-      ...cards.filter((card) => !seedCardIds.has(card.id) && !hasLegacyBusinessText(card.title, card.body))
+      ...cards.filter((card) => !seedCardIds.has(card.id))
     ],
     actions: [
       ...initialActions.map((action) => {
@@ -372,7 +381,7 @@ function normalizeDb(rawDb = {}) {
           updatedAt: existing?.updatedAt || null
         };
       }),
-      ...actions.filter((action) => !seedActionIds.has(action.id) && !hasLegacyBusinessText(action.title, action.due))
+      ...actions.filter((action) => !seedActionIds.has(action.id))
     ],
     goals: [
       ...initialGoals.map((goal) => {
@@ -408,7 +417,7 @@ function normalizeDb(rawDb = {}) {
     surveyResponses: [],
     managerNotes: Array.isArray(rawDb.managerNotes)
       ? rawDb.managerNotes
-          .map((note) => sanitizeManagerNote(note, personIds))
+          .map((note) => sanitizeManagerNote(note, personIds, new Set(users.map((user) => String(user.id)))))
           .filter(Boolean)
       : [],
     oncallLoad: Array.isArray(rawDb.oncallLoad)
@@ -538,18 +547,10 @@ function mergeNotesUpdate(currentNotes = {}, incomingNotes = {}, personIds) {
   return next;
 }
 
-function hasLegacyBusinessText(...parts) {
-  const legacyWords = ["прод" + "аж", "sa" + "les", "билл" + "инг"];
-  const haystack = parts.filter(Boolean).join(" ").toLowerCase();
-  return legacyWords.some((word) => haystack.includes(word));
-}
-
+// Текст пользователя не фильтруется по словам: прежняя проверка подстрок
+// молча выбрасывала чужие карточки, шаги и заметки.
 function mergeNotes(rawNotes) {
-  const merged = { ...initialNotes };
-  for (const [personId, body] of Object.entries(rawNotes)) {
-    merged[personId] = hasLegacyBusinessText(body) ? initialNotes[personId] || "" : body;
-  }
-  return merged;
+  return { ...initialNotes, ...rawNotes };
 }
 
 function mergeMeetingDrafts(rawDrafts, personIds) {
@@ -603,7 +604,7 @@ function ensureSeedLogin(db, config) {
       leadUserId,
       teamLabel,
       createdAt: new Date().toISOString(),
-      ...hashPassword(config.password)
+      ...hashPasswordSync(config.password)
     });
     return;
   }
@@ -616,7 +617,7 @@ function ensureSeedLogin(db, config) {
     personId: config.personId,
     leadUserId,
     teamLabel,
-    ...(storageMode === "file" ? hashPassword(config.password) : {})
+    ...(storageMode === "file" ? hashPasswordSync(config.password) : {})
   };
 }
 
@@ -637,7 +638,7 @@ function poolSslOption() {
 
 // Последняя миграция, на которую рассчитывает этот код. Поднимается вместе
 // с миграцией, добавляющей то, что код начал использовать.
-const EXPECTED_SCHEMA = "0026_pulse_as_view";
+const EXPECTED_SCHEMA = "0029_surveys_owner_without_fk";
 
 let schemaReady = false;
 
@@ -744,7 +745,7 @@ async function ensureAdminPassword(client) {
   const fingerprint = secretFingerprint(adminUsername, adminPassword);
   const stored = await readMeta(client, "admin_password_fingerprint");
   const existing = await client.query("select id from users where lower(username) = lower($1)", [adminUsername]);
-  const { salt, passwordHash } = hashPassword(adminPassword);
+  const { salt, passwordHash } = await hashPassword(adminPassword);
 
   if (!existing.rows[0]) {
     await client.query(
@@ -799,6 +800,7 @@ async function ensureSurveySecretVersion(client) {
 
 async function ensureAdminAccounts() {
   const client = await pgPool.connect();
+  let releaseError;
   try {
     await client.query("begin");
     // В local секрет опросов может не быть задан вовсе — тогда он один раз
@@ -813,18 +815,34 @@ async function ensureAdminAccounts() {
     await ensureAdminPassword(client);
     await ensureSurveySecretVersion(client);
     await client.query("delete from sessions where expires_at < now()");
+    // Сессии, заведённые до перехода на хэши токенов, лежат в базе сырым
+    // значением cookie и всё равно уже не сопоставятся (ищется sha256 от
+    // cookie). Хранить чужие сырые токены незачем: чистим их сразу, а не ждём
+    // четырнадцать суток до истечения. Хэш — ровно 64 hex-символа.
+    await client.query("delete from sessions where id !~ '^[0-9a-f]{64}$'");
     await client.query("commit");
   } catch (error) {
-    await client.query("rollback");
+    releaseError = await rollbackQuietly(client);
     throw error;
   } finally {
-    client.release();
+    client.release(releaseError);
   }
 }
 
 // Признак того, что снимок неполон. Symbol, а не обычное поле: он не должен
 // попадать ни в JSON, ни в перебор ключей.
 const READ_ONLY = Symbol("readOnlySnapshot");
+
+// Базовое состояние строк, с которым снимок был прочитан из postgres (см.
+// snapshotRows). Запись снимка по нему идёт разностью: пишется только то,
+// что изменилось, удаляется только то, что снимок видел и потерял.
+// Параллельная запись соседа (чужая новая строка, свежий пароль, новая
+// сессия) не затирается, потому что в базе её просто не трогают.
+//
+// Symbol и enumerable: копия `{ ...db }` в обработчиках должна нести базу
+// дальше (иначе защита молча отключилась бы), а в JSON и Object.keys
+// символьный ключ не попадает.
+const BASE_ROWS = Symbol("baseRows");
 
 // Список колонок вынесен, потому что фаза вычисления скоупа читает те же
 // таблицы отдельным запросом, и разъехавшиеся списки дали бы разный скоуп на
@@ -1096,6 +1114,7 @@ async function readDb(options = {}) {
             person_id as "personId",
             body,
             tags,
+            author_user_id as "authorUserId",
             created_at as "createdAt"
           from manager_notes
           ${scope}
@@ -1146,7 +1165,7 @@ async function readDb(options = {}) {
       meetingLogResult.rowCount + meetingDraftsResult.rowCount + notesResult.rowCount +
       usersResult.rowCount + sessionsResult.rowCount;
 
-    return normalizeDb({
+    const rawDb = {
       people: peopleResult.rows,
       lprs: lprsResult.rows.map((row) => ({
         ...row,
@@ -1222,11 +1241,43 @@ async function readDb(options = {}) {
         createdAt: session.createdAt?.toISOString?.() || session.createdAt,
         expiresAt: session.expiresAt?.toISOString?.() || session.expiresAt
       }))
-    });
+    };
+    const db = normalizeDb(rawDb);
+
+    // База для записи разностью. Считается по сырым строкам, а не по
+    // результату normalizeDb: нормализация достраивает демо-фикстуры, которых
+    // в базе может не быть, и «база» из нормализованного снимка объявила бы
+    // их уже записанными — они бы никогда не доехали до таблиц. Только
+    // полное чтение с учётными данными: усечённый снимок (скоуп, без
+    // salt/password_hash) базой быть не может, его запись и так запрещена.
+    // Подписи считаются один раз здесь, снимок не клонируется.
+    if (!personIds && !omitCredentials) {
+      Object.defineProperty(db, BASE_ROWS, {
+        value: snapshotRows(rawDb, { surveySecretVersion }),
+        enumerable: true,
+        writable: true,
+        configurable: true
+      });
+    }
+    return db;
   }
 
   const parsed = JSON.parse(readFileSync(dataFile, "utf8"));
   return normalizeDb(parsed);
+}
+
+// ROLLBACK не должен затирать исходную ошибку записи: если откат сам упал
+// (соединение оборвано), наверх должна уйти первопричина, а не «Connection
+// terminated». Вторая ошибка логируется и возвращается — её передают в
+// client.release(), чтобы пул выбросил сломанное соединение.
+async function rollbackQuietly(client) {
+  try {
+    await client.query("ROLLBACK");
+    return undefined;
+  } catch (rollbackError) {
+    console.error("ROLLBACK не удался, соединение будет уничтожено:", rollbackError);
+    return rollbackError;
+  }
 }
 
 async function writeDb(db, options = {}) {
@@ -1241,20 +1292,27 @@ async function writeDb(db, options = {}) {
 
   if (storageMode === "postgres") {
     const client = await pgPool.connect();
+    // Не-undefined значение отдаётся в client.release(): соединение с
+    // неоткатившейся транзакцией возвращать в пул нельзя, его уничтожают.
+    let releaseError;
     try {
       await client.query("BEGIN");
       await syncWorkspace(client, normalized, {
         replaceAuth,
         pulseHistoryRetentionDays,
         surveySecretVersion,
-        checkVersions: options.checkVersions === true
+        checkVersions: options.checkVersions === true,
+        // Базовое состояние, с которым снимок был прочитан. Есть только у
+        // снимков из полного readDb(); без него syncWorkspace работает как
+        // раньше (полный снимок: отсутствие строки = удаление).
+        base: db?.[BASE_ROWS]
       });
       await client.query("COMMIT");
     } catch (error) {
-      await client.query("ROLLBACK");
+      releaseError = await rollbackQuietly(client);
       throw error;
     } finally {
-      client.release();
+      client.release(releaseError);
     }
     return;
   }
@@ -1359,17 +1417,24 @@ async function upsertMeetingDraft(client, personId, body) {
 async function deletePersonById(personId) {
   if (storageMode === "postgres") {
     const client = await pgPool.connect();
+    let releaseError;
     try {
       await client.query("BEGIN");
       await client.query("delete from sessions where user_id in (select id from users where person_id = $1)", [personId]);
       await client.query("delete from users where person_id = $1", [personId]);
+      // Именные ответы на опросы удаляются вместе с человеком. FK
+      // survey_responses.person_id — on delete set null: без явного удаления
+      // ответ остался бы в базе обезличенным, но с полным текстом, то есть
+      // «постоянное удаление» ничего бы не удаляло. Анонимные ответы с
+      // person_id не связаны и не затрагиваются.
+      await client.query("delete from survey_responses where person_id = $1", [personId]);
       await client.query("delete from people where id = $1", [personId]);
       await client.query("COMMIT");
     } catch (error) {
-      await client.query("ROLLBACK");
+      releaseError = await rollbackQuietly(client);
       throw error;
     } finally {
-      client.release();
+      client.release(releaseError);
     }
     return readDb();
   }
@@ -1396,6 +1461,37 @@ async function deletePersonById(personId) {
   await writeDb(db);
   return readDb();
 }
+
+// Журнал аудита: кто что сделал с учётками, людьми и опросами. Пишется после
+// успешной операции и «по возможности»: сбой журнала (недоступна таблица,
+// таймаут) логируется, но не должен откатывать и ронять уже выполненное
+// действие — пользователь не виноват, что журнал недоступен. Содержимое
+// заметок, ответов и пароли сюда не попадают, только идентификаторы и
+// метаданные. В файловом режиме журнала нет: это режим локальной разработки.
+async function recordAudit(actor, action, targetType = null, targetId = null, details = {}) {
+  if (storageMode !== "postgres" || !pgPool) return;
+  try {
+    await pgPool.query(
+      `
+        insert into audit_log (actor_user_id, actor_username, action, target_type, target_id, details)
+        values ($1, $2, $3, $4, $5, $6::jsonb)
+      `,
+      [
+        actor?.id || null,
+        actor?.username || null,
+        action,
+        targetType,
+        targetId == null ? null : String(targetId),
+        JSON.stringify(details || {})
+      ]
+    );
+  } catch (error) {
+    console.error(`Не удалось записать в журнал аудита (${action}):`, error.message);
+  }
+}
+
+const AUDIT_DEFAULT_LIMIT = 100;
+const AUDIT_MAX_LIMIT = 500;
 
 function publicUser(user) {
   return {
@@ -1449,9 +1545,9 @@ function validateProductionSecrets() {
   if (appEnv !== "local") {
     if (!adminPassword) fail("ADMIN_PASSWORD обязателен вне local. Отказываюсь стартовать без пароля администратора.");
     if (adminPassword.length < 12) fail("ADMIN_PASSWORD короче 12 символов.");
-    if (BURNED_SECRETS.has(adminPassword)) fail("ADMIN_PASSWORD входит в список скомпрометированных значений.");
+    if (isBurnedSecret(adminPassword)) fail("ADMIN_PASSWORD входит в список скомпрометированных значений.");
     if (!surveyResponseSecret) fail("SURVEY_RESPONSE_SECRET обязателен вне local.");
-    if (BURNED_SECRETS.has(surveyResponseSecret)) fail("SURVEY_RESPONSE_SECRET входит в список скомпрометированных значений.");
+    if (isBurnedSecret(surveyResponseSecret)) fail("SURVEY_RESPONSE_SECRET входит в список скомпрометированных значений.");
     if (surveyResponseSecret === adminPassword) {
       fail("SURVEY_RESPONSE_SECRET не может совпадать с ADMIN_PASSWORD: это делает анонимность опросов фиктивной.");
     }
@@ -1477,44 +1573,61 @@ function validateProductionSecrets() {
 }
 
 function clientAddress(request) {
-  if (trustProxy) {
-    const forwardedFor = String(request.headers["x-forwarded-for"] || "").split(",")[0].trim();
-    if (forwardedFor) return forwardedFor;
-  }
-  return request.socket?.remoteAddress || "unknown";
+  return resolveClientAddress(request, { trustProxy, trustedProxyHops });
 }
 
+// Username в ключе обрезается: иначе мегабайтное имя раздувало бы память
+// счётчиков. Глобального счётчика только по username нет намеренно: любой
+// смог бы заблокировать чужую учётку, просто набирая её логин с неверным
+// паролем. Защита от перебора по username — счётчик пары ip:username плюс
+// счётчик по IP.
 function loginAttemptKey(request, username) {
-  return `${clientAddress(request)}:${String(username || "").toLowerCase()}`;
+  return `${clientAddress(request)}:${String(username || "").trim().toLowerCase().slice(0, 100)}`;
 }
 
-function pruneLoginAttempt(entry, now = Date.now()) {
+function liveLoginAttempt(map, key, now = Date.now()) {
+  const entry = map.get(key);
   if (!entry || entry.resetAt <= now) return { count: 0, resetAt: now + failedLoginWindowMs };
   return entry;
 }
 
+// Map счётчиков ограничен по размеру: с подменой адресов и имён его иначе
+// можно раздувать до исчерпания памяти. Сначала выбрасываем просроченные,
+// затем самые старые (Map хранит порядок вставки).
+function makeRoomForLoginAttempt(map, key) {
+  if (map.has(key) || map.size < maxLoginAttemptEntries) return;
+  const now = Date.now();
+  for (const [oldKey, entry] of map) {
+    if (entry.resetAt <= now) map.delete(oldKey);
+  }
+  for (const oldKey of map.keys()) {
+    if (map.size < maxLoginAttemptEntries) break;
+    map.delete(oldKey);
+  }
+}
+
 function isLoginRateLimited(request, username) {
-  const userKey = loginAttemptKey(request, username);
-  const ipKey = clientAddress(request);
-  const userEntry = pruneLoginAttempt(failedLogins.get(userKey));
-  const ipEntry = pruneLoginAttempt(failedLoginsByIp.get(ipKey));
-  failedLogins.set(userKey, userEntry);
-  failedLoginsByIp.set(ipKey, ipEntry);
+  const userEntry = liveLoginAttempt(failedLogins, loginAttemptKey(request, username));
+  const ipEntry = liveLoginAttempt(failedLoginsByIp, clientAddress(request));
   return userEntry.count >= maxFailedLoginAttempts || ipEntry.count >= maxFailedLoginAttemptsPerIp;
 }
 
 function recordFailedLogin(request, username) {
   const userKey = loginAttemptKey(request, username);
   const ipKey = clientAddress(request);
-  const userEntry = pruneLoginAttempt(failedLogins.get(userKey));
-  const ipEntry = pruneLoginAttempt(failedLoginsByIp.get(ipKey));
+  const userEntry = liveLoginAttempt(failedLogins, userKey);
+  const ipEntry = liveLoginAttempt(failedLoginsByIp, ipKey);
+  makeRoomForLoginAttempt(failedLogins, userKey);
+  makeRoomForLoginAttempt(failedLoginsByIp, ipKey);
   failedLogins.set(userKey, { count: userEntry.count + 1, resetAt: userEntry.resetAt });
   failedLoginsByIp.set(ipKey, { count: ipEntry.count + 1, resetAt: ipEntry.resetAt });
 }
 
+// Успешный вход сбрасывает только пару ip:username. Счётчик по IP не
+// трогаем: иначе атакующий с одним валидным логином обнулял бы свой лимит
+// перебора чужих учёток после каждой удачной попытки.
 function clearFailedLogins(request, username) {
   failedLogins.delete(loginAttemptKey(request, username));
-  failedLoginsByIp.delete(clientAddress(request));
 }
 
 function pruneRateLimitMaps() {
@@ -1557,6 +1670,10 @@ function applySecurityHeaders(response) {
   for (const [name, value] of Object.entries(securityHeaders)) {
     response.setHeader(name, value);
   }
+  // Только в production: на http в local заголовок игнорируется, а на
+  // localhost с https он закрепил бы https для всех локальных сервисов.
+  // Без includeSubDomains и preload: их не отозвать, пока не истечёт срок.
+  if (isProduction) response.setHeader("Strict-Transport-Security", "max-age=15552000");
 }
 
 function sendJson(response, status, payload, headers = {}) {
@@ -1569,41 +1686,6 @@ function sendJson(response, status, payload, headers = {}) {
   response.end(JSON.stringify(payload));
 }
 
-function readJson(request) {
-  return new Promise((resolve, reject) => {
-    let body = "";
-    let settled = false;
-    request.on("data", (chunk) => {
-      if (settled) return;
-      body += chunk;
-      if (body.length > 1_000_000) {
-        settled = true;
-        request.destroy();
-        reject(new HttpError(413, "Слишком большой запрос"));
-      }
-    });
-    request.on("end", () => {
-      if (settled) return;
-      settled = true;
-      if (!body) {
-        resolve({});
-        return;
-      }
-
-      try {
-        resolve(JSON.parse(body));
-      } catch (error) {
-        reject(new HttpError(400, "Некорректный JSON"));
-      }
-    });
-    request.on("error", (error) => {
-      if (settled) return;
-      settled = true;
-      reject(error);
-    });
-  });
-}
-
 // withDb: false для endpoint'ов, которым рабочее пространство не нужно.
 // Раньше выбора не было — каждый запрос вычитывал базу целиком, включая
 // таблицу users с salt и password_hash, ради проверки одной куки.
@@ -1612,8 +1694,10 @@ async function getAuthContext(request, options = {}) {
   const sessionId = parseCookies(request.headers.cookie).th_session;
 
   if (storageMode === "postgres") {
+    // Без куки или с невалидной сессией базу не читаем: анонимный запрос
+    // иначе вычитывал все таблицы до ответа 401.
     const auth = await findSessionUser(pgPool, sessionId);
-    if (!auth) return { db: withDb ? await readDb() : null, user: null, session: null };
+    if (!auth) return { db: null, user: null, session: null };
     return { db: withDb ? await readDb() : null, user: auth.user, session: auth.session };
   }
 
@@ -1769,8 +1853,18 @@ function surveyOwner(db, survey) {
   return db.users.find((user) => user.id === survey.ownerUserId) || null;
 }
 
+// Владелец указан, а такой учётки уже нет: лид удалён. Раньше такой опрос
+// выпадал в ветку «без владельца» и становился доступен всей организации,
+// хотя создавался для одной команды. Теперь аудитория пуста, опрос видит и
+// ведёт только администратор платформы. Опрос, у которого владельца не было
+// вовсе (старые данные), работает как раньше.
+function isOrphanSurvey(db, survey) {
+  return Boolean(survey?.ownerUserId) && !surveyOwner(db, survey);
+}
+
 function surveyAudiencePersonIds(db, survey) {
   if (survey?.isDemoSeed) return new Set(["demo-sre"]);
+  if (isOrphanSurvey(db, survey)) return new Set();
   const owner = surveyOwner(db, survey);
   if (!owner || isPlatformAdmin(owner)) {
     return new Set(
@@ -1798,6 +1892,9 @@ function canAccessSurvey(db, user, survey) {
   const audienceIds = surveyAudiencePersonIds(db, survey);
   if (isAdmin(user)) {
     if (isPlatformAdmin(user)) return true;
+    // Сиротский опрос не открывается и бывшим коллегам владельца: пустая
+    // аудитория уже отсекает их, а явная проверка страхует от правки выше.
+    if (isOrphanSurvey(db, survey)) return false;
     return survey.ownerUserId === user.id || hasAnyPersonId(scopedPersonIds(db, user), audienceIds);
   }
 
@@ -1807,6 +1904,7 @@ function canAccessSurvey(db, user, survey) {
 function canManageSurvey(db, user, survey) {
   if (!survey || survey.isTemplate || !isAdmin(user)) return false;
   if (isPlatformAdmin(user)) return !survey.isDemoSeed;
+  if (isOrphanSurvey(db, survey)) return false;
   return survey.ownerUserId === user.id;
 }
 
@@ -1825,8 +1923,31 @@ function surveyRespondentHash(user, survey) {
     .digest("hex");
 }
 
+// Оценочные тексты лида о человеке. Участнику они не отдаются: это не данные
+// о нём для него, а рабочие формулировки руководителя (performance review,
+// план роста), и их утечка в ответ GET/POST — прямая цена за то, что person
+// отдавался целиком. managerFocus остаётся: он показывается в общем виде
+// встречи.
+function withoutLeadNarratives(person) {
+  const { performanceNarrative, growthNarrative, ...rest } = person;
+  return rest;
+}
+
+// Приватная заметка лида видна автору и администратору платформы. Заметка без
+// автора (создана до появления author_user_id) считается общей для лидов
+// скоупа — так было раньше, и молча прятать старые записи нельзя. Скоуп по
+// человеку проверяет вызывающий код.
+function canAccessManagerNote(user, note) {
+  if (isPlatformAdmin(user)) return true;
+  return !note.authorUserId || note.authorUserId === user.id;
+}
+
 function scopeWorkspace(db, user) {
   const ids = scopedPersonIds(db, user);
+  // Права лида на оценочные данные. Демо-пользователь исключён явно: он
+  // работает с лидовым демо-контентом как участник и не должен видеть
+  // черновики оценок и нарративы, даже если его роль когда-нибудь поменяют.
+  const seesLeadData = isAdmin(user) && !isDemoUser(user);
   const pickObject = (source) =>
     Object.fromEntries(Object.entries(source || {}).filter(([personId]) => ids.has(personId)));
 
@@ -1885,12 +2006,17 @@ function scopeWorkspace(db, user) {
   });
 
   return {
-    people: db.people.filter((person) => ids.has(person.id)),
+    people: db.people
+      .filter((person) => ids.has(person.id))
+      .map((person) => (seesLeadData ? person : withoutLeadNarratives(person))),
     lprs: (db.lprs || []).filter((lpr) => ids.has(lpr.personId)),
     cards: db.cards.filter((card) => ids.has(card.personId)),
     actions: db.actions.filter((action) => ids.has(action.personId)),
     goals: (db.goals || []).filter((goal) => ids.has(goal.personId)),
-    competencyAssessments: (db.competencyAssessments || []).filter((assessment) => ids.has(assessment.personId)),
+    // Участник видит только утверждённые оценки: черновик — рабочий материал лида.
+    competencyAssessments: (db.competencyAssessments || []).filter(
+      (assessment) => ids.has(assessment.personId) && (seesLeadData || assessment.status === "validated")
+    ),
     prep: pickObject(db.prep),
     pulse: pickObject(db.pulse),
     pulseHistory: (db.pulseHistory || []).filter((entry) => ids.has(entry.personId)),
@@ -1900,12 +2026,12 @@ function scopeWorkspace(db, user) {
       title: s.title,
       description: s.description,
       anonymous: s.anonymous,
-      anonymousMinResponses: s.anonymousMinResponses,
+      anonymousMinResponses: surveyMinResponses(s),
       questions: s.questions
     })),
     notes: isAdmin(user) ? pickObject(db.notes) : {},
     managerNotes: isAdmin(user)
-      ? (db.managerNotes || []).filter((note) => ids.has(note.personId))
+      ? (db.managerNotes || []).filter((note) => ids.has(note.personId) && canAccessManagerNote(user, note))
       : [],
     oncallLoad: (db.oncallLoad || []).filter((entry) => ids.has(entry.personId)),
     meetingLog: (db.meetingLog || []).filter((entry) => ids.has(entry.personId)),
@@ -1926,29 +2052,49 @@ function scopeWorkspace(db, user) {
   };
 }
 
+// Эффективный порог анонимного опроса. Меньше трёх не бывает: при двух
+// ответах каждый респондент знает, что второй — это все остальные, и по
+// своему ответу вычитает чужой. Math.max нужен для опросов, сохранённых до
+// ужесточения (порог 2 в базе): sanitizeSurvey их тоже поднимет, но агрегат
+// не должен зависеть от того, что чтение уже прошло через нормализацию.
+function surveyMinResponses(survey) {
+  return Math.max(3, Number(survey?.anonymousMinResponses) || 3);
+}
+
 function buildSurveyAggregate(survey, responses) {
   const totals = { count: responses.length, perQuestion: {} };
-  if (survey.anonymous && responses.length < (survey.anonymousMinResponses || 3)) {
+  const minResponses = surveyMinResponses(survey);
+  if (survey.anonymous && responses.length < minResponses) {
     return {
       ...totals,
       hidden: true,
-      minResponses: survey.anonymousMinResponses || 3
+      minResponses
     };
   }
+  // Общего порога мало. Вопрос необязательный, и на него могли ответить двое
+  // из десяти: распределение по двум ответам раскрывает их так же, как
+  // опрос из двух человек. Поэтому порог проверяется на каждый вопрос по
+  // числу ответивших именно на него, для всех типов вопросов.
+  const setQuestion = (question, count, build) => {
+    totals.perQuestion[question.id] =
+      survey.anonymous && count < minResponses ? { count, hidden: true, minResponses } : build();
+  };
   for (const question of survey.questions) {
     if (question.type === "scale") {
       const values = responses
         .map((response) => response.answers?.[question.id]?.value)
         .filter((value) => typeof value === "number");
-      const distribution = Array.from({ length: 10 }, (_, i) => ({ label: String(i + 1), value: 0 }));
-      values.forEach((v) => {
-        if (v >= 1 && v <= 10) distribution[v - 1].value += 1;
+      setQuestion(question, values.length, () => {
+        const distribution = Array.from({ length: 10 }, (_, i) => ({ label: String(i + 1), value: 0 }));
+        values.forEach((v) => {
+          if (v >= 1 && v <= 10) distribution[v - 1].value += 1;
+        });
+        return {
+          count: values.length,
+          avg: values.length ? +(values.reduce((a, b) => a + b, 0) / values.length).toFixed(1) : 0,
+          distribution
+        };
       });
-      totals.perQuestion[question.id] = {
-        count: values.length,
-        avg: values.length ? +(values.reduce((a, b) => a + b, 0) / values.length).toFixed(1) : 0,
-        distribution
-      };
     } else if (question.type === "single") {
       const counts = Object.fromEntries(question.options.map((option) => [option, 0]));
       let answered = 0;
@@ -1959,10 +2105,10 @@ function buildSurveyAggregate(survey, responses) {
           answered += 1;
         }
       }
-      totals.perQuestion[question.id] = {
+      setQuestion(question, answered, () => ({
         count: answered,
         distribution: question.options.map((option) => ({ label: option, value: counts[option] || 0 }))
-      };
+      }));
     } else if (question.type === "multi") {
       const counts = Object.fromEntries(question.options.map((option) => [option, 0]));
       let answered = 0;
@@ -1975,29 +2121,29 @@ function buildSurveyAggregate(survey, responses) {
           }
         }
       }
-      totals.perQuestion[question.id] = {
+      setQuestion(question, answered, () => ({
         count: answered,
         distribution: question.options.map((option) => ({ label: option, value: counts[option] || 0 }))
-      };
+      }));
     } else if (question.type === "text") {
       const texts = responses
         .map((response) => response.answers?.[question.id]?.value)
         .filter((value) => typeof value === "string" && value.length);
-      totals.perQuestion[question.id] = {
+      setQuestion(question, texts.length, () => ({
         count: texts.length,
         redacted: survey.anonymous,
         samples: survey.anonymous ? [] : texts.slice(0, 30)
-      };
+      }));
     } else if (question.type === "date") {
       const dates = responses
         .map((response) => response.answers?.[question.id]?.value)
         .filter((value) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value))
         .sort();
-      totals.perQuestion[question.id] = {
+      setQuestion(question, dates.length, () => ({
         count: dates.length,
         redacted: survey.anonymous,
         samples: survey.anonymous ? [] : dates.slice(0, 30)
-      };
+      }));
     }
   }
   return totals;
@@ -2067,9 +2213,11 @@ function sanitizeSurvey(survey, users = []) {
     .map((q, i) => sanitizeSurveyQuestion(q, `q${i + 1}`))
     .filter((q) => q.prompt.length > 0);
   const id = String(survey?.id || makeId("survey"));
-  const ownerUserId = survey?.ownerUserId && users.some((user) => user.id === survey.ownerUserId)
-    ? String(survey.ownerUserId)
-    : null;
+  // Владелец сохраняется, даже если такой учётки уже нет: «владелец указан,
+  // но не найден» — это сиротский опрос (см. isOrphanSurvey), а не опрос без
+  // владельца. Раньше id молча обнулялся, и опрос удалённого лида открывался
+  // всей организации. Параметр users оставлен ради вызывающих.
+  const ownerUserId = survey?.ownerUserId ? String(survey.ownerUserId).slice(0, 128) : null;
   return {
     id,
     title: String(survey?.title || "").slice(0, 200),
@@ -2081,7 +2229,8 @@ function sanitizeSurvey(survey, users = []) {
     isDemoSeed: Boolean(survey?.isDemoSeed) || demoSeedSurveyIds.has(id),
     isTemplate: Boolean(survey?.isTemplate),
     ownerUserId,
-    anonymousMinResponses: clampInt(survey?.anonymousMinResponses, 2, 10, 3),
+    // Нижняя граница 3, а не 2: см. surveyMinResponses.
+    anonymousMinResponses: clampInt(survey?.anonymousMinResponses, 3, 10, 3),
     createdAt:
       typeof survey?.createdAt === "string" && survey.createdAt
         ? survey.createdAt
@@ -2177,7 +2326,11 @@ const managerNoteTags = [
   "decision"
 ];
 
-function sanitizeManagerNote(note, personIds) {
+// userIds — известные учётки: автор, которого уже нет, обнуляется (в postgres
+// то же делает FK on delete set null), и заметка становится общей для лидов
+// скоупа. Без набора (вызов из обработчика, где автор — текущий пользователь)
+// значение берётся как есть.
+function sanitizeManagerNote(note, personIds, userIds = null) {
   if (!note || !personIds.has(note.personId)) return null;
   const tags = Array.isArray(note.tags)
     ? note.tags
@@ -2192,6 +2345,10 @@ function sanitizeManagerNote(note, personIds) {
     personId: String(note.personId),
     body,
     tags,
+    authorUserId:
+      typeof note.authorUserId === "string" && note.authorUserId && (!userIds || userIds.has(note.authorUserId))
+        ? note.authorUserId
+        : null,
     createdAt:
       typeof note.createdAt === "string" && note.createdAt
         ? note.createdAt
@@ -2279,6 +2436,7 @@ function applyMeetingStatePatch(db, user, personId, body = {}) {
 async function persistMeetingStatePatch(db, personId, state, changed) {
   if (storageMode === "postgres") {
     const client = await pgPool.connect();
+    let releaseError;
     try {
       await client.query("BEGIN");
       if (changed.prep) {
@@ -2294,10 +2452,10 @@ async function persistMeetingStatePatch(db, personId, state, changed) {
       }
       await client.query("COMMIT");
     } catch (error) {
-      await client.query("ROLLBACK");
+      releaseError = await rollbackQuietly(client);
       throw error;
     } finally {
-      client.release();
+      client.release(releaseError);
     }
     return;
   }
@@ -2313,7 +2471,7 @@ function sanitizeLpr(lpr, personId) {
     focus: String(lpr.focus || "").slice(0, 2000),
     status: lprStatuses.includes(lpr.status) ? lpr.status : "active",
     createdAt: typeof lpr.createdAt === "string" && lpr.createdAt ? lpr.createdAt : new Date().toISOString(),
-    updatedAt: typeof lpr.updatedAt === "string" && lpr.updatedAt ? lpr.updatedAt : new Date().toISOString()
+    updatedAt: typeof lpr.updatedAt === "string" && lpr.updatedAt ? lpr.updatedAt : null
   };
 }
 
@@ -2431,8 +2589,45 @@ function sanitizeCompetencyAssessment(assessment = {}, personId) {
   };
 }
 
+// knownIds — идентификаторы, которые клиент видел (получил с сервера или сам
+// создал и успешно сохранил). Снимок от клиента без строки означает «удалил»
+// только для строки, которую клиент видел. Строка, появившаяся в базе уже
+// после его чтения (её создал сосед), ему неизвестна: её отсутствие в теле —
+// не удаление, и без этой защиты каждое сохранение стирало бы чужие новые
+// карточки. Без knownIds (старые клиенты, API-тесты) остаётся прежняя
+// семантика «нет в теле — удалено».
+//
+// Таблица отсутствует в результате, если поле не прислано или не массив:
+// тогда для неё действует прежнее поведение.
+const KNOWN_IDS_TABLES = ["cards", "actions", "goals", "lprs", "competencyAssessments"];
+const KNOWN_IDS_LIMIT = 20000;
+const KNOWN_ID_MAX_LENGTH = 200;
+
+function sanitizeKnownIds(raw) {
+  const known = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return known;
+  for (const table of KNOWN_IDS_TABLES) {
+    if (!Array.isArray(raw[table])) continue;
+    const idsForTable = new Set();
+    // Лимит на размер входа, а не на число принятых: мусор в начале списка не
+    // должен позволять провести через проверку 20000 элементов хвоста.
+    for (const id of raw[table].slice(0, KNOWN_IDS_LIMIT)) {
+      if (typeof id === "string" && id.length <= KNOWN_ID_MAX_LENGTH) idsForTable.add(id);
+    }
+    known[table] = idsForTable;
+  }
+  return known;
+}
+
+// Строку из базы, которой нет в теле, надо оставить: клиент её не видел.
+function keepUnseen(known, table, row) {
+  return Boolean(known[table]) && !known[table].has(String(row.id));
+}
+
 function mergeWorkspaceUpdate(db, user, incoming) {
   const ids = scopedPersonIds(db, user);
+  const known = sanitizeKnownIds(incoming.knownIds);
+  const idsOf = (rows) => new Set(rows.map((row) => String(row.id)));
   const incomingHasLprs = Array.isArray(incoming.lprs);
   const incomingLprs = incomingHasLprs ? incoming.lprs : [];
   const incomingCards = Array.isArray(incoming.cards) ? incoming.cards : [];
@@ -2446,33 +2641,42 @@ function mergeWorkspaceUpdate(db, user, incoming) {
     const visibleLprs = (incomingHasLprs ? incomingLprs : (db.lprs || []).filter((lpr) => ids.has(lpr.personId)))
       .filter((lpr) => ids.has(lpr.personId))
       .map((lpr) => sanitizeLpr(lpr, lpr.personId));
-    const visibleLprIds = new Set(visibleLprs.map((lpr) => lpr.id));
+    // Видимое администратору из базы, чего нет в теле и клиент об этом не
+    // знал (см. sanitizeKnownIds), остаётся как есть.
+    const unseenOf = (table, rows, sent) =>
+      rows.filter((row) => ids.has(row.personId) && !sent.has(String(row.id)) && keepUnseen(known, table, row));
+    const unseenLprs = incomingHasLprs ? unseenOf("lprs", db.lprs || [], idsOf(visibleLprs)) : [];
+    // Сохранённые ЛПР тоже считаются существующими: карточка, ссылающаяся на
+    // ЛПР, которого клиент не видел, не должна терять lprId.
+    const visibleLprIds = new Set([...visibleLprs, ...unseenLprs].map((lpr) => lpr.id));
     const hiddenCards = db.cards.filter((card) => !ids.has(card.personId));
     const hiddenActions = db.actions.filter((action) => !ids.has(action.personId));
     const hiddenGoals = (db.goals || []).filter((goal) => !ids.has(goal.personId));
     const hiddenAssessments = (db.competencyAssessments || []).filter((assessment) => !ids.has(assessment.personId));
-    db.lprs = [...hiddenLprs, ...visibleLprs];
-    db.cards = incomingCards
+    db.lprs = [...hiddenLprs, ...unseenLprs, ...visibleLprs];
+    const nextCards = incomingCards
       .filter((card) => ids.has(card.personId))
       .map((card) => sanitizeCard(card, card.personId, null, visibleLprIds));
-    db.cards = [...hiddenCards, ...db.cards];
-    db.actions = incomingActions
+    db.cards = [...hiddenCards, ...unseenOf("cards", db.cards, idsOf(nextCards)), ...nextCards];
+    const nextActions = incomingActions
       .filter((action) => ids.has(action.personId))
       .map((action) => sanitizeAction(action, action.personId));
-    db.actions = [...hiddenActions, ...db.actions];
-    db.goals = [
-      ...hiddenGoals,
-      ...incomingGoals
-        .filter((goal) => ids.has(goal.personId))
-        .map((goal) => sanitizeGoal(goal, goal.personId, visibleLprIds))
-    ];
+    db.actions = [...hiddenActions, ...unseenOf("actions", db.actions, idsOf(nextActions)), ...nextActions];
+    const nextGoals = incomingGoals
+      .filter((goal) => ids.has(goal.personId))
+      .map((goal) => sanitizeGoal(goal, goal.personId, visibleLprIds));
+    db.goals = [...hiddenGoals, ...unseenOf("goals", db.goals || [], idsOf(nextGoals)), ...nextGoals];
+    const nextAssessments = (incomingHasAssessments
+      ? incomingAssessments
+      : (db.competencyAssessments || []).filter((assessment) => ids.has(assessment.personId)))
+      .filter((assessment) => assessment && ids.has(assessment.personId))
+      .map((assessment) => sanitizeCompetencyAssessment(assessment, assessment.personId));
     db.competencyAssessments = [
       ...hiddenAssessments,
       ...(incomingHasAssessments
-        ? incomingAssessments
-        : (db.competencyAssessments || []).filter((assessment) => ids.has(assessment.personId)))
-        .filter((assessment) => assessment && ids.has(assessment.personId))
-        .map((assessment) => sanitizeCompetencyAssessment(assessment, assessment.personId))
+        ? unseenOf("competencyAssessments", db.competencyAssessments || [], idsOf(nextAssessments))
+        : []),
+      ...nextAssessments
     ];
     db.prep = mergePrepUpdate(db.prep, incoming.prep, ids, adminWritablePrepKeys);
     db.pulse = mergePulseUpdate(db.pulse, incoming.pulse, ids);
@@ -2489,8 +2693,13 @@ function mergeWorkspaceUpdate(db, user, incoming) {
   const personLprs = (incomingHasLprs ? incomingLprs : (db.lprs || []).filter((lpr) => lpr.personId === personId))
     .filter((lpr) => lpr.personId === personId)
     .map((lpr) => sanitizeLpr(lpr, personId));
-  const personLprIds = new Set(personLprs.map((lpr) => lpr.id));
-  db.lprs = [...otherLprs, ...personLprs];
+  const sentLprIds = idsOf(personLprs);
+  // ЛПР сотрудника, которого он не видел (создан параллельно), остаётся.
+  const unseenLprs = incomingHasLprs
+    ? (db.lprs || []).filter((lpr) => lpr.personId === personId && !sentLprIds.has(String(lpr.id)) && keepUnseen(known, "lprs", lpr))
+    : [];
+  const personLprIds = new Set([...personLprs, ...unseenLprs].map((lpr) => lpr.id));
+  db.lprs = [...otherLprs, ...unseenLprs, ...personLprs];
 
   const nextCardsById = new Map(incomingCards.filter((card) => card.personId === personId).map((card) => [String(card.id), card]));
   const preservedCards = [];
@@ -2514,6 +2723,8 @@ function mergeWorkspaceUpdate(db, user, incoming) {
     if (incomingCard) {
       employeeCardIds.add(String(card.id));
       preservedCards.push(sanitizeCard(incomingCard, personId, "employee", personLprIds));
+    } else if (keepUnseen(known, "cards", card)) {
+      preservedCards.push(card);
     }
   }
 
@@ -2543,6 +2754,8 @@ function mergeWorkspaceUpdate(db, user, incoming) {
     if (incomingAction) {
       employeeActionIds.add(String(action.id));
       preservedActions.push(sanitizeAction(incomingAction, personId, "employee"));
+    } else if (keepUnseen(known, "actions", action)) {
+      preservedActions.push(action);
     }
   }
 
@@ -2557,7 +2770,11 @@ function mergeWorkspaceUpdate(db, user, incoming) {
   const personGoals = incomingGoals
     .filter((goal) => goal.personId === personId)
     .map((goal) => sanitizeGoal(goal, personId, personLprIds));
-  db.goals = [...otherGoals, ...personGoals];
+  const sentGoalIds = idsOf(personGoals);
+  const unseenGoals = (db.goals || []).filter(
+    (goal) => goal.personId === personId && !sentGoalIds.has(String(goal.id)) && keepUnseen(known, "goals", goal)
+  );
+  db.goals = [...otherGoals, ...unseenGoals, ...personGoals];
 
   db.prep[personId] = sanitizePrepPatch(db.prep[personId] || {}, incoming.prep?.[personId] || {}, employeeWritablePrepKeys);
   db.pulse[personId] = sanitizePulsePatch(db.pulse[personId] || {}, incoming.pulse?.[personId] || {});
@@ -2584,7 +2801,7 @@ async function handleApi(request, response) {
         : (await readDb()).users.find((item) => item.username.toLowerCase() === username.toLowerCase());
     // Run scrypt unconditionally so response time does not reveal whether the
     // username exists.
-    const passwordOk = verifyPassword(String(body.password || ""), user || dummyPasswordRecord);
+    const passwordOk = await verifyPassword(String(body.password || ""), user || dummyPasswordRecord);
 
     if (!user || !passwordOk) {
       recordFailedLogin(request, username);
@@ -2674,12 +2891,26 @@ async function handleApi(request, response) {
       return;
     }
     const body = await readJson(request);
+    // Тот же лимитер, что у входа: иначе украденная сессия позволяла бы
+    // подбирать текущий пароль без ограничений.
+    if (isLoginRateLimited(request, context.user.username)) {
+      sendJson(response, 429, { error: "Слишком много попыток входа. Попробуйте позже" });
+      return;
+    }
+    const currentPassword = String(body.currentPassword || "");
+    // 400, а не 401: клиент разлогинивает по тексту «авторизация» в ошибке.
+    if (!currentPassword || !(await verifyPassword(currentPassword, context.user))) {
+      recordFailedLogin(request, context.user.username);
+      sendJson(response, 400, { error: "Неверный текущий пароль" });
+      return;
+    }
+    clearFailedLogins(request, context.user.username);
     const password = String(body.password || "");
     if (password.length < 8) {
       sendJson(response, 400, { error: "Пароль должен быть не короче 8 символов" });
       return;
     }
-    const credentials = hashPassword(password);
+    const credentials = await hashPassword(password);
     Object.assign(context.user, credentials);
     if (storageMode === "postgres") {
       await updateUserPassword(pgPool, context.user.id, credentials);
@@ -2692,7 +2923,57 @@ async function handleApi(request, response) {
       );
       await writeDb(context.db);
     }
+    await recordAudit(context.user, "user.password_change", "user", context.user.id);
     sendJson(response, 200, { ok: true });
+    return;
+  }
+
+  // Журнал аудита читает только администратор платформы. Рабочее пространство
+  // не нужно, поэтому базу целиком не читаем. Пагинация по убыванию id:
+  // before — id последней записи предыдущей страницы.
+  if (request.method === "GET" && url.pathname === "/api/audit-log") {
+    const context = await requireAuth(request, response, { withDb: false });
+    if (!context) return;
+    if (!isPlatformAdmin(context.user)) {
+      sendJson(response, 403, { error: "Журнал аудита доступен только администратору платформы" });
+      return;
+    }
+    if (storageMode !== "postgres") {
+      sendJson(response, 200, { entries: [] });
+      return;
+    }
+    const rawLimit = Number(url.searchParams.get("limit"));
+    const limit = Number.isFinite(rawLimit) && rawLimit >= 1
+      ? Math.min(Math.floor(rawLimit), AUDIT_MAX_LIMIT)
+      : AUDIT_DEFAULT_LIMIT;
+    const rawBefore = url.searchParams.get("before");
+    if (rawBefore !== null && rawBefore !== "" && !/^\d{1,18}$/.test(rawBefore)) {
+      sendJson(response, 400, { error: "Некорректный параметр before" });
+      return;
+    }
+    const { rows } = await pgPool.query(
+      `
+        select id, at, actor_user_id, actor_username, action, target_type, target_id, details
+        from audit_log
+        where ($1::bigint is null or id < $1::bigint)
+        order by id desc
+        limit $2
+      `,
+      [rawBefore ? rawBefore : null, limit]
+    );
+    sendJson(response, 200, {
+      entries: rows.map((row) => ({
+        // bigserial приходит строкой; до 2^53 записей это безопасное число.
+        id: Number(row.id),
+        at: row.at instanceof Date ? row.at.toISOString() : row.at,
+        actorUserId: row.actor_user_id,
+        actorUsername: row.actor_username,
+        action: row.action,
+        targetType: row.target_type,
+        targetId: row.target_id,
+        details: row.details && typeof row.details === "object" ? row.details : {}
+      }))
+    });
     return;
   }
 
@@ -2837,11 +3118,16 @@ async function handleApi(request, response) {
         leadUserId: null,
         teamLabel: teamLabel.slice(0, 120),
         createdAt: new Date().toISOString(),
-        ...hashPassword(password)
+        ...(await hashPassword(password))
       };
 
       context.db.users.push(user);
       await writeDb(context.db);
+      await recordAudit(context.user, "user.create", "user", user.id, {
+        username: user.username,
+        role: user.role,
+        personId: user.personId
+      });
       sendJson(response, 201, {
         user: publicUser(user),
         person: person || null,
@@ -2923,11 +3209,17 @@ async function handleApi(request, response) {
       leadUserId,
       teamLabel: String(isPlainLead(context.user) ? callerTeamLabel || person.team : body.teamLabel || body.personTeam || person.team || "").slice(0, 120),
       createdAt: new Date().toISOString(),
-      ...hashPassword(password)
+      ...(await hashPassword(password))
     };
 
     context.db.users.push(user);
     await writeDb(context.db);
+    await recordAudit(context.user, "user.create", "user", user.id, {
+      username: user.username,
+      role: user.role,
+      personId: user.personId,
+      leadUserId: user.leadUserId
+    });
     // Return only what the caller needs: the freshly created user + person, plus
     // the scoped workspace. The duplicate `users` top-level array used to leak
     // the full directory into every create response and is not needed by the UI.
@@ -2971,9 +3263,11 @@ async function handleApi(request, response) {
       return;
     }
 
-    Object.assign(targetUser, hashPassword(password));
+    Object.assign(targetUser, await hashPassword(password));
     context.db.sessions = context.db.sessions.filter((session) => session.userId !== targetUser.id);
     await writeDb(context.db);
+    // В журнал идёт только id цели: ни пароль, ни его хэш туда не попадают.
+    await recordAudit(context.user, "user.password_reset", "user", targetUser.id, { username: targetUser.username });
     sendJson(response, 200, { user: publicUser(targetUser), users: scopedUsers(context.db, context.user) });
     return;
   }
@@ -2996,6 +3290,7 @@ async function handleApi(request, response) {
       return;
     }
     const body = await readJson(request);
+    const previousRole = target.role;
     if (["platform_admin", "lead", "employee"].includes(body.role)) {
       target.role = body.role;
     }
@@ -3011,6 +3306,13 @@ async function handleApi(request, response) {
       target.teamLabel = body.teamLabel.slice(0, 120);
     }
     await writeDb(context.db);
+    if (target.role !== previousRole) {
+      await recordAudit(context.user, "user.role_change", "user", target.id, {
+        username: target.username,
+        from: previousRole,
+        to: target.role
+      });
+    }
     const refreshed = await readDb();
     sendJson(response, 200, {
       user: publicUser(refreshed.users.find((u) => u.id === target.id)),
@@ -3047,6 +3349,12 @@ async function handleApi(request, response) {
     context.db.users = context.db.users.filter((item) => item.id !== targetUser.id);
     context.db.sessions = context.db.sessions.filter((session) => session.userId !== targetUser.id);
     await writeDb(context.db);
+    // Запись об удалении переживает пользователя: в audit_log нет внешних
+    // ключей, поэтому логин и роль фиксируются в details.
+    await recordAudit(context.user, "user.delete", "user", targetUser.id, {
+      username: targetUser.username,
+      role: targetUser.role
+    });
     sendJson(response, 200, { users: scopedUsers(context.db, context.user) });
     return;
   }
@@ -3193,20 +3501,30 @@ async function handleApi(request, response) {
     // goals, notes, oncall_load) so admin can fully restore them later. Linked
     // user accounts are removed because logins should not survive archiving.
     const permanent = url.searchParams.get("permanent") === "1";
+    // Учётки, которые уйдут вместе с человеком, считаем до удаления: после
+    // него их уже не назвать.
+    const removedUserIds = new Set(
+      context.db.users.filter((u) => u.personId === personId).map((u) => u.id)
+    );
     if (permanent) {
       const nextDb = await deletePersonById(personId);
+      await recordAudit(context.user, "person.delete_permanent", "person", personId, {
+        name: targetPerson.name,
+        removedUserIds: [...removedUserIds]
+      });
       sendJson(response, 200, { workspace: scopeWorkspace(nextDb, context.user) });
       return;
     }
 
     targetPerson.archivedAt = new Date().toISOString();
     // Remove logins linked to archived person so they can't sign in anymore.
-    const removedUserIds = new Set(
-      context.db.users.filter((u) => u.personId === personId).map((u) => u.id)
-    );
     context.db.users = context.db.users.filter((u) => u.personId !== personId);
     context.db.sessions = context.db.sessions.filter((s) => !removedUserIds.has(s.userId));
     await writeDb(context.db);
+    await recordAudit(context.user, "person.archive", "person", personId, {
+      name: targetPerson.name,
+      removedUserIds: [...removedUserIds]
+    });
     const refreshed = await readDb();
     sendJson(response, 200, { workspace: scopeWorkspace(refreshed, context.user) });
     return;
@@ -3228,6 +3546,7 @@ async function handleApi(request, response) {
     }
     target.archivedAt = null;
     await writeDb(context.db, { replaceAuth: false });
+    await recordAudit(context.user, "person.restore", "person", personId, { name: target.name });
     const refreshed = await readDb();
     sendJson(response, 200, { workspace: scopeWorkspace(refreshed, context.user) });
     return;
@@ -3299,6 +3618,9 @@ async function handleApi(request, response) {
         personId: body.personId,
         body: body.body,
         tags: body.tags,
+        // Автор берётся из сессии, а не из тела запроса: иначе заметку можно
+        // было бы записать от чужого имени.
+        authorUserId: context.user.id,
         createdAt: new Date().toISOString()
       },
       ids
@@ -3325,12 +3647,16 @@ async function handleApi(request, response) {
     const noteId = safeDecodeURIComponent(managerNoteMatch[1]);
     const ids = scopedPersonIds(context.db, context.user);
     const note = (context.db.managerNotes || []).find((item) => item.id === noteId);
-    if (!note || !ids.has(note.personId)) {
+    // Чужая заметка отвечает так же, как несуществующая: иначе по коду ответа
+    // можно было бы выяснить, что у коллеги есть заметка с таким id.
+    if (!note || !ids.has(note.personId) || !canAccessManagerNote(context.user, note)) {
       sendJson(response, 404, { error: "Заметка не найдена" });
       return;
     }
     context.db.managerNotes = (context.db.managerNotes || []).filter((note) => note.id !== noteId);
     await writeDb(context.db, { replaceAuth: false });
+    // Текст заметки в журнал не пишется.
+    await recordAudit(context.user, "manager_note.delete", "manager_note", noteId, { personId: note.personId });
     const refreshed = await readDb();
     sendJson(response, 200, { workspace: scopeWorkspace(refreshed, context.user) });
     return;
@@ -3409,6 +3735,9 @@ async function handleApi(request, response) {
       sendJson(response, 404, { error: "Опрос не найден" });
       return;
     }
+    const deletedResponseCount = (context.db.surveyResponses || []).filter(
+      (response) => response.surveyId === surveyId
+    ).length;
     // Admin delete is authoritative — even legacy demo-seed surveys are wiped so
     // they don't reappear after future reads of older workspace.json files.
     context.db.surveys = (context.db.surveys || []).filter((survey) => survey.id !== surveyId);
@@ -3416,6 +3745,11 @@ async function handleApi(request, response) {
     // Block seed re-injection for this id by replacing initialSurveys clone in DB
     // is not needed here: createSeedDb is only called on explicit /api/reset.
     await writeDb(context.db, { replaceAuth: false });
+    await recordAudit(context.user, "survey.delete", "survey", surveyId, {
+      title: survey.title,
+      anonymous: survey.anonymous,
+      responses: deletedResponseCount
+    });
     const refreshed = await readDb();
     sendJson(response, 200, { workspace: scopeWorkspace(refreshed, context.user) });
     return;
@@ -3527,7 +3861,9 @@ async function handleApi(request, response) {
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + sessionTtlMs).toISOString()
     };
-    nextDb.sessions = [session];
+    // В базе токен хранится хэшем (см. db/repositories/auth.js), в cookie
+    // уходит сырой. В файловом режиме хранится как есть.
+    nextDb.sessions = [storageMode === "postgres" ? { ...session, id: hashSessionToken(session.id) } : session];
     await writeDb(nextDb);
     sendJson(
       response,
@@ -3599,6 +3935,14 @@ async function handleHealth(pathname, request, response) {
       readRows: metrics.readRows,
       versionConflicts: metrics.versionConflicts
     });
+    return;
+  }
+
+  // /readyz: после SIGTERM инстанс должен выйти из ротации балансировщика
+  // раньше, чем перестанет принимать соединения. /healthz при этом остаётся
+  // 200 — процесс жив, и рестарт по liveness в разгар остановки не нужен.
+  if (shuttingDown) {
+    sendJson(response, 503, { status: "shutting_down" });
     return;
   }
 
@@ -3682,23 +4026,50 @@ const server = createServer((request, response) => {
     .pipe(response);
 });
 
+// Таймауты node:http должны быть больше, чем у прокси перед приложением
+// (обычно keep-alive 60 с): иначе сервер закрывает соединение первым, и
+// прокси получает обрыв на следующем запросе.
+server.keepAliveTimeout = 65_000;
+server.headersTimeout = 66_000;
+// Не меньше headersTimeout: общий срок приёма запроса включает приём заголовков.
+server.requestTimeout = 120_000;
+
 server.listen(port, "0.0.0.0", () => {
   console.log(`Team Health 1:1 is listening on ${port} (${appEnv})`);
 });
 
 const shutdownTimeoutMs = Number(process.env.SHUTDOWN_TIMEOUT_MS) || 10_000;
+// Пауза между «/readyz отвечает 503» и закрытием слушателя: балансировщику
+// нужно время, чтобы заметить 503 и перестать слать сюда новые запросы.
+// Без неё запросы, уже летящие к инстансу, получают connection refused.
+// Локально и в тестах паузы нет — не замедляем перезапуск и Playwright.
+const shutdownDrainMs = process.env.SHUTDOWN_DRAIN_MS !== undefined && process.env.SHUTDOWN_DRAIN_MS !== ""
+  ? Math.max(0, Number(process.env.SHUTDOWN_DRAIN_MS) || 0)
+  : isProduction
+    ? 3000
+    : 0;
 let shuttingDown = false;
 
-function shutdown(signal) {
+async function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`${signal} received, shutting down`);
 
+  // Таймер общий и стартует до паузы дренажа: дренаж входит в бюджет
+  // остановки, а не прибавляется к нему.
   const forceExit = setTimeout(() => {
     console.error(`Graceful shutdown exceeded ${shutdownTimeoutMs}ms, forcing exit`);
     process.exit(1);
   }, shutdownTimeoutMs);
   forceExit.unref();
+
+  // Не дольше половины бюджета: иначе при коротком SHUTDOWN_TIMEOUT_MS
+  // принудительный выход срабатывал бы раньше server.close(), и остановка
+  // всегда заканчивалась бы кодом 1 без закрытия соединений.
+  const drainMs = Math.min(shutdownDrainMs, shutdownTimeoutMs / 2);
+  if (drainMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, drainMs));
+  }
 
   server.close(async () => {
     try {

@@ -13,6 +13,7 @@ import { randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { isBurnedSecret } from "../lib/burned-secrets.js";
 
 const rootDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const envFile = join(rootDir, ".env");
@@ -26,18 +27,7 @@ const generate = () => randomBytes(24).toString("base64url");
 const MANAGED = ["ADMIN_PASSWORD", "SURVEY_RESPONSE_SECRET", "DEMO_PASSWORD", "PROD_ADMIN_PASSWORD"];
 const VOLUME_BOUND = ["POSTGRES_PASSWORD"];
 
-const WEAK = new Set([
-  "passwb121",
-  "admin",
-  "password",
-  "changeme",
-  "change-me-locally",
-  "local-survey-secret",
-  "test-survey-secret",
-  "demo",
-  "team_health",
-  ""
-]);
+
 
 function readEnv() {
   if (!existsSync(envFile)) {
@@ -119,7 +109,7 @@ function commandCheck() {
     // осознанное решение, а не упущение.
     if (key === "DEMO_PASSWORD" && appEnv === "local") continue;
 
-    const weak = WEAK.has(value) || value.length < 12;
+    const weak = isBurnedSecret(value) || value.length < 12;
     if (!weak) continue;
 
     // POSTGRES_PASSWORD в local — пароль контейнера на localhost, и его

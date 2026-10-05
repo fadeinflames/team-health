@@ -567,14 +567,14 @@ test("auth, admin workflow, and employee data isolation work", async ({ page, re
   const refreshedLeadWorkspace = await (await leadApi.get("/api/workspace")).json();
   const refreshedSurvey = refreshedLeadWorkspace.surveys.find((survey) => survey.id === coreSurvey.id);
   expect(refreshedSurvey.responseCount).toBe(2);
-  expect(refreshedSurvey.aggregate.hidden).toBeFalsy();
-  expect(refreshedSurvey.aggregate.perQuestion.q2).toEqual(
-    expect.objectContaining({
-      count: 2,
-      redacted: true,
-      samples: []
-    })
-  );
+  // D2: порог анонимного опроса не ниже 3, поэтому порог 2 из запроса
+  // поднимается до 3, а два ответа остаются скрытыми целиком. Показ агрегата
+  // с тремя ответами и скрытие вопросов проверяет tests/api/privacy.spec.js.
+  expect(refreshedSurvey.anonymousMinResponses).toBe(3);
+  expect(refreshedSurvey.aggregate.hidden).toBe(true);
+  expect(refreshedSurvey.aggregate.minResponses).toBe(3);
+  expect(refreshedSurvey.aggregate.count).toBe(2);
+  expect(refreshedSurvey.aggregate.perQuestion).toEqual({});
   await leadApi.dispose();
 
   const otherMemberApi = await playwrightRequest.newContext({ baseURL });

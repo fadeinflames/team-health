@@ -4,6 +4,15 @@
   "private": true,
   "type": "module",
   "description": "Team management platform for 1:1 meetings, development plans, goals, surveys, reports, and competency mapping.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fadeinflames/team-health.git"
+  },
+  "bugs": {
+    "url": "https://github.com/fadeinflames/team-health/issues"
+  },
+  "homepage": "https://github.com/fadeinflames/team-health#readme",
   "engines": {
     "node": ">=20"
   },
@@ -16,11 +25,17 @@
     "test": "playwright test",
     "test:smoke": "playwright test tests/smoke.spec.js",
     "test:ui": "playwright test tests/ui-audit.spec.js",
+    "test:api": "playwright test tests/api",
+    "test:conflict": "playwright test tests/ui/conflict.spec.js",
+    "test:unit": "node --test \"tests/unit/*.test.mjs\"",
+    "test:integration": "node --test --test-concurrency=1 \"tests/integration/*.test.mjs\"",
     "migrate": "node scripts/migrate.mjs up",
     "migrate:status": "node scripts/migrate.mjs status",
     "migrate:baseline": "node scripts/migrate.mjs baseline",
     "migrate:new": "node scripts/migrate.mjs create",
     "seed": "node scripts/seed.mjs",
+    "db:backup": "node scripts/backup.mjs dump",
+    "db:backup:verify": "node scripts/backup.mjs verify",
     "secrets": "node scripts/secrets.mjs init",
     "secrets:check": "node scripts/secrets.mjs check",
     "admin-password": "node scripts/admin-password.mjs rotate"

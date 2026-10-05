@@ -2,17 +2,17 @@
 // Тонкая обёртка над node-pg-migrate.
 //
 // Зачем она нужна, если у инструмента есть свой CLI:
-//   1. Свой advisory-лок с выходом 0, а не с ошибкой. Два процесса могут
-//      стартовать одновременно (rolling update, ручной запуск поверх Job,
-//      ретрай CI). Второй процесс не «упал» — он просто не нужен, и ронять
-//      его ошибкой значит получить CrashLoopBackOff на ровном месте.
+//   1. Свой advisory-лок. Два процесса могут стартовать одновременно
+//      (rolling update, ручной запуск поверх Job, ретрай CI). Второй процесс
+//      ничего не применил, поэтому выходит с кодом 1: код 0 означал бы
+//      «миграции выполнены», и деплой пошёл бы дальше на неприменённой схеме.
 //   2. Единая точка настройки SSL: те же правила, что у пула приложения.
 //   3. Команда baseline для существующих баз — единственная ручная операция
 //      во всём переходе на миграции.
 //
 // Использование:
 //   node scripts/migrate.mjs up            применить всё, что не применено
-//   node scripts/migrate.mjs down 1        откатить одну последнюю (только local)
+//   node scripts/migrate.mjs down 1        откатить одну последнюю (только local; redo тоже)
 //   node scripts/migrate.mjs status        что применено, что ожидает
 //   node scripts/migrate.mjs baseline      отметить 0001-0016 применёнными без выполнения
 //   node scripts/migrate.mjs create <name> создать пустой файл миграции
@@ -21,6 +21,7 @@ import { spawn } from "node:child_process";
 import { readdir, writeFile, access } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { appEnv } from "./lib/env.mjs";
 
 const rootDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const migrationsDir = join(rootDir, "migrations");
@@ -32,6 +33,8 @@ const LOCK_ID = 41730001;
 // Последняя миграция baseline. Всё до неё включительно описывает состояние,
 // в котором уже находятся существующие базы.
 const BASELINE_LAST = "0016_app_meta";
+
+const ROLLBACK_COMMANDS = new Set(["down", "redo"]);
 
 function ssl() {
   switch (process.env.DATABASE_SSL) {
@@ -78,8 +81,13 @@ async function migrationNames() {
 async function withLock(client, run) {
   const got = await client.query("select pg_try_advisory_lock($1) as ok", [LOCK_ID]);
   if (!got.rows[0].ok) {
-    console.log("Миграции уже выполняет другой процесс, выходим без ошибки");
-    process.exit(0);
+    // Код 1, а не 0: мы ничего не применили, а «успех» здесь заставил бы
+    // деплой считать схему актуальной. Повторный запуск после завершения
+    // чужого процесса увидит, что применять нечего, и спокойно выйдет с 0.
+    fail(
+      "Миграции сейчас выполняет другой процесс (advisory-лок занят), этот запуск ничего не применил. " +
+        "Дождитесь завершения того процесса и повторите запуск."
+    );
   }
   try {
     return await run();
@@ -96,7 +104,7 @@ function runCli(args) {
       {
         cwd: rootDir,
         stdio: "inherit",
-        env: process.env
+        env: cliEnv()
       }
     );
     child.on("error", reject);
@@ -118,8 +126,20 @@ const commonArgs = [
   // следующие, а упавшая двадцатая откатывает семнадцатую, которая
   // отработала нормально.
   "--no-single-transaction",
-  ...(process.env.DATABASE_SSL === "require" ? ["--reject-unauthorized=false"] : [])
+  // node-pg-migrate получает только DATABASE_URL, поэтому режим из
+  // DATABASE_SSL до него доходит лишь так. require — шифрование без проверки
+  // сертификата, verify-full — с проверкой (иначе без sslmode в URL соединение
+  // шло бы открытым текстом). disable обрабатывает cliEnv() ниже.
+  ...(process.env.DATABASE_SSL === "require" ? ["--reject-unauthorized=false"] : []),
+  ...(process.env.DATABASE_SSL === "verify-full" ? ["--reject-unauthorized=true"] : [])
 ];
+
+// У CLI нет флага «без ssl», но pg читает PGSSLMODE, когда ssl не задан
+// явно. sslmode в самом DATABASE_URL по-прежнему приоритетнее, как и у
+// клиента в connect().
+function cliEnv() {
+  return process.env.DATABASE_SSL === "disable" ? { ...process.env, PGSSLMODE: "disable" } : process.env;
+}
 
 async function commandStatus(client) {
   const files = await migrationNames();
@@ -197,6 +217,32 @@ async function commandBaseline(client) {
   console.log("Дальше применяйте всё как обычно: node scripts/migrate.mjs up");
 }
 
+// База со схемой старого кода, но без журнала миграций: первый `up` выполнил
+// бы 0001, записал её в журнал и упал бы на 0002 (таблица people уже есть),
+// после чего baseline отказывается работать из-за непустого журнала. Поэтому
+// останавливаемся до запуска, а baseline автоматически не делаем: это разовая
+// операция над живой базой, и решать о ней должен человек.
+async function assertBaselineNotMissing(client) {
+  const journal = await client
+    .query("select count(*)::int as count from pgmigrations")
+    .catch(() => null);
+  if (journal && journal.rows[0].count > 0) return;
+
+  const tables = await client.query(
+    "select count(*)::int as count from information_schema.tables where table_schema = 'public' and table_name = 'people'"
+  );
+  if (tables.rows[0].count === 0) return;
+
+  fail(
+    "В базе уже есть таблицы приложения, но журнал миграций (pgmigrations) пуст или отсутствует.\n" +
+      "Это база, созданная до перехода на миграции: сначала один раз отметьте baseline, затем применяйте миграции:\n" +
+      "  node scripts/migrate.mjs baseline\n" +
+      "  node scripts/migrate.mjs up\n" +
+      "Подробности: раздел «Существующая база: baseline» в migrations/README.md.\n" +
+      "Миграции не применены."
+  );
+}
+
 async function commandCreate(name) {
   if (!name) fail('Укажите имя: node scripts/migrate.mjs create add_teams');
   const slug = name
@@ -246,9 +292,12 @@ async function main() {
 
   if (!process.env.DATABASE_URL) fail("DATABASE_URL не задан");
 
-  if (command === "down" && process.env.APP_ENV && process.env.APP_ENV !== "local") {
+  // Всё, что откатывает миграции, а не только down: redo — это down + up.
+  // Окружение определяется общей функцией, как в server.js, иначе на Railway
+  // (APP_ENV не задан) запрет не срабатывал.
+  if (ROLLBACK_COMMANDS.has(command) && appEnv() !== "local") {
     fail(
-      "down запрещён вне local. На проде откат схемы делается восстановлением из бэкапа " +
+      `${command} запрещён вне local (окружение: ${appEnv()}). На проде откат схемы делается восстановлением из бэкапа ` +
         "или новой миграцией вперёд, см. migrations/README.md."
     );
   }
@@ -266,7 +315,10 @@ async function main() {
     if (command !== "up" && command !== "down" && command !== "redo") {
       fail(`Неизвестная команда ${command}. Доступны: up, down, redo, status, baseline, create.`);
     }
-    await withLock(client, () => runCli([command, ...rest, ...commonArgs]));
+    await withLock(client, async () => {
+      if (command === "up") await assertBaselineNotMissing(client);
+      await runCli([command, ...rest, ...commonArgs]);
+    });
   } finally {
     await client.end().catch(() => {});
   }
