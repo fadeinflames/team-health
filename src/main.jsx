@@ -1,6 +1,7 @@
 import React, { Suspense, lazy } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App.jsx";
+import { ToastProvider } from "./ui";
 import "./styles.css";
 import "./styles/fonts.css";
 import "./styles/tokens.css";
@@ -46,7 +47,9 @@ createRoot(document.getElementById("root")).render(
           <Kit />
         </Suspense>
       ) : (
-        <App />
+        <ToastProvider>
+          <App />
+        </ToastProvider>
       )}
     </ErrorBoundary>
   </React.StrictMode>

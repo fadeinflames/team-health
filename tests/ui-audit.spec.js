@@ -15,8 +15,21 @@ async function loginAsAdmin(page) {
   await expect(page.getByRole("region", { name: "Сводка команды" })).toBeVisible();
 }
 
+// На телефоне часть разделов живёт под вкладкой «Ещё» (нижняя панель).
+async function openSection(page, name) {
+  // Шторка «Ещё» после выбора раздела закрывается с анимацией: ждём, пока она уйдёт.
+  await page.getByRole("dialog").waitFor({ state: "hidden" }).catch(() => {});
+  const direct = page.getByRole("button", { name, exact: true });
+  if (await direct.first().isVisible().catch(() => false)) {
+    await direct.first().click();
+    return;
+  }
+  await page.getByRole("button", { name: "Ещё", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: new RegExp(`^${name}`) }).click();
+}
+
 async function resetWorkspace(page) {
-  await page.getByRole("button", { name: "Настройки", exact: true }).click();
+  await openSection(page, "Настройки");
   await page.getByRole("button", { name: "Сбросить демо-данные" }).click();
   await expect(page.getByText("Демо-данные сброшены. Вы остались в аккаунте админа")).toBeVisible();
 }
@@ -68,7 +81,7 @@ test.describe("UI audit", () => {
       page.on("pageerror", (error) => browserMessages.push(error.message));
 
       for (const section of ["Главная", "ЛПР", "Цели", "Опросы", "Отчёты", "Команда", "Админка", "Настройки"]) {
-        await page.getByRole("button", { name: section, exact: true }).click();
+        await openSection(page, section);
         await page.waitForTimeout(100);
         await expectNoHorizontalOverflow(page);
       }

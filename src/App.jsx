@@ -1,6 +1,10 @@
 import { useAppearance } from "./appearance.js";
 import Shell from "./shell/Shell.jsx";
 import HomeScreen from "./screens/Home.jsx";
+import UserMenu from "./shell/UserMenu.jsx";
+import MoreTab from "./shell/MoreTab.jsx";
+import CommandPalette from "./shell/CommandPalette.jsx";
+import { Kbd } from "./ui";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toCsv } from "./csv.js";
 import {
@@ -219,6 +223,7 @@ export default function App() {
   // Тема, акцент, плотность, размер текста: одно хранилище на всё приложение (src/appearance.js).
   const { appearance, setAppearance } = useAppearance();
   const theme = appearance.theme;
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [editingCardId, setEditingCardId] = useState("");
   const [cardEditDraft, setCardEditDraft] = useState({ title: "", body: "" });
   const [editingActionId, setEditingActionId] = useState("");
@@ -255,6 +260,18 @@ export default function App() {
     return () => window.clearTimeout(id);
   }, [activeSection]);
 
+  // ⌘K / Ctrl+K открывает палитру команд, пока человек вошёл.
+  useEffect(() => {
+    if (!user) return undefined;
+    const onKeyDown = (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [user]);
   const [revealSummary, setRevealSummary] = useState(false);
   const summaryPanelRef = useRef(null);
   const dirtyRef = useRef(false);
@@ -3066,6 +3083,30 @@ export default function App() {
     );
   }
 
+  const paletteItems = [
+    ...visibleSections.map((section) => ({
+      id: `go-${section.id}`,
+      group: "Разделы",
+      label: section.label,
+      hint: section.hint || "",
+      icon: section.icon,
+      run: () => openSection(section.id)
+    })),
+    ...(workspace?.people || []).map((person) => ({
+      id: `person-${person.id}`,
+      group: "Участники",
+      label: person.name,
+      hint: person.role,
+      icon: UserRoundCheck,
+      keywords: `1:1 встреча ${person.team || ""}`,
+      run: () => selectPerson(person.id)
+    })),
+    { id: "theme-light", group: "Действия", label: "Светлая тема", icon: Sun, run: () => setAppearance({ theme: "light" }) },
+    { id: "theme-dark", group: "Действия", label: "Тёмная тема", icon: Moon, run: () => setAppearance({ theme: "dark" }) },
+    { id: "theme-system", group: "Действия", label: "Тема как в системе", icon: Monitor, run: () => setAppearance({ theme: "system" }) },
+    { id: "logout", group: "Действия", label: "Выйти", icon: LogOut, run: logout }
+  ];
+
   return (
     <Shell
       sections={visibleSections}
@@ -3076,23 +3117,33 @@ export default function App() {
       onToggleCollapsed={() => setAppearance({ sidebarCollapsed: !appearance.sidebarCollapsed })}
       pageTitle={pageTitle}
       sidebarFooter={
-        <>
-          <div className="shell-user">
-            <span className="shell-user-avatar" aria-hidden="true">
-              {(displayName || "?").slice(0, 1).toUpperCase()}
-            </span>
-            <span className="shell-user-text">
-              <span className="shell-user-name">{displayName}</span>
-              <span className="shell-user-role">{roleLabel[user?.role] || "участник"}</span>
-            </span>
-          </div>
-          <button type="button" className="shell-nav-item" onClick={logout}>
-            <LogOut className="shell-nav-icon" size={20} strokeWidth={1.75} aria-hidden="true" />
-            <span className="shell-nav-label">Выйти</span>
-          </button>
-        </>
+        <UserMenu
+          displayName={displayName}
+          roleText={roleLabel[user?.role] || "участник"}
+          theme={theme}
+          onSetTheme={(value) => setAppearance({ theme: value })}
+          onOpenSettings={() => openSection("settings")}
+          onLogout={logout}
+        />
       }
-      moreSlot={() => null}
+      topbarEnd={
+        <button type="button" className="shell-search" onClick={() => setPaletteOpen(true)} aria-label="Быстрый переход: поиск по разделам и людям">
+          <Search size={16} strokeWidth={1.75} aria-hidden="true" />
+          <span className="shell-search-text">Поиск</span>
+          <Kbd>⌘K</Kbd>
+        </button>
+      }
+      moreSlot={({ active }) => (
+        <MoreTab
+          active={active}
+          sections={visibleSections.filter((section) => !tabSectionIds.includes(section.id))}
+          activeSection={activeSection}
+          theme={theme}
+          onSetTheme={(value) => setAppearance({ theme: value })}
+          onNavigate={openSection}
+          onLogout={logout}
+        />
+      )}
     >
       <div className={`page-body section-${activeSection}`}>
       {activeSection === "meetings" && selectedPerson && (
@@ -6364,6 +6415,7 @@ export default function App() {
         </section>
       </aside>}
       </div>
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} items={paletteItems} />
     </Shell>
   );
 }

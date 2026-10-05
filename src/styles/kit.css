@@ -76,6 +76,7 @@
 
 .kit-body {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--sp-12);
   max-width: var(--content-max);
   margin: 0 auto;
