@@ -627,7 +627,7 @@ export function formatRuDate(iso) {
 }
 
 export const sectionRegistry = {
-  home: { label: "Главная", eyebrow: "Сводка команды", title: "Дашборд команды", icon: Home },
+  home: { label: "Главная", eyebrow: "Сводка команды", title: "Главная", icon: Home },
   meetings: { label: "1:1 встречи", eyebrow: "Повестка и шаги", title: "1:1", icon: MessageSquarePlus },
   // Аббревиатуру нигде больше не расшифровывали: новый человек не понимал, что за раздел.
   lprs: {

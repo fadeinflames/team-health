@@ -6,10 +6,11 @@ import { IconTile } from "./Badge.jsx";
 const GroupContext = createContext(false);
 
 // Подпись секции над содержимым (13px, 600, серый, обычный регистр), справа действие.
-// hint: короткое пояснение под подписью.
-export function Section({ title, hint, action, headingAs: Heading = "h2", className, children, ...rest }) {
+// hint: короткое пояснение под подписью. size="lg": крупный заголовок (как «Сегодня»
+// в iOS) для основных блоков страницы; по умолчанию спокойная серая подпись группы.
+export function Section({ title, hint, action, size = "md", headingAs: Heading = "h2", className, children, ...rest }) {
   return (
-    <section className={cx("ui-section", className)} {...rest}>
+    <section className={cx("ui-section", size === "lg" && "ui-section--lg", className)} {...rest}>
       {title || action ? (
         <div className="ui-section__head">
           {title ? <Heading className="ui-section__title">{title}</Heading> : <span />}

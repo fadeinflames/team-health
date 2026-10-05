@@ -472,6 +472,21 @@ button.ui-card {
   letter-spacing: var(--tracking-snug);
 }
 
+.ui-section--lg {
+  gap: var(--sp-3);
+}
+
+.ui-section--lg .ui-section__title {
+  color: var(--text);
+  font-size: var(--text-lg);
+  font-weight: 650;
+  letter-spacing: var(--tracking-tight);
+}
+
+.ui-section--lg .ui-section__hint {
+  margin-top: calc(var(--sp-2) * -1);
+}
+
 .ui-section__action {
   flex: none;
   margin-block: calc(var(--sp-2) * -1);

@@ -284,8 +284,6 @@
   }
 
   .shell-topbar-title {
-    opacity: 1;
-    transform: none;
     font-size: var(--text-md);
   }
 
